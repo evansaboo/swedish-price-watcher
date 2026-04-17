@@ -259,7 +259,8 @@ async function createRuntime() {
     scanState,
     triggerScan,
     scheduler,
-    manualRunMode: 'blocking'
+    manualRunMode: 'blocking',
+    serveStatic: false
   });
 
   await app.ready();
@@ -269,13 +270,23 @@ async function createRuntime() {
 
 function getRuntime() {
   if (!runtimePromise) {
-    runtimePromise = createRuntime();
+    runtimePromise = createRuntime().catch((error) => {
+      runtimePromise = null;
+      throw error;
+    });
   }
 
   return runtimePromise;
 }
 
 export default async function handler(req, res) {
-  const runtime = await getRuntime();
-  runtime.app.server.emit('request', req, res);
+  try {
+    const runtime = await getRuntime();
+    runtime.app.server.emit('request', req, res);
+  } catch (error) {
+    const message = error?.message ?? 'Serverless initialization failed.';
+    res.statusCode = 500;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ ok: false, message }));
+  }
 }

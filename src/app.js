@@ -292,13 +292,15 @@ function normalizeSchedulerUpdate(payload) {
   return normalized;
 }
 
-export async function buildApp({ config, store, scanState, triggerScan, scheduler, manualRunMode = 'background' }) {
+export async function buildApp({ config, store, scanState, triggerScan, scheduler, manualRunMode = 'background', serveStatic = true }) {
   const app = Fastify({ logger: false });
 
-  await app.register(fastifyStatic, {
-    root: config.publicDir,
-    index: ['index.html']
-  });
+  if (serveStatic) {
+    await app.register(fastifyStatic, {
+      root: config.publicDir,
+      index: ['index.html']
+    });
+  }
 
   app.get('/health', async () => ({ ok: true }));
 

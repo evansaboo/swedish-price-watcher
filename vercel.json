@@ -1,7 +1,11 @@
 {
   "functions": {
     "api/[[...path]].js": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": [
+        "config/sources.json",
+        "data/store.json"
+      ]
     }
   }
 }
