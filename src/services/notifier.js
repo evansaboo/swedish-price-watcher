@@ -41,10 +41,45 @@ function formatPercent(value) {
   return Number.isFinite(value) ? `${value}%` : 'n/a';
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
+}
+
+function parseRetryDelayMs(response) {
+  const retryAfterRaw = response?.headers?.get?.('retry-after');
+  const resetAfterRaw = response?.headers?.get?.('x-ratelimit-reset-after');
+
+  if (retryAfterRaw) {
+    const asSeconds = Number.parseFloat(retryAfterRaw);
+    if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+      return Math.round(asSeconds * 1000);
+    }
+
+    const asDate = Date.parse(retryAfterRaw);
+    if (!Number.isNaN(asDate)) {
+      return Math.max(0, asDate - Date.now());
+    }
+  }
+
+  if (resetAfterRaw) {
+    const asSeconds = Number.parseFloat(resetAfterRaw);
+    if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+      return Math.round(asSeconds * 1000);
+    }
+  }
+
+  return null;
+}
+
 export class DiscordNotifier {
-  constructor({ webhookUrl, cooldownHours }) {
+  constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000 }) {
     this.webhookUrl = webhookUrl;
     this.cooldownMs = cooldownHours * 60 * 60 * 1000;
+    this.webhookMaxRetries = Math.max(0, Number(webhookMaxRetries) || 0);
+    this.webhookRetryBaseMs = Math.max(0, Number(webhookRetryBaseMs) || 0);
+    this.webhookRetryCapMs = Math.max(this.webhookRetryBaseMs, Number(webhookRetryCapMs) || this.webhookRetryBaseMs);
   }
 
   async notifyScan({ deals, newItems, priceDrops = [], sources, state }) {
@@ -71,10 +106,17 @@ export class DiscordNotifier {
     });
     const amazingDealsSummary = await this.notifyAmazingDeals(deals, state, amazingDealSourceIds);
     const newListingsSummary = await this.notifyNewListings(newItems, state, newListingSources, sourceMap);
+    const errors = [
+      ...(amazingDealsSummary.errors ?? []),
+      ...(newListingsSummary.errors ?? []),
+      ...(favoriteCategoryEvents.errors ?? [])
+    ].slice(0, 10);
 
     return {
       sent: amazingDealsSummary.sent + newListingsSummary.sent + favoriteCategoryEvents.sent,
       skipped: amazingDealsSummary.skipped + newListingsSummary.skipped + favoriteCategoryEvents.skipped,
+      failed: (amazingDealsSummary.failed ?? 0) + (newListingsSummary.failed ?? 0) + (favoriteCategoryEvents.failed ?? 0),
+      errors,
       amazingDeals: amazingDealsSummary,
       newListings: newListingsSummary,
       favoriteCategoryEvents
@@ -88,6 +130,8 @@ export class DiscordNotifier {
       return {
         sent: 0,
         skipped: amazingDeals.length,
+        failed: 0,
+        errors: [],
         reason: 'discord-webhook-not-configured'
       };
     }
@@ -95,6 +139,8 @@ export class DiscordNotifier {
     const now = Date.now();
     let sent = 0;
     let skipped = 0;
+    let failed = 0;
+    const errors = [];
 
     for (const deal of amazingDeals) {
       const notificationKey = `${deal.listingKey}:${deal.currentPriceSek}`;
@@ -105,31 +151,37 @@ export class DiscordNotifier {
         continue;
       }
 
-      await this.#postWebhook({
-        username: 'Price Watcher',
-        content: `Amazing deal: ${deal.title}`,
-        embeds: [
-          {
-            title: deal.title,
-            url: deal.url,
-            description: `${deal.sourceLabel} • ${deal.category} • ${deal.condition}`,
-            fields: [
-              { name: 'Current', value: formatSek(deal.currentPriceSek), inline: true },
-              { name: 'Initial', value: formatSek(deal.comparisonPriceSek), inline: true },
-              { name: 'Discount %', value: formatPercent(deal.discountPercent), inline: true },
-              { name: 'Profit', value: formatSek(deal.profitSek), inline: true },
-              { name: 'Score', value: String(deal.score), inline: true },
-              { name: 'Reasons', value: deal.reasons.join(' • ') || 'No detail', inline: false }
-            ]
-          }
-        ]
-      });
+      try {
+        await this.#postWebhook({
+          username: 'Price Watcher',
+          content: `Amazing deal: ${deal.title}`,
+          embeds: [
+            {
+              title: deal.title,
+              url: deal.url,
+              description: `${deal.sourceLabel} • ${deal.category} • ${deal.condition}`,
+              fields: [
+                { name: 'Current', value: formatSek(deal.currentPriceSek), inline: true },
+                { name: 'Initial', value: formatSek(deal.comparisonPriceSek), inline: true },
+                { name: 'Discount %', value: formatPercent(deal.discountPercent), inline: true },
+                { name: 'Profit', value: formatSek(deal.profitSek), inline: true },
+                { name: 'Score', value: String(deal.score), inline: true },
+                { name: 'Reasons', value: deal.reasons.join(' • ') || 'No detail', inline: false }
+              ]
+            }
+          ]
+        });
+      } catch (error) {
+        failed += 1;
+        this.#recordError(errors, error);
+        continue;
+      }
 
       state.notifications[notificationKey] = new Date(now).toISOString();
       sent += 1;
     }
 
-    return { sent, skipped };
+    return { sent, skipped, failed, errors };
   }
 
   async notifyNewListings(newItems, state, sources, sourceMap = new Map()) {
@@ -139,13 +191,17 @@ export class DiscordNotifier {
       return {
         sent: 0,
         skipped: items.length,
+        failed: 0,
+        errors: [],
         reason: 'discord-webhook-not-configured'
       };
     }
 
     let sent = 0;
     let skipped = 0;
+    let failed = 0;
     let messages = 0;
+    const errors = [];
     const now = Date.now();
 
     for (const source of sources) {
@@ -170,26 +226,32 @@ export class DiscordNotifier {
         const batch = freshItems.slice(index, index + batchSize);
         const label = sourceMap.get(source.id)?.label ?? source.label ?? source.id;
 
-        await this.#postWebhook({
-          username: 'Price Watcher',
-          content: `${label}: ${batch.length} new outlet listing${batch.length === 1 ? '' : 's'}`,
-          embeds: batch.map((item) => {
-            const discount = getDiscountSummary(item);
+        try {
+          await this.#postWebhook({
+            username: 'Price Watcher',
+            content: `${label}: ${batch.length} new outlet listing${batch.length === 1 ? '' : 's'}`,
+            embeds: batch.map((item) => {
+              const discount = getDiscountSummary(item);
 
-            return {
-              title: item.title,
-              url: item.url,
-              description: `${item.sourceLabel} • ${item.category} • ${item.condition}`,
-              fields: [
-                { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
-                { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
-                { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true },
-                { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
-              ],
-              image: item.imageUrl ? { url: item.imageUrl } : undefined
-            };
-          })
-        });
+              return {
+                title: item.title,
+                url: item.url,
+                description: `${item.sourceLabel} • ${item.category} • ${item.condition}`,
+                fields: [
+                  { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
+                  { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
+                  { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true },
+                  { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
+                ],
+                image: item.imageUrl ? { url: item.imageUrl } : undefined
+              };
+            })
+          });
+        } catch (error) {
+          failed += batch.length;
+          this.#recordError(errors, error);
+          continue;
+        }
 
         for (const item of batch) {
           state.notifications[`${item.listingKey}:new-listing`] = new Date(now).toISOString();
@@ -200,7 +262,7 @@ export class DiscordNotifier {
       }
     }
 
-    return { sent, skipped, messages };
+    return { sent, skipped, failed, messages, errors };
   }
 
   async notifyFavoriteCategoryEvents({ newItems, priceDrops, favoriteCategories, allowedSourceIds, state }) {
@@ -212,6 +274,8 @@ export class DiscordNotifier {
       return {
         sent: 0,
         skipped: 0,
+        failed: 0,
+        errors: [],
         reason: 'no-favorite-categories'
       };
     }
@@ -231,14 +295,18 @@ export class DiscordNotifier {
       return {
         sent: 0,
         skipped: favoriteNewItems.length + favoritePriceDrops.length,
+        failed: 0,
+        errors: [],
         reason: 'discord-webhook-not-configured'
       };
     }
 
     let sent = 0;
     let skipped = 0;
+    let failed = 0;
     let newListingEvents = 0;
     let priceDropEvents = 0;
+    const errors = [];
 
     for (const { item, discount } of favoriteNewItems) {
       const notificationKey = `${item.listingKey}:favorite-new:${item.latestPriceSek}`;
@@ -248,24 +316,30 @@ export class DiscordNotifier {
         continue;
       }
 
-      await this.#postWebhook({
-        username: 'Price Watcher',
-        content: `Favorite category update: new discounted listing in ${item.category}`,
-        embeds: [
-          {
-            title: item.title,
-            url: item.url,
-            description: `${item.sourceLabel} • ${item.category}`,
-            fields: [
-              { name: 'Price', value: formatSek(item.latestPriceSek), inline: true },
-              { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
-              { name: 'Discount', value: formatSek(discount.discountSek), inline: true },
-              { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true }
-            ],
-            image: item.imageUrl ? { url: item.imageUrl } : undefined
-          }
-        ]
-      });
+      try {
+        await this.#postWebhook({
+          username: 'Price Watcher',
+          content: `Favorite category update: new discounted listing in ${item.category}`,
+          embeds: [
+            {
+              title: item.title,
+              url: item.url,
+              description: `${item.sourceLabel} • ${item.category}`,
+              fields: [
+                { name: 'Price', value: formatSek(item.latestPriceSek), inline: true },
+                { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
+                { name: 'Discount', value: formatSek(discount.discountSek), inline: true },
+                { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true }
+              ],
+              image: item.imageUrl ? { url: item.imageUrl } : undefined
+            }
+          ]
+        });
+      } catch (error) {
+        failed += 1;
+        this.#recordError(errors, error);
+        continue;
+      }
 
       state.notifications[notificationKey] = new Date().toISOString();
       sent += 1;
@@ -280,23 +354,29 @@ export class DiscordNotifier {
         continue;
       }
 
-      await this.#postWebhook({
-        username: 'Price Watcher',
-        content: `Favorite category update: price drop in ${event.category}`,
-        embeds: [
-          {
-            title: event.title,
-            url: event.url,
-            description: `${event.sourceLabel} • ${event.category}`,
-            fields: [
-              { name: 'Previous', value: formatSek(event.previousPriceSek), inline: true },
-              { name: 'Current', value: formatSek(event.newPriceSek), inline: true },
-              { name: 'Drop', value: formatSek(event.dropSek), inline: true },
-              { name: 'Drop %', value: `${event.dropPercent}%`, inline: true }
-            ]
-          }
-        ]
-      });
+      try {
+        await this.#postWebhook({
+          username: 'Price Watcher',
+          content: `Favorite category update: price drop in ${event.category}`,
+          embeds: [
+            {
+              title: event.title,
+              url: event.url,
+              description: `${event.sourceLabel} • ${event.category}`,
+              fields: [
+                { name: 'Previous', value: formatSek(event.previousPriceSek), inline: true },
+                { name: 'Current', value: formatSek(event.newPriceSek), inline: true },
+                { name: 'Drop', value: formatSek(event.dropSek), inline: true },
+                { name: 'Drop %', value: `${event.dropPercent}%`, inline: true }
+              ]
+            }
+          ]
+        });
+      } catch (error) {
+        failed += 1;
+        this.#recordError(errors, error);
+        continue;
+      }
 
       state.notifications[notificationKey] = new Date().toISOString();
       sent += 1;
@@ -306,21 +386,53 @@ export class DiscordNotifier {
     return {
       sent,
       skipped,
+      failed,
       newListingEvents,
-      priceDropEvents
+      priceDropEvents,
+      errors
     };
   }
 
-  async #postWebhook(payload) {
-    const response = await fetch(this.webhookUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
+  #recordError(errors, error) {
+    if (!Array.isArray(errors) || errors.length >= 5) {
+      return;
+    }
 
-    if (!response.ok) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+
+  #resolveRetryDelayMs(response, attempt) {
+    const headerDelay = parseRetryDelayMs(response);
+
+    if (Number.isFinite(headerDelay)) {
+      return Math.min(this.webhookRetryCapMs, Math.max(0, headerDelay));
+    }
+
+    const exponentialDelay = this.webhookRetryBaseMs * 2 ** attempt;
+    return Math.min(this.webhookRetryCapMs, exponentialDelay);
+  }
+
+  async #postWebhook(payload) {
+    for (let attempt = 0; attempt <= this.webhookMaxRetries; attempt += 1) {
+      const response = await fetch(this.webhookUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        return;
+      }
+
+      const retriable = response.status === 429 || response.status >= 500;
+
+      if (retriable && attempt < this.webhookMaxRetries) {
+        await sleep(this.#resolveRetryDelayMs(response, attempt));
+        continue;
+      }
+
       throw new Error(`Discord webhook returned ${response.status} ${response.statusText}`);
     }
   }

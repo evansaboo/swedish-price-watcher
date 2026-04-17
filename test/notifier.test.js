@@ -180,3 +180,144 @@ test('sends favorite-category alerts for new discounted items and price drops', 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('retries Discord webhook after 429 and still delivers notification', async () => {
+  let calls = 0;
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_url, _init) => {
+    calls += 1;
+
+    if (calls === 1) {
+      return {
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+        headers: {
+          get(name) {
+            return name.toLowerCase() === 'retry-after' ? '0' : null;
+          }
+        }
+      };
+    }
+
+    return {
+      ok: true,
+      status: 204,
+      statusText: 'No Content',
+      headers: {
+        get() {
+          return null;
+        }
+      }
+    };
+  };
+
+  try {
+    const state = createDefaultState();
+    const notifier = new DiscordNotifier({
+      webhookUrl: 'https://discord.example/webhook',
+      cooldownHours: 24,
+      webhookMaxRetries: 2
+    });
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [
+        {
+          listingKey: 'elgiganten-outlet-latest:1000500',
+          sourceId: 'elgiganten-outlet-latest',
+          sourceLabel: 'Elgiganten outlet latest',
+          title: 'Outlet retry test item',
+          url: 'https://www.elgiganten.se/product/outlet/1000500',
+          category: 'Horlurar',
+          condition: 'outlet',
+          latestPriceSek: 1490,
+          referencePriceSek: 2490,
+          marketValueSek: 2490,
+          availability: '2 kvar',
+          firstSeenAt: '2026-04-17T09:31:00.000Z',
+          imageUrl: null
+        }
+      ],
+      sources: [
+        {
+          id: 'elgiganten-outlet-latest',
+          label: 'Elgiganten outlet latest',
+          enabled: true,
+          notificationMode: 'new-listings'
+        }
+      ],
+      state
+    });
+
+    assert.equal(calls, 2);
+    assert.equal(summary.newListings.sent, 1);
+    assert.equal(summary.newListings.failed, 0);
+    assert.equal(summary.failed, 0);
+    assert.ok(state.notifications['elgiganten-outlet-latest:1000500:new-listing']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Discord 429 does not fail whole notification summary', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 429,
+    statusText: 'Too Many Requests',
+    headers: {
+      get(name) {
+        return name.toLowerCase() === 'retry-after' ? '0' : null;
+      }
+    }
+  });
+
+  try {
+    const state = createDefaultState();
+    const notifier = new DiscordNotifier({
+      webhookUrl: 'https://discord.example/webhook',
+      cooldownHours: 24,
+      webhookMaxRetries: 1
+    });
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [
+        {
+          listingKey: 'elgiganten-outlet-latest:1000600',
+          sourceId: 'elgiganten-outlet-latest',
+          sourceLabel: 'Elgiganten outlet latest',
+          title: 'Outlet failure test item',
+          url: 'https://www.elgiganten.se/product/outlet/1000600',
+          category: 'Horlurar',
+          condition: 'outlet',
+          latestPriceSek: 1690,
+          referencePriceSek: 2490,
+          marketValueSek: 2490,
+          availability: '2 kvar',
+          firstSeenAt: '2026-04-17T09:31:00.000Z',
+          imageUrl: null
+        }
+      ],
+      sources: [
+        {
+          id: 'elgiganten-outlet-latest',
+          label: 'Elgiganten outlet latest',
+          enabled: true,
+          notificationMode: 'new-listings'
+        }
+      ],
+      state
+    });
+
+    assert.equal(summary.sent, 0);
+    assert.equal(summary.failed, 1);
+    assert.equal(summary.newListings.failed, 1);
+    assert.ok(Array.isArray(summary.errors));
+    assert.match(summary.errors[0], /429/i);
+    assert.equal(state.notifications['elgiganten-outlet-latest:1000600:new-listing'], undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

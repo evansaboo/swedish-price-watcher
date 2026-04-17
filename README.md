@@ -84,6 +84,7 @@ npm run scan
 - listings are deduplicated in local state, so the same listing is not repeatedly announced every scan
 - messages are batched per source for Discord instead of sending one webhook call per item
 - listing embeds include price context fields, including initial price and discount percent when available
+- Discord webhook sends now retry on temporary rate limits (`429`) and no longer fail the full scan when notifications are throttled
 - favorite categories (set in the dashboard) trigger additional Discord events for:
   - new discounted listings
   - listing price drops
