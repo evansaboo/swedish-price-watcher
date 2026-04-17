@@ -151,7 +151,7 @@ export async function loadConfig() {
     dataFile: path.resolve(rootDir, process.env.DATA_FILE ?? defaultDataFile),
     sourcesFile,
     port: parsePositiveInt(process.env.PORT, 3030),
-    host: process.env.HOST ?? (isRailwayRuntime ? '0.0.0.0' : '127.0.0.1'),
+    host: isRailwayRuntime ? '0.0.0.0' : process.env.HOST ?? '127.0.0.1',
     scanIntervalMinutes: parsePositiveInt(process.env.SCAN_INTERVAL_MINUTES, 180),
     hostDelayMs: parsePositiveInt(process.env.HOST_DELAY_MS, 8000),
     requestTimeoutMs: parsePositiveInt(process.env.REQUEST_TIMEOUT_MS, 20000),

@@ -70,6 +70,7 @@ Notes:
 
 - Host binding is auto-set to `0.0.0.0` on Railway.
 - With `APIFY_TOKEN` set, Railway runtime uses Apify key-value state storage (same keys as Vercel mode), so scans and history persist across restarts/redeploys.
+- If you already had `HOST=127.0.0.1` in Railway variables, it is ignored on Railway now to prevent healthcheck failures.
 
 ## Run one scan manually
 
