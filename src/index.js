@@ -1,7 +1,7 @@
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PoliteFetcher } from './lib/fetcher.js';
-import { JsonStore, reconcileStateWithSources } from './lib/store.js';
+import { ApifyStore, JsonStore, reconcileStateWithSources } from './lib/store.js';
 import { createSchedulerController, isWithinActiveWindow, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
@@ -9,8 +9,15 @@ import { DiscordNotifier } from './services/notifier.js';
 
 const runOnce = process.argv.includes('--run-once');
 const isServerlessRuntime = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const useApifyStateStore = isServerlessRuntime && Boolean(process.env.APIFY_TOKEN?.trim());
 const config = await loadConfig();
-const store = new JsonStore(config.dataFile);
+const store = useApifyStateStore
+  ? new ApifyStore({
+      token: process.env.APIFY_TOKEN.trim(),
+      storeName: process.env.APIFY_STATE_STORE_NAME ?? 'swedish-price-watcher-state',
+      recordKey: process.env.APIFY_STATE_RECORD_KEY ?? 'state'
+    })
+  : new JsonStore(config.dataFile);
 await store.load();
 reconcileStateWithSources(store.getState(), config.sources);
 const state = store.getState();

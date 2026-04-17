@@ -136,3 +136,5 @@ For quick smoke testing, serverless mode:
 - uses `/tmp/swedish-price-watcher-store.json` for runtime state
 - auto-seeds from `data/store.json` when available
 - disables background scheduler timers (you can still run scans manually from the dashboard)
+
+When `APIFY_TOKEN` is configured on Vercel, the app also persists tracker state in an Apify key-value store (`APIFY_STATE_STORE_NAME` / `APIFY_STATE_RECORD_KEY`) so data survives cold starts.

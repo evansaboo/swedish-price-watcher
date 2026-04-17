@@ -3,6 +3,7 @@ import path from 'node:path';
 import { normalizeActiveWindow } from '../scheduler.js';
 
 const FALLBACK_WRITABLE_DATA_FILE = '/tmp/swedish-price-watcher-store.json';
+const APIFY_API_BASE_URL = 'https://api.apify.com/v2';
 
 export function createDefaultState() {
   return {
@@ -143,5 +144,95 @@ export class JsonStore {
   async save() {
     await this.ensureWritableFilePath();
     await fs.writeFile(this.filePath, `${JSON.stringify(this.state, null, 2)}\n`, 'utf8');
+  }
+}
+
+export class ApifyStore {
+  constructor({ token, storeName = 'swedish-price-watcher-state', recordKey = 'state' }) {
+    this.token = String(token ?? '').trim();
+    this.storeName = String(storeName ?? '').trim() || 'swedish-price-watcher-state';
+    this.recordKey = String(recordKey ?? '').trim() || 'state';
+    this.storeId = null;
+    this.state = createDefaultState();
+  }
+
+  async ensureStoreId() {
+    if (this.storeId) {
+      return this.storeId;
+    }
+
+    const response = await fetch(
+      `${APIFY_API_BASE_URL}/key-value-stores?token=${encodeURIComponent(this.token)}&name=${encodeURIComponent(this.storeName)}`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: '{}'
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Unable to initialize Apify store: ${response.status} ${response.statusText}`);
+    }
+
+    const payload = await response.json();
+    const storeId = payload?.data?.id;
+
+    if (!storeId) {
+      throw new Error('Unable to initialize Apify store: missing store id.');
+    }
+
+    this.storeId = storeId;
+    return this.storeId;
+  }
+
+  async load() {
+    const storeId = await this.ensureStoreId();
+    const response = await fetch(
+      `${APIFY_API_BASE_URL}/key-value-stores/${encodeURIComponent(storeId)}/records/${encodeURIComponent(this.recordKey)}?token=${encodeURIComponent(this.token)}&disableRedirect=true`,
+      {
+        method: 'GET',
+        headers: {
+          accept: 'application/json'
+        }
+      }
+    );
+
+    if (response.status === 404) {
+      this.state = createDefaultState();
+      await this.save();
+      return this.state;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Unable to load Apify state: ${response.status} ${response.statusText}`);
+    }
+
+    const payload = await response.json();
+    this.state = normalizeState(payload ?? {});
+    return this.state;
+  }
+
+  getState() {
+    return this.state;
+  }
+
+  async save() {
+    const storeId = await this.ensureStoreId();
+    const response = await fetch(
+      `${APIFY_API_BASE_URL}/key-value-stores/${encodeURIComponent(storeId)}/records/${encodeURIComponent(this.recordKey)}?token=${encodeURIComponent(this.token)}`,
+      {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json; charset=utf-8'
+        },
+        body: JSON.stringify(this.state, null, 2)
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Unable to save Apify state: ${response.status} ${response.statusText}`);
+    }
   }
 }
