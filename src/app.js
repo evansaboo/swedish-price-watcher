@@ -370,9 +370,38 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
     }
   }
 
+  async function runScheduledScanIfDue() {
+    if (manualRunMode !== 'blocking' || !scheduler?.getState) {
+      return { ran: false, reason: 'disabled' };
+    }
+
+    if (!config.sources.some((source) => source.enabled)) {
+      return { ran: false, reason: 'no-enabled-sources' };
+    }
+
+    const state = store.getState();
+    const schedulerState = buildSchedulerStatus(scheduler.getState(), state.stats.lastRunStartedAt);
+    const decision = evaluateScheduledScan(schedulerState, state.stats.lastRunStartedAt, scanState.running);
+
+    if (!decision.shouldRun) {
+      return { ran: false, reason: decision.reason };
+    }
+
+    await triggerScan('scheduled');
+    return { ran: true, reason: 'scheduled' };
+  }
+
   app.get('/health', async () => ({ ok: true }));
 
   app.get('/api/status', async () => {
+    if (manualRunMode === 'blocking') {
+      try {
+        await runScheduledScanIfDue();
+      } catch (error) {
+        scanState.lastError = error.message;
+      }
+    }
+
     const state = store.getState();
     const sourceStatuses = config.sources.map((source) => describeSourceStatus(source, state.sourceStates[source.id]));
     const currentSource = config.sources.find((source) => source.id === scanState.currentSourceId);
