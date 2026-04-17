@@ -5,6 +5,7 @@ import { firstFinite } from './lib/utils.js';
 import { buildProductSummaries } from './services/dealEngine.js';
 
 const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const NEW_PRODUCT_FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function matchesQuery(value, query) {
   return !query || String(value ?? '').toLowerCase().includes(query);
@@ -12,6 +13,27 @@ function matchesQuery(value, query) {
 
 function normalizeCategoryKey(category) {
   return String(category ?? '').trim().toLowerCase();
+}
+
+function toTimestamp(value) {
+  const parsed = Date.parse(value ?? '');
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function isNewOutletProduct(product, latestRunStartedAt) {
+  const firstSeenTimestamp = toTimestamp(product.firstSeenAt);
+
+  if (firstSeenTimestamp == null) {
+    return false;
+  }
+
+  const latestRunTimestamp = toTimestamp(latestRunStartedAt);
+
+  if (latestRunTimestamp != null) {
+    return firstSeenTimestamp >= latestRunTimestamp;
+  }
+
+  return Date.now() - firstSeenTimestamp <= NEW_PRODUCT_FALLBACK_WINDOW_MS;
 }
 
 function getFavoriteCategories(state) {
@@ -152,12 +174,13 @@ function buildOutletProducts(state) {
     });
 }
 
-function filterOutletProducts(products, query, favoriteCategorySet) {
+function filterOutletProducts(products, query, favoriteCategorySet, latestRunStartedAt = null) {
   const search = String(query.search ?? '').trim().toLowerCase();
   const category = String(query.category ?? '').trim().toLowerCase();
   const favoritesOnly = String(query.favoritesOnly ?? 'false') === 'true';
   const discountedOnly = String(query.discountedOnly ?? 'false') === 'true';
   const referenceOnly = String(query.referenceOnly ?? 'false') === 'true';
+  const newOnly = String(query.newOnly ?? 'false') === 'true';
   const minDiscountPercent = Number.parseInt(String(query.minDiscountPercent ?? ''), 10);
   const maxPriceSek = Number.parseInt(String(query.maxPriceSek ?? query.maxPrice ?? ''), 10);
 
@@ -173,6 +196,10 @@ function filterOutletProducts(products, query, favoriteCategorySet) {
     }
 
     if (referenceOnly && !Number.isFinite(product.initialPriceSek)) {
+      return false;
+    }
+
+    if (newOnly && !isNewOutletProduct(product, latestRunStartedAt)) {
       return false;
     }
 
@@ -382,7 +409,7 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
   app.get('/api/outlet-products', async (request) => {
     const state = store.getState();
     const favoriteCategorySet = getFavoriteCategorySet(state);
-    return filterOutletProducts(buildOutletProducts(state), request.query, favoriteCategorySet);
+    return filterOutletProducts(buildOutletProducts(state), request.query, favoriteCategorySet, state.stats.lastRunStartedAt);
   });
 
   app.get('/api/outlet-categories', async () => {

@@ -20,7 +20,7 @@ This avoids fighting Elgiganten's direct anti-bot protections from the app runti
 - enriches outlet products by matching them against non-outlet Elgiganten listings
 - shows a simplified outlet table with discount columns based on matched non-outlet prices
 - includes a compact favorites workflow (selected chips + expandable category picker)
-- adds richer filters (favorites-only, discounted-only, matched-price-only, min discount %, max price)
+- adds richer filters (favorites-only, discounted-only, new-products-only, matched-price-only, min discount %, max price)
 - lets you mark favorite categories from discovered outlet categories
 - persists your latest filter/sort/favorites-panel UI state in the browser
 - lets you configure scan scheduler interval/on-off directly from the dashboard

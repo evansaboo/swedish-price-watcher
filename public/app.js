@@ -9,6 +9,7 @@ const state = {
   category: '',
   favoritesOnly: false,
   discountedOnly: false,
+  newOnly: false,
   referenceOnly: false,
   minDiscountPercent: '',
   maxPriceSek: '',
@@ -41,6 +42,7 @@ const elements = {
   searchInput: document.querySelector('#search-input'),
   favoritesOnly: document.querySelector('#favorites-only'),
   discountedOnly: document.querySelector('#discounted-only'),
+  newOnly: document.querySelector('#new-only'),
   referenceOnly: document.querySelector('#reference-only'),
   minDiscountFilter: document.querySelector('#min-discount-filter'),
   maxPriceFilter: document.querySelector('#max-price-filter'),
@@ -125,6 +127,7 @@ function saveUiPreferences() {
     category: state.category,
     favoritesOnly: state.favoritesOnly,
     discountedOnly: state.discountedOnly,
+    newOnly: state.newOnly,
     referenceOnly: state.referenceOnly,
     minDiscountPercent: state.minDiscountPercent,
     maxPriceSek: state.maxPriceSek,
@@ -160,6 +163,10 @@ function hydrateUiPreferences() {
     state.discountedOnly = saved.discountedOnly;
   }
 
+  if (typeof saved.newOnly === 'boolean') {
+    state.newOnly = saved.newOnly;
+  }
+
   if (typeof saved.referenceOnly === 'boolean') {
     state.referenceOnly = saved.referenceOnly;
   }
@@ -191,6 +198,7 @@ function hydrateUiPreferences() {
   elements.searchInput.value = state.search;
   elements.favoritesOnly.checked = state.favoritesOnly;
   elements.discountedOnly.checked = state.discountedOnly;
+  elements.newOnly.checked = state.newOnly;
   elements.referenceOnly.checked = state.referenceOnly;
   elements.minDiscountFilter.value = state.minDiscountPercent;
   elements.maxPriceFilter.value = state.maxPriceSek;
@@ -368,6 +376,10 @@ function buildProductsQueryString() {
     params.set('discountedOnly', 'true');
   }
 
+  if (state.newOnly) {
+    params.set('newOnly', 'true');
+  }
+
   if (state.referenceOnly) {
     params.set('referenceOnly', 'true');
   }
@@ -509,6 +521,10 @@ function renderActiveFilters() {
 
   if (state.discountedOnly) {
     activeFilters.push('Discounted only');
+  }
+
+  if (state.newOnly) {
+    activeFilters.push('New products only');
   }
 
   if (state.referenceOnly) {
@@ -876,6 +892,7 @@ function applyCurrentFilterState() {
   state.category = elements.categoryFilter.value;
   state.favoritesOnly = elements.favoritesOnly.checked;
   state.discountedOnly = elements.discountedOnly.checked;
+  state.newOnly = elements.newOnly.checked;
   state.referenceOnly = elements.referenceOnly.checked;
   state.minDiscountPercent = elements.minDiscountFilter.value.trim();
   state.maxPriceSek = elements.maxPriceFilter.value.trim();
@@ -887,6 +904,7 @@ function resetFilters() {
   state.category = '';
   state.favoritesOnly = false;
   state.discountedOnly = false;
+  state.newOnly = false;
   state.referenceOnly = false;
   state.minDiscountPercent = '';
   state.maxPriceSek = '';
@@ -895,6 +913,7 @@ function resetFilters() {
   elements.categoryFilter.value = '';
   elements.favoritesOnly.checked = false;
   elements.discountedOnly.checked = false;
+  elements.newOnly.checked = false;
   elements.referenceOnly.checked = false;
   elements.minDiscountFilter.value = '';
   elements.maxPriceFilter.value = '';
@@ -973,6 +992,7 @@ elements.searchInput.addEventListener('input', () => updateFilters({ debounce: t
 elements.categoryFilter.addEventListener('change', () => updateFilters());
 elements.favoritesOnly.addEventListener('change', () => updateFilters());
 elements.discountedOnly.addEventListener('change', () => updateFilters());
+elements.newOnly.addEventListener('change', () => updateFilters());
 elements.referenceOnly.addEventListener('change', () => updateFilters());
 elements.minDiscountFilter.addEventListener('input', () => updateFilters({ debounce: true }));
 elements.maxPriceFilter.addEventListener('input', () => updateFilters({ debounce: true }));

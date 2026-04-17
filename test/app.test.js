@@ -110,7 +110,7 @@ test('returns simplified outlet products and favorite category stats', async () 
       referencePriceSek: 3990,
       marketValueSek: 3990,
       highestPriceSek: 3990,
-      firstSeenAt: '2026-04-17T09:00:00.000Z',
+      firstSeenAt: '2026-04-17T10:05:00.000Z',
       lastSeenAt: '2026-04-17T10:00:00.000Z'
     },
     'elgiganten-outlet-latest:1000291': {
@@ -145,6 +145,7 @@ test('returns simplified outlet products and favorite category stats', async () 
     }
   };
   state.preferences.favoriteCategories = ['Horlurar'];
+  state.stats.lastRunStartedAt = '2026-04-17T10:00:00.000Z';
 
   const app = await buildApp({
     config: {
@@ -190,6 +191,11 @@ test('returns simplified outlet products and favorite category stats', async () 
     url: '/api/outlet-products?referenceOnly=true&minDiscountPercent=25&maxPriceSek=3000'
   });
   const filteredProducts = filteredResponse.json();
+  const newOnlyResponse = await app.inject({
+    method: 'GET',
+    url: '/api/outlet-products?newOnly=true'
+  });
+  const newOnlyProducts = newOnlyResponse.json();
 
   assert.equal(categoriesResponse.statusCode, 200);
   assert.equal(categories.length, 2);
@@ -198,6 +204,9 @@ test('returns simplified outlet products and favorite category stats', async () 
   assert.equal(filteredResponse.statusCode, 200);
   assert.equal(filteredProducts.length, 1);
   assert.equal(filteredProducts[0].listingKey, 'elgiganten-outlet-latest:1000290');
+  assert.equal(newOnlyResponse.statusCode, 200);
+  assert.equal(newOnlyProducts.length, 1);
+  assert.equal(newOnlyProducts[0].listingKey, 'elgiganten-outlet-latest:1000290');
 
   await app.close();
 });
