@@ -256,7 +256,8 @@ const app = await buildApp({
     getState: () => scheduler.getState(),
     update: updateScheduler
   },
-  manualRunMode: isServerlessRuntime ? 'blocking' : 'background'
+  manualRunMode: isServerlessRuntime ? 'blocking' : 'background',
+  serveStatic: !isServerlessRuntime
 });
 
 await app.ready();
