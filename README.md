@@ -123,3 +123,16 @@ If a product has no non-outlet match yet, the dashboard shows `match pending` in
 
 - Direct Elgiganten requests from this runtime were blocked by Vercel security checks, so the tracker now uses Apify instead of trying to scrape Elgiganten HTML directly.
 - The old Komplett source is still in `config/sources.json`, but disabled.
+
+## Minimal Vercel deploy
+
+This repo now includes a minimal Vercel serverless entrypoint:
+
+- `api/[[...path]].js` (handles all `/api/*` routes)
+- `vercel.json` (sets function duration)
+
+For quick smoke testing, serverless mode:
+
+- uses `/tmp/swedish-price-watcher-store.json` for runtime state
+- auto-seeds from `data/store.json` when available
+- disables background scheduler timers (you can still run scans manually from the dashboard)

@@ -292,7 +292,7 @@ function normalizeSchedulerUpdate(payload) {
   return normalized;
 }
 
-export async function buildApp({ config, store, scanState, triggerScan, scheduler }) {
+export async function buildApp({ config, store, scanState, triggerScan, scheduler, manualRunMode = 'background' }) {
   const app = Fastify({ logger: false });
 
   await app.register(fastifyStatic, {
@@ -440,6 +440,17 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       return {
         ok: false,
         message: 'No sources are enabled. Add or enable a source in config/sources.json.'
+      };
+    }
+
+    if (manualRunMode === 'blocking') {
+      const summary = await triggerScan('manual');
+      return {
+        ok: true,
+        started: true,
+        completed: true,
+        message: 'Live scan completed.',
+        summary
       };
     }
 
