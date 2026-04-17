@@ -15,23 +15,28 @@
       ],
       "actorInput": {
         "startUrl": "https://www.elgiganten.se/search?q=outlet&view=products",
-        "results_wanted": 1200,
-        "max_pages": 40,
+        "results_wanted": 2500,
+        "max_pages": 80,
         "includeRawRecord": true
       },
       "actorKeywordQueries": [
         "outlet gaming",
         "outlet grafikkort",
-        "outlet playstation"
+        "outlet playstation",
+        "outlet laptop",
+        "outlet mobil",
+        "outlet tv",
+        "outlet hörlurar",
+        "outlet dator"
       ],
-      "actorKeywordResultsWanted": 120,
-      "actorKeywordMaxPages": 5,
+      "actorKeywordResultsWanted": 250,
+      "actorKeywordMaxPages": 10,
       "referenceLookup": true,
-      "referenceLookupMaxPerScan": 25,
-      "referenceLookupConcurrency": 2,
-      "referenceLookupRetryHours": 72,
-      "referenceLookupResultsWanted": 20,
-      "referenceLookupMaxPages": 1,
+      "referenceLookupMaxPerScan": 400,
+      "referenceLookupConcurrency": 8,
+      "referenceLookupRetryHours": 12,
+      "referenceLookupResultsWanted": 80,
+      "referenceLookupMaxPages": 2,
       "notificationMode": "favorite-events",
       "notes": "Runs an Apify-backed Elgiganten Sweden outlet search and keeps only URLs under /product/outlet/ before sending Discord alerts."
     },

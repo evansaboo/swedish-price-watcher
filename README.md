@@ -52,7 +52,7 @@ Open `http://127.0.0.1:3030` if you want the local dashboard, or just let schedu
 
 The scheduler uses `SCAN_INTERVAL_MINUTES` as its first-run default, and can then be changed live in the dashboard.
 
-The default source profile is tuned for lower Apify spend (smaller result/page caps, fewer keyword expansions, lighter reference lookups).
+The default source profile is tuned for higher outlet coverage and faster catalog price matching (more pages, wider keyword expansion, and larger reference lookups).
 
 ## Railway deployment (always-on, no VM)
 
