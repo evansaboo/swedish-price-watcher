@@ -86,15 +86,54 @@ function sanitizeSource(rawSource) {
   };
 }
 
+function getDefaultVercelSources() {
+  return [
+    {
+      id: 'elgiganten-outlet-latest',
+      type: 'apify-elgiganten',
+      enabled: true,
+      label: 'Elgiganten outlet latest',
+      category: 'electronics',
+      condition: 'outlet',
+      actorId: 'shahidirfan/elgiganten-scraper',
+      apiTokenEnvVar: 'APIFY_TOKEN',
+      actorTimeoutMs: 120000,
+      includePaths: ['/product/outlet/'],
+      actorInput: {
+        startUrl: 'https://www.elgiganten.se/search?q=outlet&view=products',
+        results_wanted: 1200,
+        max_pages: 40,
+        includeRawRecord: true
+      },
+      actorKeywordQueries: ['outlet gaming', 'outlet grafikkort', 'outlet playstation'],
+      actorKeywordResultsWanted: 120,
+      actorKeywordMaxPages: 5,
+      referenceLookup: true,
+      referenceLookupMaxPerScan: 25,
+      referenceLookupConcurrency: 2,
+      referenceLookupRetryHours: 72,
+      referenceLookupResultsWanted: 20,
+      referenceLookupMaxPages: 1,
+      notificationMode: 'favorite-events'
+    }
+  ];
+}
+
 async function loadSources(filePath) {
   try {
     const file = await fs.readFile(filePath, 'utf8');
     const parsed = JSON.parse(file);
     const sources = Array.isArray(parsed.sources) ? parsed.sources : [];
-    return sources.map(sanitizeSource);
+    const sanitized = sources.map(sanitizeSource);
+
+    if (!sanitized.length && isVercelRuntime) {
+      return getDefaultVercelSources().map(sanitizeSource);
+    }
+
+    return sanitized;
   } catch (error) {
     if (error?.code === 'ENOENT') {
-      return [];
+      return isVercelRuntime ? getDefaultVercelSources().map(sanitizeSource) : [];
     }
 
     throw new Error(`Unable to load sources from ${filePath}: ${error.message}`);
