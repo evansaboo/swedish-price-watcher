@@ -257,7 +257,7 @@ const app = await buildApp({
     update: updateScheduler
   },
   manualRunMode: isServerlessRuntime ? 'blocking' : 'background',
-  serveStatic: !isServerlessRuntime
+  serveStatic: true
 });
 
 await app.ready();

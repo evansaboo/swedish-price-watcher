@@ -296,10 +296,14 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
   const app = Fastify({ logger: false });
 
   if (serveStatic) {
-    await app.register(fastifyStatic, {
-      root: config.publicDir,
-      index: ['index.html']
-    });
+    try {
+      await app.register(fastifyStatic, {
+        root: config.publicDir,
+        index: ['index.html']
+      });
+    } catch (error) {
+      console.error('[static]', error.message);
+    }
   }
 
   app.get('/health', async () => ({ ok: true }));
