@@ -2,7 +2,7 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PoliteFetcher } from './lib/fetcher.js';
 import { JsonStore, reconcileStateWithSources } from './lib/store.js';
-import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
+import { createSchedulerController, isWithinActiveWindow, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { DiscordNotifier } from './services/notifier.js';
@@ -194,7 +194,7 @@ function createServerlessSchedulerAdapter(initialPreference) {
       return {
         ...current,
         nextRunAt: null,
-        isInActiveWindow: true
+        isInActiveWindow: isWithinActiveWindow(current.activeWindow, new Date())
       };
     },
     update(next = {}) {

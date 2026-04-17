@@ -292,6 +292,70 @@ function normalizeSchedulerUpdate(payload) {
   return normalized;
 }
 
+function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
+  if (!schedulerState) {
+    return null;
+  }
+
+  if (schedulerState.nextRunAt) {
+    return schedulerState;
+  }
+
+  if (!schedulerState.enabled) {
+    return schedulerState;
+  }
+
+  const intervalMinutes = Number.parseInt(String(schedulerState.intervalMinutes ?? ''), 10);
+  const lastRunTimestamp = Date.parse(lastRunStartedAt ?? '');
+
+  if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0 || Number.isNaN(lastRunTimestamp)) {
+    return schedulerState;
+  }
+
+  return {
+    ...schedulerState,
+    nextRunAt: new Date(lastRunTimestamp + intervalMinutes * 60 * 1000).toISOString()
+  };
+}
+
+function evaluateScheduledScan(schedulerState, lastRunStartedAt, isRunning) {
+  if (isRunning) {
+    return { shouldRun: false, reason: 'scan-running' };
+  }
+
+  if (!schedulerState?.enabled) {
+    return { shouldRun: false, reason: 'scheduler-disabled' };
+  }
+
+  if (schedulerState.activeWindow?.enabled && schedulerState.isInActiveWindow === false) {
+    return { shouldRun: false, reason: 'outside-active-window' };
+  }
+
+  const intervalMinutes = Number.parseInt(String(schedulerState.intervalMinutes ?? ''), 10);
+
+  if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+    return { shouldRun: false, reason: 'invalid-interval' };
+  }
+
+  const now = Date.now();
+  const lastRunTimestamp = Date.parse(lastRunStartedAt ?? '');
+
+  if (!Number.isNaN(lastRunTimestamp)) {
+    const elapsedMs = now - lastRunTimestamp;
+    const intervalMs = intervalMinutes * 60 * 1000;
+
+    if (elapsedMs < intervalMs) {
+      return {
+        shouldRun: false,
+        reason: 'not-due',
+        nextRunAt: new Date(lastRunTimestamp + intervalMs).toISOString()
+      };
+    }
+  }
+
+  return { shouldRun: true };
+}
+
 export async function buildApp({ config, store, scanState, triggerScan, scheduler, manualRunMode = 'background', serveStatic = true }) {
   const app = Fastify({ logger: false });
 
@@ -312,6 +376,7 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
     const state = store.getState();
     const sourceStatuses = config.sources.map((source) => describeSourceStatus(source, state.sourceStates[source.id]));
     const currentSource = config.sources.find((source) => source.id === scanState.currentSourceId);
+    const schedulerState = buildSchedulerStatus(scheduler?.getState?.() ?? null, state.stats.lastRunStartedAt);
 
     return {
       isRunning: scanState.running,
@@ -337,7 +402,7 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
         referencedItems: state.deals.filter((deal) => deal.comparisonPriceSek > deal.currentPriceSek).length,
         favoriteCategories: getFavoriteCategories(state).length
       },
-      scheduler: scheduler?.getState?.() ?? null
+      scheduler: schedulerState
     };
   });
 
@@ -467,6 +532,37 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       ok: true,
       started: true,
       message: 'Live scan started.'
+    };
+  });
+
+  app.get('/api/cron', async (_, reply) => {
+    if (!scheduler?.getState) {
+      reply.code(404);
+      return { ok: false, message: 'Scheduler is unavailable.' };
+    }
+
+    if (!config.sources.some((source) => source.enabled)) {
+      return { ok: true, ran: false, reason: 'no-enabled-sources' };
+    }
+
+    const state = store.getState();
+    const schedulerState = buildSchedulerStatus(scheduler.getState(), state.stats.lastRunStartedAt);
+    const decision = evaluateScheduledScan(schedulerState, state.stats.lastRunStartedAt, scanState.running);
+
+    if (!decision.shouldRun) {
+      return {
+        ok: true,
+        ran: false,
+        reason: decision.reason,
+        nextRunAt: decision.nextRunAt ?? schedulerState?.nextRunAt ?? null
+      };
+    }
+
+    const summary = await triggerScan('scheduled');
+    return {
+      ok: true,
+      ran: true,
+      summary
     };
   });
 

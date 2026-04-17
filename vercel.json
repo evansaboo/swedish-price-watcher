@@ -13,6 +13,12 @@
       "destination": "/public/styles.css"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "*/10 * * * *"
+    }
+  ],
   "functions": {
     "api/[[...path]].js": {
       "maxDuration": 60,
