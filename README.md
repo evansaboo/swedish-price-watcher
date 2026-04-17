@@ -54,6 +54,23 @@ The scheduler uses `SCAN_INTERVAL_MINUTES` as its first-run default, and can the
 
 The default source profile is tuned for lower Apify spend (smaller result/page caps, fewer keyword expansions, lighter reference lookups).
 
+## Railway deployment (always-on, no VM)
+
+This repo is Railway-ready via `railway.json`.
+
+1. Create a new Railway project from this GitHub repo.
+2. Set environment variables:
+   - `APIFY_TOKEN`
+   - `DISCORD_WEBHOOK_URL` (optional)
+   - `SCAN_INTERVAL_MINUTES` (e.g. `60`)
+   - `RUN_ON_START=true`
+3. Deploy.
+
+Notes:
+
+- Host binding is auto-set to `0.0.0.0` on Railway.
+- With `APIFY_TOKEN` set, Railway runtime uses Apify key-value state storage (same keys as Vercel mode), so scans and history persist across restarts/redeploys.
+
 ## Run one scan manually
 
 ```bash

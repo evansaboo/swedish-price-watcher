@@ -9,7 +9,8 @@ import { DiscordNotifier } from './services/notifier.js';
 
 const runOnce = process.argv.includes('--run-once');
 const isServerlessRuntime = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-const useApifyStateStore = isServerlessRuntime && Boolean(process.env.APIFY_TOKEN?.trim());
+const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+const useApifyStateStore = (isServerlessRuntime || isRailwayRuntime) && Boolean(process.env.APIFY_TOKEN?.trim());
 const config = await loadConfig();
 const store = useApifyStateStore
   ? new ApifyStore({

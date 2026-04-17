@@ -8,6 +8,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-sitemap', 'apify-elgiganten']);
 const supportedNotificationModes = new Set(['amazing-deals', 'new-listings', 'favorite-events', 'none']);
 const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_URL);
+const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -150,7 +151,7 @@ export async function loadConfig() {
     dataFile: path.resolve(rootDir, process.env.DATA_FILE ?? defaultDataFile),
     sourcesFile,
     port: parsePositiveInt(process.env.PORT, 3030),
-    host: process.env.HOST ?? '127.0.0.1',
+    host: process.env.HOST ?? (isRailwayRuntime ? '0.0.0.0' : '127.0.0.1'),
     scanIntervalMinutes: parsePositiveInt(process.env.SCAN_INTERVAL_MINUTES, 180),
     hostDelayMs: parsePositiveInt(process.env.HOST_DELAY_MS, 8000),
     requestTimeoutMs: parsePositiveInt(process.env.REQUEST_TIMEOUT_MS, 20000),
