@@ -214,3 +214,81 @@ test('runs additional keyword inputs and deduplicates repeated records', async (
     }
   }
 });
+
+test('retries transient Apify 502 failures with token rotation', async () => {
+  const previousToken = process.env.APIFY_TOKEN;
+  const previousToken2 = process.env.APIFY_TOKEN_2;
+  process.env.APIFY_TOKEN = 'test-apify-token';
+  process.env.APIFY_TOKEN_2 = 'test-apify-token-2';
+
+  try {
+    const authorizations = [];
+    let attempts = 0;
+    const fetcher = {
+      async fetchJsonApi(_url, options) {
+        attempts += 1;
+        authorizations.push(options.headers.authorization);
+
+        if (attempts <= 2) {
+          throw new Error(
+            'Request failed for https://api.apify.com/v2/acts/shahidirfan~elgiganten-scraper/run-sync-get-dataset-items?clean=1&format=json: 502 Bad Gateway'
+          );
+        }
+
+        return [
+          {
+            resultType: 'product',
+            productId: '3000100',
+            title: 'Retry resilient outlet listing',
+            url: 'https://www.elgiganten.se/product/outlet/retry-resilient-outlet-listing/3000100',
+            priceCurrent: 1290,
+            leafCategory: 'Outlet'
+          }
+        ];
+      }
+    };
+
+    const observations = await collectSource({
+      source: {
+        id: 'elgiganten-outlet-latest',
+        type: 'apify-elgiganten',
+        label: 'Elgiganten outlet latest',
+        category: 'electronics',
+        condition: 'outlet',
+        actorId: 'shahidirfan/elgiganten-scraper',
+        actorInput: {
+          startUrl: 'https://www.elgiganten.se/search?q=outlet&view=products',
+          results_wanted: 20,
+          max_pages: 2
+        },
+        includePaths: ['/product/outlet/'],
+        actorTimeoutMs: 120000,
+        actorRequestRetries: 2,
+        actorRetryBaseMs: 1,
+        actorRetryMaxMs: 2,
+        apiTokenEnvVar: 'APIFY_TOKEN',
+        referenceLookup: false
+      },
+      fetcher,
+      sourceState: {},
+      now: '2026-04-17T14:00:00.000Z'
+    });
+
+    assert.equal(attempts, 3);
+    assert.deepEqual(authorizations, ['Bearer test-apify-token', 'Bearer test-apify-token-2', 'Bearer test-apify-token']);
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0].externalId, '3000100');
+  } finally {
+    if (previousToken == null) {
+      delete process.env.APIFY_TOKEN;
+    } else {
+      process.env.APIFY_TOKEN = previousToken;
+    }
+
+    if (previousToken2 == null) {
+      delete process.env.APIFY_TOKEN_2;
+    } else {
+      process.env.APIFY_TOKEN_2 = previousToken2;
+    }
+  }
+});

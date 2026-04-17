@@ -112,6 +112,9 @@ Edit `config/sources.json`.
 | `actorKeywordResultsWanted` | Per-keyword result target |
 | `actorKeywordMaxPages` | Per-keyword page limit |
 | `actorTimeoutMs` | Timeout for the actor run request |
+| `actorRequestRetries` | Retries for transient Apify API failures (e.g. `502`) |
+| `actorRetryBaseMs` | Initial retry backoff delay |
+| `actorRetryMaxMs` | Maximum retry backoff delay |
 | `notificationMode` | `new-listings`, `favorite-events`, `amazing-deals`, or `none` |
 | `notificationBatchSize` | Max listings bundled into one Discord message |
 | `includePaths` | URL fragments that must exist in listing URLs (used for outlet-only filtering) |
@@ -138,6 +141,8 @@ The bundled source uses:
 Category filters use resolved Elgiganten category names when a match is available.
 
 The source also keeps only URLs matching `/product/outlet/` so alerts stay outlet-focused.
+
+Transient Apify failures (for example `502 Bad Gateway`) are retried automatically with backoff.
 
 To improve coverage beyond the generic outlet search page without excessive Apify spend, the default config also runs a small keyword query set and merges/deduplicates all results into one outlet set.
 

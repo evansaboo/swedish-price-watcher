@@ -94,6 +94,38 @@ function createTokenPicker(tokens) {
   };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
+}
+
+function isRetriableApifyError(error) {
+  const message = String(error?.message ?? '');
+
+  if (!message) {
+    return false;
+  }
+
+  if (/\b(429|5\d\d)\b/.test(message)) {
+    return true;
+  }
+
+  if (/timed out after/i.test(message)) {
+    return true;
+  }
+
+  return /\b(ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ETIMEDOUT|socket hang up)\b/i.test(message);
+}
+
+function nextRetryDelayMs(source, attempt) {
+  const baseMs = Math.max(1, source.actorRetryBaseMs ?? 1200);
+  const maxMs = Math.max(baseMs, source.actorRetryMaxMs ?? 12000);
+  const exponential = baseMs * 2 ** attempt;
+  const jitter = Math.round(baseMs * 0.2 * Math.random());
+  return Math.min(maxMs, exponential + jitter);
+}
+
 function readNumericValue(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.round(value);
@@ -613,30 +645,47 @@ function buildActorRecordKey(record) {
   return title ? `${resultType}:title:${slugify(title)}` : null;
 }
 
-async function runActorInput({ fetcher, source, actorId, token, actorInput }) {
-  const response = await fetcher.fetchJsonApi(
-    `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?clean=1&format=json`,
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify(actorInput),
-      timeoutMs: source.actorTimeoutMs,
-      skipHostDelay: true
-    }
-  );
+async function runActorInput({ fetcher, source, actorId, tokenPicker, actorInput }) {
+  const retries = Math.max(0, source.actorRequestRetries ?? 3);
+  const endpoint = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?clean=1&format=json`;
+  let lastError = null;
 
-  return Array.isArray(response) ? response : [];
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const token = tokenPicker();
+
+    try {
+      const response = await fetcher.fetchJsonApi(endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(actorInput),
+        timeoutMs: source.actorTimeoutMs,
+        skipHostDelay: true
+      });
+
+      return Array.isArray(response) ? response : [];
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetriableApifyError(error) || attempt >= retries) {
+        throw error;
+      }
+
+      await sleep(nextRetryDelayMs(source, attempt));
+    }
+  }
+
+  throw lastError ?? new Error('Apify actor request failed.');
 }
 
-async function runLookup({ source, fetcher, actorId, token, query }) {
+async function runLookup({ source, fetcher, actorId, tokenPicker, query }) {
   return runActorInput({
     fetcher,
     source,
     actorId,
-    token,
+    tokenPicker,
     actorInput: buildLookupInput(source, query)
   });
 }
@@ -753,7 +802,7 @@ export async function collectFromApifyElgiganten({ source, fetcher, sourceState,
       fetcher,
       source,
       actorId,
-      token: tokenPicker(),
+      tokenPicker,
       actorInput
     });
 
@@ -849,7 +898,7 @@ export async function collectFromApifyElgiganten({ source, fetcher, sourceState,
             source,
             fetcher,
             actorId,
-            token: tokenPicker(),
+            tokenPicker,
             query: lookupQuery
           });
           const lookupCandidates = buildRegularCandidates(lookupRecords);

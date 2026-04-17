@@ -14,6 +14,9 @@
         "APIFY_TOKEN_3"
       ],
       "actorTimeoutMs": 120000,
+      "actorRequestRetries": 4,
+      "actorRetryBaseMs": 1500,
+      "actorRetryMaxMs": 15000,
       "includePaths": [
         "/product/outlet/"
       ],
