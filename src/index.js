@@ -8,6 +8,7 @@ import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { DiscordNotifier } from './services/notifier.js';
 
 const runOnce = process.argv.includes('--run-once');
+const isServerlessRuntime = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const config = await loadConfig();
 const store = new JsonStore(config.dataFile);
 await store.load();
@@ -181,12 +182,54 @@ if (runOnce) {
   process.exit(0);
 }
 
-scheduler = createSchedulerController({
-  run: () => triggerScan('scheduled'),
-  enabled: schedulerPreference.enabled,
-  intervalMinutes: schedulerPreference.intervalMinutes,
-  activeWindow: schedulerPreference.activeWindow
-});
+function createServerlessSchedulerAdapter(initialPreference) {
+  let current = {
+    enabled: Boolean(initialPreference.enabled),
+    intervalMinutes: initialPreference.intervalMinutes,
+    activeWindow: initialPreference.activeWindow
+  };
+
+  return {
+    getState() {
+      return {
+        ...current,
+        nextRunAt: null,
+        isInActiveWindow: true
+      };
+    },
+    update(next = {}) {
+      if (next.enabled !== undefined) {
+        current.enabled = Boolean(next.enabled);
+      }
+
+      if (next.intervalMinutes !== undefined) {
+        const intervalMinutes = Number.parseInt(String(next.intervalMinutes), 10);
+
+        if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+          throw new Error('intervalMinutes must be a positive integer.');
+        }
+
+        current.intervalMinutes = intervalMinutes;
+      }
+
+      if (next.activeWindow !== undefined) {
+        current.activeWindow = normalizeActiveWindow(next.activeWindow, current.activeWindow);
+      }
+
+      return this.getState();
+    },
+    stop() {}
+  };
+}
+
+scheduler = isServerlessRuntime
+  ? createServerlessSchedulerAdapter(schedulerPreference)
+  : createSchedulerController({
+      run: () => triggerScan('scheduled'),
+      enabled: schedulerPreference.enabled,
+      intervalMinutes: schedulerPreference.intervalMinutes,
+      activeWindow: schedulerPreference.activeWindow
+    });
 
 async function updateScheduler(nextSettings = {}) {
   const updated = scheduler.update(nextSettings);
@@ -212,40 +255,49 @@ const app = await buildApp({
   scheduler: {
     getState: () => scheduler.getState(),
     update: updateScheduler
+  },
+  manualRunMode: isServerlessRuntime ? 'blocking' : 'background'
+});
+
+await app.ready();
+
+if (!isServerlessRuntime) {
+  await app.listen({
+    port: config.port,
+    host: config.host
+  });
+
+  console.log(`Price watcher listening at http://${config.host}:${config.port}`);
+
+  if (config.runOnStart) {
+    triggerScan('startup').catch((error) => {
+      scanState.lastError = error.message;
+      console.error('[startup-scan]', error.message);
+    });
   }
-});
 
-await app.listen({
-  port: config.port,
-  host: config.host
-});
+  async function shutdown(signal) {
+    scheduler?.stop();
+    await app.close();
+    console.log(`${signal} received, shutting down.`);
+    process.exit(0);
+  }
 
-console.log(`Price watcher listening at http://${config.host}:${config.port}`);
+  process.on('SIGINT', () => {
+    shutdown('SIGINT').catch((error) => {
+      console.error(error.message);
+      process.exit(1);
+    });
+  });
 
-if (config.runOnStart) {
-  triggerScan('startup').catch((error) => {
-    scanState.lastError = error.message;
-    console.error('[startup-scan]', error.message);
+  process.on('SIGTERM', () => {
+    shutdown('SIGTERM').catch((error) => {
+      console.error(error.message);
+      process.exit(1);
+    });
   });
 }
 
-async function shutdown(signal) {
-  scheduler?.stop();
-  await app.close();
-  console.log(`${signal} received, shutting down.`);
-  process.exit(0);
+export default async function handler(req, res) {
+  app.server.emit('request', req, res);
 }
-
-process.on('SIGINT', () => {
-  shutdown('SIGINT').catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-  });
-});
-
-process.on('SIGTERM', () => {
-  shutdown('SIGTERM').catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-  });
-});
