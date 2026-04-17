@@ -318,90 +318,21 @@ function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
   };
 }
 
-function evaluateScheduledScan(schedulerState, lastRunStartedAt, isRunning) {
-  if (isRunning) {
-    return { shouldRun: false, reason: 'scan-running' };
-  }
-
-  if (!schedulerState?.enabled) {
-    return { shouldRun: false, reason: 'scheduler-disabled' };
-  }
-
-  if (schedulerState.activeWindow?.enabled && schedulerState.isInActiveWindow === false) {
-    return { shouldRun: false, reason: 'outside-active-window' };
-  }
-
-  const intervalMinutes = Number.parseInt(String(schedulerState.intervalMinutes ?? ''), 10);
-
-  if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
-    return { shouldRun: false, reason: 'invalid-interval' };
-  }
-
-  const now = Date.now();
-  const lastRunTimestamp = Date.parse(lastRunStartedAt ?? '');
-
-  if (!Number.isNaN(lastRunTimestamp)) {
-    const elapsedMs = now - lastRunTimestamp;
-    const intervalMs = intervalMinutes * 60 * 1000;
-
-    if (elapsedMs < intervalMs) {
-      return {
-        shouldRun: false,
-        reason: 'not-due',
-        nextRunAt: new Date(lastRunTimestamp + intervalMs).toISOString()
-      };
-    }
-  }
-
-  return { shouldRun: true };
-}
-
-export async function buildApp({ config, store, scanState, triggerScan, scheduler, manualRunMode = 'background', serveStatic = true }) {
+export async function buildApp({ config, store, scanState, triggerScan, scheduler }) {
   const app = Fastify({ logger: false });
 
-  if (serveStatic) {
-    try {
-      await app.register(fastifyStatic, {
-        root: config.publicDir,
-        index: ['index.html']
-      });
-    } catch (error) {
-      console.error('[static]', error.message);
-    }
-  }
-
-  async function runScheduledScanIfDue() {
-    if (manualRunMode !== 'blocking' || !scheduler?.getState) {
-      return { ran: false, reason: 'disabled' };
-    }
-
-    if (!config.sources.some((source) => source.enabled)) {
-      return { ran: false, reason: 'no-enabled-sources' };
-    }
-
-    const state = store.getState();
-    const schedulerState = buildSchedulerStatus(scheduler.getState(), state.stats.lastRunStartedAt);
-    const decision = evaluateScheduledScan(schedulerState, state.stats.lastRunStartedAt, scanState.running);
-
-    if (!decision.shouldRun) {
-      return { ran: false, reason: decision.reason };
-    }
-
-    await triggerScan('scheduled');
-    return { ran: true, reason: 'scheduled' };
+  try {
+    await app.register(fastifyStatic, {
+      root: config.publicDir,
+      index: ['index.html']
+    });
+  } catch (error) {
+    console.error('[static]', error.message);
   }
 
   app.get('/health', async () => ({ ok: true }));
 
   app.get('/api/status', async () => {
-    if (manualRunMode === 'blocking') {
-      try {
-        await runScheduledScanIfDue();
-      } catch (error) {
-        scanState.lastError = error.message;
-      }
-    }
-
     const state = store.getState();
     const sourceStatuses = config.sources.map((source) => describeSourceStatus(source, state.sourceStates[source.id]));
     const currentSource = config.sources.find((source) => source.id === scanState.currentSourceId);
@@ -543,17 +474,6 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       };
     }
 
-    if (manualRunMode === 'blocking') {
-      const summary = await triggerScan('manual');
-      return {
-        ok: true,
-        started: true,
-        completed: true,
-        message: 'Live scan completed.',
-        summary
-      };
-    }
-
     triggerScan('manual').catch(() => {});
     reply.code(202);
 
@@ -561,37 +481,6 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       ok: true,
       started: true,
       message: 'Live scan started.'
-    };
-  });
-
-  app.get('/api/cron', async (_, reply) => {
-    if (!scheduler?.getState) {
-      reply.code(404);
-      return { ok: false, message: 'Scheduler is unavailable.' };
-    }
-
-    if (!config.sources.some((source) => source.enabled)) {
-      return { ok: true, ran: false, reason: 'no-enabled-sources' };
-    }
-
-    const state = store.getState();
-    const schedulerState = buildSchedulerStatus(scheduler.getState(), state.stats.lastRunStartedAt);
-    const decision = evaluateScheduledScan(schedulerState, state.stats.lastRunStartedAt, scanState.running);
-
-    if (!decision.shouldRun) {
-      return {
-        ok: true,
-        ran: false,
-        reason: decision.reason,
-        nextRunAt: decision.nextRunAt ?? schedulerState?.nextRunAt ?? null
-      };
-    }
-
-    const summary = await triggerScan('scheduled');
-    return {
-      ok: true,
-      ran: true,
-      summary
     };
   });
 

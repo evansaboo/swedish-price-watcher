@@ -2,15 +2,14 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PoliteFetcher } from './lib/fetcher.js';
 import { ApifyStore, JsonStore, reconcileStateWithSources } from './lib/store.js';
-import { createSchedulerController, isWithinActiveWindow, normalizeActiveWindow } from './scheduler.js';
+import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { DiscordNotifier } from './services/notifier.js';
 
 const runOnce = process.argv.includes('--run-once');
-const isServerlessRuntime = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
-const useApifyStateStore = (isServerlessRuntime || isRailwayRuntime) && Boolean(process.env.APIFY_TOKEN?.trim());
+const useApifyStateStore = isRailwayRuntime && Boolean(process.env.APIFY_TOKEN?.trim());
 const config = await loadConfig();
 const store = useApifyStateStore
   ? new ApifyStore({
@@ -19,6 +18,7 @@ const store = useApifyStateStore
       recordKey: process.env.APIFY_STATE_RECORD_KEY ?? 'state'
     })
   : new JsonStore(config.dataFile);
+
 await store.load();
 reconcileStateWithSources(store.getState(), config.sources);
 const state = store.getState();
@@ -33,6 +33,7 @@ const schedulerPreference = {
   intervalMinutes: Number.isFinite(parsedSchedulerInterval) && parsedSchedulerInterval > 0 ? parsedSchedulerInterval : configuredInterval,
   activeWindow: normalizeActiveWindow(existingSchedulerPreference.activeWindow)
 };
+
 state.preferences = {
   ...(state.preferences ?? {}),
   scheduler: schedulerPreference
@@ -54,8 +55,6 @@ const scanState = {
   completedSources: 0,
   totalSources: 0
 };
-
-let scheduler = null;
 
 async function triggerScan(trigger) {
   if (scanState.running) {
@@ -190,54 +189,12 @@ if (runOnce) {
   process.exit(0);
 }
 
-function createServerlessSchedulerAdapter(initialPreference) {
-  let current = {
-    enabled: Boolean(initialPreference.enabled),
-    intervalMinutes: initialPreference.intervalMinutes,
-    activeWindow: initialPreference.activeWindow
-  };
-
-  return {
-    getState() {
-      return {
-        ...current,
-        nextRunAt: null,
-        isInActiveWindow: isWithinActiveWindow(current.activeWindow, new Date())
-      };
-    },
-    update(next = {}) {
-      if (next.enabled !== undefined) {
-        current.enabled = Boolean(next.enabled);
-      }
-
-      if (next.intervalMinutes !== undefined) {
-        const intervalMinutes = Number.parseInt(String(next.intervalMinutes), 10);
-
-        if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
-          throw new Error('intervalMinutes must be a positive integer.');
-        }
-
-        current.intervalMinutes = intervalMinutes;
-      }
-
-      if (next.activeWindow !== undefined) {
-        current.activeWindow = normalizeActiveWindow(next.activeWindow, current.activeWindow);
-      }
-
-      return this.getState();
-    },
-    stop() {}
-  };
-}
-
-scheduler = isServerlessRuntime
-  ? createServerlessSchedulerAdapter(schedulerPreference)
-  : createSchedulerController({
-      run: () => triggerScan('scheduled'),
-      enabled: schedulerPreference.enabled,
-      intervalMinutes: schedulerPreference.intervalMinutes,
-      activeWindow: schedulerPreference.activeWindow
-    });
+const scheduler = createSchedulerController({
+  run: () => triggerScan('scheduled'),
+  enabled: schedulerPreference.enabled,
+  intervalMinutes: schedulerPreference.intervalMinutes,
+  activeWindow: schedulerPreference.activeWindow
+});
 
 async function updateScheduler(nextSettings = {}) {
   const updated = scheduler.update(nextSettings);
@@ -263,50 +220,40 @@ const app = await buildApp({
   scheduler: {
     getState: () => scheduler.getState(),
     update: updateScheduler
-  },
-  manualRunMode: isServerlessRuntime ? 'blocking' : 'background',
-  serveStatic: true
+  }
 });
 
-await app.ready();
+await app.listen({
+  port: config.port,
+  host: config.host
+});
 
-if (!isServerlessRuntime) {
-  await app.listen({
-    port: config.port,
-    host: config.host
-  });
+console.log(`Price watcher listening at http://${config.host}:${config.port}`);
 
-  console.log(`Price watcher listening at http://${config.host}:${config.port}`);
-
-  if (config.runOnStart) {
-    triggerScan('startup').catch((error) => {
-      scanState.lastError = error.message;
-      console.error('[startup-scan]', error.message);
-    });
-  }
-
-  async function shutdown(signal) {
-    scheduler?.stop();
-    await app.close();
-    console.log(`${signal} received, shutting down.`);
-    process.exit(0);
-  }
-
-  process.on('SIGINT', () => {
-    shutdown('SIGINT').catch((error) => {
-      console.error(error.message);
-      process.exit(1);
-    });
-  });
-
-  process.on('SIGTERM', () => {
-    shutdown('SIGTERM').catch((error) => {
-      console.error(error.message);
-      process.exit(1);
-    });
+if (config.runOnStart) {
+  triggerScan('startup').catch((error) => {
+    scanState.lastError = error.message;
+    console.error('[startup-scan]', error.message);
   });
 }
 
-export default async function handler(req, res) {
-  app.server.emit('request', req, res);
+async function shutdown(signal) {
+  scheduler.stop();
+  await app.close();
+  console.log(`${signal} received, shutting down.`);
+  process.exit(0);
 }
+
+process.on('SIGINT', () => {
+  shutdown('SIGINT').catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+});
+
+process.on('SIGTERM', () => {
+  shutdown('SIGTERM').catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+});

@@ -69,7 +69,7 @@ This repo is Railway-ready via `railway.json`.
 Notes:
 
 - Host binding is auto-set to `0.0.0.0` on Railway.
-- With `APIFY_TOKEN` set, Railway runtime uses Apify key-value state storage (same keys as Vercel mode), so scans and history persist across restarts/redeploys.
+- With `APIFY_TOKEN` set, Railway runtime uses Apify key-value state storage so scans and history persist across restarts/redeploys.
 - If you already had `HOST=127.0.0.1` in Railway variables, it is ignored on Railway now to prevent healthcheck failures.
 
 ## Run one scan manually
@@ -139,20 +139,5 @@ If a product has no non-outlet match yet, the dashboard shows `match pending` in
 
 ## Notes
 
-- Direct Elgiganten requests from this runtime were blocked by Vercel security checks, so the tracker now uses Apify instead of trying to scrape Elgiganten HTML directly.
+- Direct Elgiganten requests from this runtime are often blocked by anti-bot checks, so the tracker uses Apify instead of scraping Elgiganten HTML directly.
 - The old Komplett source is still in `config/sources.json`, but disabled.
-
-## Minimal Vercel deploy
-
-This repo now includes a minimal Vercel serverless entrypoint:
-
-- `api/[[...path]].js` (handles all `/api/*` routes)
-- `vercel.json` (sets function duration)
-
-For quick smoke testing, serverless mode:
-
-- uses `/tmp/swedish-price-watcher-store.json` for runtime state
-- auto-seeds from `data/store.json` when available
-- disables background scheduler timers (you can still run scans manually from the dashboard)
-
-When `APIFY_TOKEN` is configured on Vercel, the app also persists tracker state in an Apify key-value store (`APIFY_STATE_STORE_NAME` / `APIFY_STATE_RECORD_KEY`) so data survives cold starts.
