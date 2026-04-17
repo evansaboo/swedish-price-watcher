@@ -12,6 +12,7 @@ function pickPreferredCategory(previousCategory, nextCategory) {
 
   if (!previousCategory) {
     return nextCategory;
+    
   }
 
   const previousGeneric = isGenericCategoryLabel(previousCategory);
