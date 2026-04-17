@@ -1,0 +1,82 @@
+{
+  "sources": [
+    {
+      "id": "elgiganten-outlet-latest",
+      "type": "apify-elgiganten",
+      "enabled": true,
+      "label": "Elgiganten outlet latest",
+      "category": "electronics",
+      "condition": "outlet",
+      "actorId": "shahidirfan/elgiganten-scraper",
+      "apiTokenEnvVar": "APIFY_TOKEN",
+      "actorTimeoutMs": 120000,
+      "includePaths": [
+        "/product/outlet/"
+      ],
+      "actorInput": {
+        "startUrl": "https://www.elgiganten.se/search?q=outlet&view=products",
+        "results_wanted": 1200,
+        "max_pages": 40,
+        "includeRawRecord": true
+      },
+      "actorKeywordQueries": [
+        "outlet gaming",
+        "outlet grafikkort",
+        "outlet playstation"
+      ],
+      "actorKeywordResultsWanted": 120,
+      "actorKeywordMaxPages": 5,
+      "referenceLookup": true,
+      "referenceLookupMaxPerScan": 25,
+      "referenceLookupConcurrency": 2,
+      "referenceLookupRetryHours": 72,
+      "referenceLookupResultsWanted": 20,
+      "referenceLookupMaxPages": 1,
+      "notificationMode": "favorite-events",
+      "notes": "Runs an Apify-backed Elgiganten Sweden outlet search and keeps only URLs under /product/outlet/ before sending Discord alerts."
+    },
+    {
+      "id": "komplett-outlet-electronics",
+      "type": "komplett-sitemap",
+      "enabled": false,
+      "label": "Komplett outlet electronics",
+      "category": "electronics",
+      "condition": "outlet",
+      "sitemapUrl": "https://www.komplett.se/sitemap.products.xml",
+      "includePaths": [
+        "/demovaror/"
+      ],
+      "matchReferenceIncludePaths": [
+        "/datorutrustning/",
+        "/dator-tillbehor/",
+        "/gaming/",
+        "/tv-ljud-bild/",
+        "/mobil-tablets-klockor/"
+      ],
+      "matchReferenceExcludePaths": [
+        "/demovaror/"
+      ],
+      "categoryRoots": [
+        "datorutrustning",
+        "dator-tillbehor",
+        "gaming",
+        "tv-ljud-bild",
+        "mobil-tablets-klockor"
+      ],
+      "maxItems": 10,
+      "updatedSinceDays": 180,
+      "notes": "Optional fallback source for Komplett B-grade listings if you want to compare another store later."
+    },
+    {
+      "id": "approved-rss-feed",
+      "type": "rss",
+      "enabled": false,
+      "label": "Approved or self-hosted RSS feed",
+      "productKey": "community-deals",
+      "category": "mixed",
+      "url": "https://replace-this-with-an-approved-feed.example/rss.xml",
+      "condition": "mixed",
+      "notes": "Useful for community deal feeds or approved marketplace exports. If a site blocks direct scraping, prefer feeds or official APIs instead."
+    }
+  ]
+}
