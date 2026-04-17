@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeActiveWindow } from '../scheduler.js';
 
+const FALLBACK_WRITABLE_DATA_FILE = '/tmp/swedish-price-watcher-store.json';
+
 export function createDefaultState() {
   return {
     items: {},
@@ -102,8 +104,22 @@ export class JsonStore {
     this.state = createDefaultState();
   }
 
+  async ensureWritableFilePath() {
+    try {
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    } catch (error) {
+      if (['EROFS', 'EACCES', 'ENOENT'].includes(error?.code) && this.filePath !== FALLBACK_WRITABLE_DATA_FILE) {
+        this.filePath = FALLBACK_WRITABLE_DATA_FILE;
+        await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+        return;
+      }
+
+      throw error;
+    }
+  }
+
   async load() {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    await this.ensureWritableFilePath();
 
     try {
       const file = await fs.readFile(this.filePath, 'utf8');
@@ -125,7 +141,7 @@ export class JsonStore {
   }
 
   async save() {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    await this.ensureWritableFilePath();
     await fs.writeFile(this.filePath, `${JSON.stringify(this.state, null, 2)}\n`, 'utf8');
   }
 }

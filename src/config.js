@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-sitemap', 'apify-elgiganten']);
 const supportedNotificationModes = new Set(['amazing-deals', 'new-listings', 'favorite-events', 'none']);
+const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_URL);
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -102,11 +103,12 @@ async function loadSources(filePath) {
 
 export async function loadConfig() {
   const sourcesFile = path.resolve(rootDir, process.env.SOURCES_FILE ?? 'config/sources.json');
+  const defaultDataFile = isVercelRuntime ? '/tmp/swedish-price-watcher-store.json' : 'data/store.json';
 
   return {
     rootDir,
     publicDir: path.resolve(rootDir, 'public'),
-    dataFile: path.resolve(rootDir, process.env.DATA_FILE ?? 'data/store.json'),
+    dataFile: path.resolve(rootDir, process.env.DATA_FILE ?? defaultDataFile),
     sourcesFile,
     port: parsePositiveInt(process.env.PORT, 3030),
     host: process.env.HOST ?? '127.0.0.1',
@@ -118,7 +120,7 @@ export async function loadConfig() {
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL?.trim() ?? '',
     notificationCooldownHours: parsePositiveInt(process.env.NOTIFICATION_COOLDOWN_HOURS, 24),
     disableHoursOnBlock: parsePositiveInt(process.env.DISABLE_HOURS_ON_BLOCK, 12),
-    runOnStart: process.env.RUN_ON_START !== 'false',
+    runOnStart: process.env.RUN_ON_START ? process.env.RUN_ON_START !== 'false' : !isVercelRuntime,
     thresholds: {
       minimumScore: parsePositiveInt(process.env.MINIMUM_SCORE, 65),
       minimumDiscountPercent: parsePositiveInt(process.env.MINIMUM_DISCOUNT_PERCENT, 18),
