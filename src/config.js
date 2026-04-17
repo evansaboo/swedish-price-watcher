@@ -75,6 +75,7 @@ function sanitizeSource(rawSource) {
     actorKeywordMaxPages: parsePositiveInt(source.actorKeywordMaxPages, 30),
     actorTimeoutMs: parsePositiveInt(source.actorTimeoutMs, 120000),
     apiTokenEnvVar: String(source.apiTokenEnvVar ?? 'APIFY_TOKEN').trim() || 'APIFY_TOKEN',
+    apiTokenEnvVars: asStringArray(source.apiTokenEnvVars),
     referenceLookup: source.referenceLookup !== false,
     referenceLookupMaxPerScan: parseNonNegativeInt(source.referenceLookupMaxPerScan, 300),
     referenceLookupConcurrency: parsePositiveInt(source.referenceLookupConcurrency, 6),

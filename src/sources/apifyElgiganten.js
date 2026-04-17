@@ -60,15 +60,38 @@ function normalizeActorId(actorId) {
     .replace(/\//g, '~');
 }
 
-function getApiToken(source) {
-  const envVar = source.apiTokenEnvVar ?? 'APIFY_TOKEN';
-  const token = process.env[envVar]?.trim();
+function getApiTokens(source) {
+  const explicitEnvVars = asArray(source.apiTokenEnvVars)
+    .map((entry) => stripText(entry))
+    .filter(Boolean);
+  const primaryEnvVar = stripText(source.apiTokenEnvVar ?? 'APIFY_TOKEN') || 'APIFY_TOKEN';
+  const discoveredPoolEnvVars = Object.keys(process.env)
+    .filter((key) => /^APIFY_TOKEN_\d+$/i.test(key))
+    .sort((left, right) => {
+      const leftIndex = Number.parseInt(left.split('_').at(-1) ?? '', 10);
+      const rightIndex = Number.parseInt(right.split('_').at(-1) ?? '', 10);
+      return leftIndex - rightIndex;
+    });
+  const envVars = [...new Set([...explicitEnvVars, primaryEnvVar, ...discoveredPoolEnvVars])];
+  const resolvedTokens = envVars
+    .map((envVar) => process.env[envVar]?.trim())
+    .filter(Boolean);
 
-  if (!token) {
-    throw new Error(`${envVar} is not configured for ${source.label ?? source.id}.`);
+  if (!resolvedTokens.length) {
+    throw new Error(`No Apify token is configured for ${source.label ?? source.id}.`);
   }
 
-  return token;
+  return resolvedTokens;
+}
+
+function createTokenPicker(tokens) {
+  let nextIndex = 0;
+
+  return () => {
+    const token = tokens[nextIndex % tokens.length];
+    nextIndex += 1;
+    return token;
+  };
 }
 
 function readNumericValue(value) {
@@ -715,7 +738,7 @@ export async function collectFromApifyElgiganten({ source, fetcher, sourceState,
     throw new Error(`actorId is not configured for ${source.label ?? source.id}.`);
   }
 
-  const token = getApiToken(source);
+  const tokenPicker = createTokenPicker(getApiTokens(source));
   const enrichment = createEnrichmentState(sourceState ?? {});
   const categoryByGroupId = enrichment.categoryByGroupId;
   const referenceByExternalId = enrichment.referenceByExternalId;
@@ -730,7 +753,7 @@ export async function collectFromApifyElgiganten({ source, fetcher, sourceState,
       fetcher,
       source,
       actorId,
-      token,
+      token: tokenPicker(),
       actorInput
     });
 
@@ -826,7 +849,7 @@ export async function collectFromApifyElgiganten({ source, fetcher, sourceState,
             source,
             fetcher,
             actorId,
-            token,
+            token: tokenPicker(),
             query: lookupQuery
           });
           const lookupCandidates = buildRegularCandidates(lookupRecords);

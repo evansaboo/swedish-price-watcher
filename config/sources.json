@@ -9,6 +9,10 @@
       "condition": "outlet",
       "actorId": "shahidirfan/elgiganten-scraper",
       "apiTokenEnvVar": "APIFY_TOKEN",
+      "apiTokenEnvVars": [
+        "APIFY_TOKEN_2",
+        "APIFY_TOKEN_3"
+      ],
       "actorTimeoutMs": 120000,
       "includePaths": [
         "/product/outlet/"

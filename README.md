@@ -40,7 +40,10 @@ npm install
 Add these values to `.env`:
 
 - `APIFY_TOKEN` - your Apify API token
+- `APIFY_TOKEN_2`, `APIFY_TOKEN_3` ... (optional) - extra Apify tokens used in round-robin for higher throughput
 - `DISCORD_WEBHOOK_URL` - your Discord webhook URL
+
+The Elgiganten source automatically rotates requests across `APIFY_TOKEN` and any configured extra token env vars.
 
 Then start the app:
 
@@ -61,6 +64,7 @@ This repo is Railway-ready via `railway.json`.
 1. Create a new Railway project from this GitHub repo.
 2. Set environment variables:
    - `APIFY_TOKEN`
+   - `APIFY_TOKEN_2`, `APIFY_TOKEN_3` ... (optional)
    - `DISCORD_WEBHOOK_URL` (optional)
    - `SCAN_INTERVAL_MINUTES` (e.g. `60`)
    - `RUN_ON_START=true`
@@ -101,7 +105,8 @@ Edit `config/sources.json`.
 | --- | --- |
 | `type` | Must be `apify-elgiganten` |
 | `actorId` | Apify actor name, either `owner/actor` or `owner~actor` |
-| `apiTokenEnvVar` | Environment variable containing the Apify token |
+| `apiTokenEnvVar` | Primary environment variable containing an Apify token (default: `APIFY_TOKEN`) |
+| `apiTokenEnvVars` | Optional list of additional token env var names for round-robin (for example `["APIFY_TOKEN_2","APIFY_TOKEN_3"]`) |
 | `actorInput` | JSON payload sent to the Apify actor |
 | `actorKeywordQueries` | Extra keyword-based actor runs merged into the same scan (useful for outlet category gaps like gaming/components) |
 | `actorKeywordResultsWanted` | Per-keyword result target |

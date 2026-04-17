@@ -116,14 +116,19 @@ test('collects Elgiganten outlet items from Apify actor output', async () => {
 
 test('runs additional keyword inputs and deduplicates repeated records', async () => {
   const previousToken = process.env.APIFY_TOKEN;
+  const previousToken2 = process.env.APIFY_TOKEN_2;
   process.env.APIFY_TOKEN = 'test-apify-token';
+  process.env.APIFY_TOKEN_2 = 'test-apify-token-2';
 
   try {
     const requests = [];
     const fetcher = {
       async fetchJsonApi(_url, options) {
         const body = JSON.parse(options.body);
-        requests.push(body);
+        requests.push({
+          body,
+          authorization: options.headers.authorization
+        });
 
         if (body.keyword === 'outlet gaming') {
           return [
@@ -186,8 +191,10 @@ test('runs additional keyword inputs and deduplicates repeated records', async (
     });
 
     assert.equal(requests.length, 2);
-    assert.equal(requests[0].startUrl, 'https://www.elgiganten.se/search?q=outlet&view=products');
-    assert.equal(requests[1].keyword, 'outlet gaming');
+    assert.equal(requests[0].body.startUrl, 'https://www.elgiganten.se/search?q=outlet&view=products');
+    assert.equal(requests[1].body.keyword, 'outlet gaming');
+    assert.equal(requests[0].authorization, 'Bearer test-apify-token');
+    assert.equal(requests[1].authorization, 'Bearer test-apify-token-2');
     assert.equal(observations.length, 2);
     assert.equal(
       observations.some((observation) => observation.title.includes('grafikkort')),
@@ -198,6 +205,12 @@ test('runs additional keyword inputs and deduplicates repeated records', async (
       delete process.env.APIFY_TOKEN;
     } else {
       process.env.APIFY_TOKEN = previousToken;
+    }
+
+    if (previousToken2 == null) {
+      delete process.env.APIFY_TOKEN_2;
+    } else {
+      process.env.APIFY_TOKEN_2 = previousToken2;
     }
   }
 });
