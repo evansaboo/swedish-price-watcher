@@ -84,6 +84,29 @@
       "notes": "Uses Apify cheerio-scraper to fetch Komplett demovaror category pages on Apify's infrastructure (bypasses Railway IP blocks). Each page embeds 24 products as JSON. Reference prices fetched lazily from product pages and cached."
     },
     {
+      "id": "proshop-outlet",
+      "type": "proshop-outlet",
+      "enabled": true,
+      "label": "ProShop Outlet",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxPages": 8,
+      "apiTokenEnvVar": "APIFY_TOKEN",
+      "actorTimeoutMs": 240000,
+      "notes": "Uses Apify cheerio-scraper to scrape ProShop's Cloudflare-protected outlet listing. Extracts products from li.site-product-list-item elements across up to 8 pages."
+    },
+    {
+      "id": "power-deals",
+      "type": "power-deals",
+      "enabled": true,
+      "label": "Power Erbjudanden",
+      "category": "electronics",
+      "condition": "outlet",
+      "apiTokenEnvVar": "APIFY_TOKEN",
+      "actorTimeoutMs": 180000,
+      "notes": "Uses Apify playwright-scraper to render Power.se's Angular SPA deals page. Intercepts product API responses or falls back to DOM extraction."
+    },
+    {
       "id": "approved-rss-feed",
       "type": "rss",
       "enabled": false,
