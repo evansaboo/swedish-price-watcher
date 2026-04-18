@@ -3,166 +3,223 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Elgiganten Outlet Tracker</title>
+    <title>Outlet Deals — Elgiganten Price Tracker</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <!-- ===== TOP BAR ===== -->
     <header class="topbar">
-      <div>
-        <p class="eyebrow">Elgiganten outlet monitor</p>
-        <h1>Find the best outlet deals faster</h1>
+      <div class="topbar-brand">
+        <button id="sidebar-toggle" type="button" class="menu-btn" aria-label="Toggle filters panel" aria-expanded="false" aria-controls="sidebar">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="topbar-heading">
+          <p class="eyebrow">Elgiganten outlet monitor</p>
+          <h1>Find the best outlet deals faster</h1>
+        </div>
       </div>
-      <div class="actions">
+      <div class="topbar-actions">
         <button id="refresh-button" type="button">Refresh</button>
-        <button id="scan-button" type="button">Run scan</button>
+        <button id="scan-button" type="button" class="btn-primary">Run scan</button>
       </div>
     </header>
 
-    <section id="notice-banner" class="notice hidden" aria-live="polite"></section>
+    <!-- ===== NOTICE BANNER ===== -->
+    <div id="notice-banner" class="notice hidden" role="status" aria-live="polite"></div>
 
-    <main class="workspace">
-      <div class="sidebar-shell">
-        <div class="sidebar-rail">
-          <button id="sidebar-toggle" class="sidebar-rail-toggle" type="button" aria-expanded="false" aria-controls="sidebar">
-            <span aria-hidden="true">☰</span>
-            <span class="sr-only">Toggle sidebar</span>
+    <!-- ===== APP LAYOUT ===== -->
+    <div class="app-layout">
+
+      <!-- ===== SIDEBAR ===== -->
+      <aside id="sidebar" class="sidebar" aria-label="Filters and settings">
+
+        <!-- Icon rail: visible only when sidebar is collapsed on desktop -->
+        <div class="sidebar-icon-rail" aria-hidden="true">
+          <button class="rail-btn" data-open-section="section-filters" title="Filters" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            <span id="filter-rail-badge" class="rail-badge hidden" aria-hidden="true"></span>
+          </button>
+          <button class="rail-btn" data-open-section="section-favorites" title="Favorites" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
+          <button class="rail-btn" data-open-section="section-scheduler" title="Scheduler" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </button>
+          <button class="rail-btn" data-open-section="section-overview" title="Overview" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           </button>
         </div>
 
-        <aside id="sidebar" class="sidebar">
-          <div class="sidebar-toolbar">
-            <strong>Side panel</strong>
-            <button id="sidebar-close" type="button" class="ghost-button">Close</button>
+        <!-- Expanded content (shown when sidebar is open) -->
+        <div class="sidebar-inner">
+          <!-- Sidebar header -->
+          <div class="sidebar-header">
+            <svg class="sidebar-header-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            <strong class="sidebar-header-title">Filters &amp; Settings</strong>
+            <button id="sidebar-close" type="button" class="sidebar-collapse-btn" title="Collapse panel" aria-label="Collapse sidebar">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
           </div>
 
-          <section class="panel controls-panel">
-            <div class="section-heading">
-              <h2>Filters</h2>
-              <button id="clear-filters-button" type="button" class="ghost-button">Clear filters</button>
-            </div>
-            <div class="filters">
-              <label>
-                Search
-                <input id="search-input" type="search" placeholder="Search product name or category" />
-              </label>
-              <label>
-                Category
-                <select id="category-filter">
-                  <option value="">All categories</option>
-                </select>
-              </label>
-              <label>
-                Min discount %
-                <input id="min-discount-filter" type="number" min="0" max="99" step="1" placeholder="e.g. 20" />
-              </label>
-              <label>
-                Max price (SEK)
-                <input id="max-price-filter" type="number" min="0" step="1" placeholder="e.g. 5000" />
-              </label>
-              <div class="toggle-grid">
-                <label class="checkbox">
-                  <input id="favorites-only" type="checkbox" />
-                  Favorite categories
-                </label>
-                <label class="checkbox">
-                  <input id="discounted-only" type="checkbox" />
-                  Discounted products only
-                </label>
-                <label class="checkbox">
-                  <input id="new-only" type="checkbox" />
-                  New products only
-                </label>
-                <label class="checkbox">
-                  <input id="reference-only" type="checkbox" />
-                  Matched new price only
-                </label>
+          <!-- Scrollable sidebar body -->
+          <div class="sidebar-scroll">
+
+            <!-- Filters section -->
+            <section class="sidebar-section" id="section-filters">
+              <div class="sidebar-section-header">
+                <h2>Filters</h2>
+                <button id="clear-filters-button" type="button" class="ghost-btn">Clear all</button>
               </div>
-            </div>
-            <div class="filter-presets">
-              <span class="muted-inline">Quick filters:</span>
-              <button type="button" class="preset-button" data-filter-preset="new">New</button>
-              <button type="button" class="preset-button" data-filter-preset="discounted">Discounted</button>
-              <button type="button" class="preset-button" data-filter-preset="matched">Matched</button>
-              <button type="button" class="preset-button" data-filter-preset="favorites">Favorites</button>
-            </div>
-            <div id="active-filters" class="active-filters"></div>
-          </section>
-
-          <section class="panel favorites-panel">
-            <div class="section-heading">
-              <h2>Category favorites</h2>
-              <div class="inline-actions">
-                <span id="favorites-count" class="badge"></span>
-                <button id="toggle-favorites-editor" type="button" class="ghost-button">Manage</button>
+              <div class="filters-grid">
+                <label class="field-label">
+                  Search
+                  <div class="input-icon-wrap">
+                    <svg class="input-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input id="search-input" type="search" placeholder="Product name or category" />
+                  </div>
+                </label>
+                <label class="field-label">
+                  Category
+                  <select id="category-filter">
+                    <option value="">All categories</option>
+                  </select>
+                </label>
+                <div class="field-row">
+                  <label class="field-label">
+                    Min discount %
+                    <input id="min-discount-filter" type="number" min="0" max="99" step="1" placeholder="e.g. 20" />
+                  </label>
+                  <label class="field-label">
+                    Max price (kr)
+                    <input id="max-price-filter" type="number" min="0" step="1" placeholder="e.g. 5000" />
+                  </label>
+                </div>
+                <div class="toggle-group">
+                  <label class="toggle-item">
+                    <input id="new-only" type="checkbox" />
+                    <span>New products only</span>
+                  </label>
+                  <label class="toggle-item">
+                    <input id="discounted-only" type="checkbox" />
+                    <span>Discounted only</span>
+                  </label>
+                  <label class="toggle-item">
+                    <input id="favorites-only" type="checkbox" />
+                    <span>Favorite categories</span>
+                  </label>
+                  <label class="toggle-item">
+                    <input id="reference-only" type="checkbox" />
+                    <span>Matched new price only</span>
+                  </label>
+                </div>
               </div>
-            </div>
-            <div id="favorite-chips" class="favorite-chips"></div>
-            <div id="favorites-editor-wrap" class="favorites-editor-wrap hidden">
-              <label>
-                Search categories
-                <input id="favorites-search-input" type="search" placeholder="Type to filter categories" />
-              </label>
-              <div id="favorites-editor" class="favorites-grid"></div>
-            </div>
-          </section>
+              <div class="quick-filters">
+                <span class="quick-filters-label">Quick:</span>
+                <button type="button" class="chip-btn" data-filter-preset="new">New</button>
+                <button type="button" class="chip-btn" data-filter-preset="discounted">Discounted</button>
+                <button type="button" class="chip-btn" data-filter-preset="matched">Matched</button>
+                <button type="button" class="chip-btn" data-filter-preset="favorites">Favorites</button>
+              </div>
+              <div id="active-filters" class="active-filters"></div>
+            </section>
 
-          <section class="panel scheduler-settings">
-            <div class="section-heading compact">
-              <h3>Scheduler</h3>
-              <span id="scheduler-status" class="muted-inline"></span>
-            </div>
-            <div class="scheduler-controls">
-              <label class="checkbox">
-                <input id="scheduler-enabled" type="checkbox" />
-                Automatic scans enabled
-              </label>
-              <label>
-                Interval (minutes)
-                <input id="scheduler-interval" type="number" min="1" step="1" />
-              </label>
-              <label class="checkbox">
-                <input id="scheduler-window-enabled" type="checkbox" />
-                Run only during active hours
-              </label>
-              <label>
-                Start time (Sweden)
-                <input id="scheduler-window-start" type="time" />
-              </label>
-              <label>
-                End time (Sweden)
-                <input id="scheduler-window-end" type="time" />
-              </label>
-              <button id="save-scheduler-button" type="button">Save scheduler</button>
-            </div>
-          </section>
+            <div class="sidebar-divider"></div>
 
-          <section class="panel">
-            <div class="section-heading">
-              <h2>Overview</h2>
-            </div>
-            <div class="stats" id="stats-grid"></div>
-          </section>
+            <!-- Favorites section -->
+            <section class="sidebar-section" id="section-favorites">
+              <div class="sidebar-section-header">
+                <h2>Favorite categories</h2>
+                <div class="inline-actions">
+                  <span id="favorites-count" class="badge"></span>
+                  <button id="toggle-favorites-editor" type="button" class="ghost-btn">Manage</button>
+                </div>
+              </div>
+              <div id="favorite-chips" class="favorite-chips"></div>
+              <div id="favorites-editor-wrap" class="favorites-editor-wrap hidden">
+                <label class="field-label">
+                  Search categories
+                  <input id="favorites-search-input" type="search" placeholder="Filter categories…" />
+                </label>
+                <div id="favorites-editor" class="favorites-grid"></div>
+              </div>
+            </section>
 
-          <section class="panel">
-            <div class="section-heading">
-              <h2>Last run summary</h2>
-            </div>
-            <pre id="run-summary" class="summary"></pre>
-          </section>
-        </aside>
-      </div>
+            <div class="sidebar-divider"></div>
 
-      <section class="listing-content">
+            <!-- Scheduler section -->
+            <section class="sidebar-section" id="section-scheduler">
+              <div class="sidebar-section-header compact">
+                <h2>Scheduler</h2>
+                <span id="scheduler-status" class="muted-text"></span>
+              </div>
+              <div class="scheduler-grid">
+                <label class="toggle-item">
+                  <input id="scheduler-enabled" type="checkbox" />
+                  <span>Auto-scan enabled</span>
+                </label>
+                <label class="field-label">
+                  Interval (minutes)
+                  <input id="scheduler-interval" type="number" min="1" step="1" />
+                </label>
+                <label class="toggle-item">
+                  <input id="scheduler-window-enabled" type="checkbox" />
+                  <span>Active hours only</span>
+                </label>
+                <div class="field-row">
+                  <label class="field-label">
+                    Start (Sweden)
+                    <input id="scheduler-window-start" type="time" />
+                  </label>
+                  <label class="field-label">
+                    End (Sweden)
+                    <input id="scheduler-window-end" type="time" />
+                  </label>
+                </div>
+                <button id="save-scheduler-button" type="button" class="btn-accent-sm">Save scheduler</button>
+              </div>
+            </section>
+
+            <div class="sidebar-divider"></div>
+
+            <!-- Overview / stats section -->
+            <section class="sidebar-section" id="section-overview">
+              <div class="sidebar-section-header">
+                <h2>Overview</h2>
+              </div>
+              <div class="stats-grid" id="stats-grid"></div>
+            </section>
+
+            <div class="sidebar-divider"></div>
+
+            <!-- Last run summary section -->
+            <section class="sidebar-section" id="section-summary">
+              <div class="sidebar-section-header">
+                <h2>Last run</h2>
+              </div>
+              <pre id="run-summary" class="run-summary"></pre>
+            </section>
+
+          </div><!-- /.sidebar-scroll -->
+        </div><!-- /.sidebar-inner -->
+      </aside>
+
+      <!-- Mobile backdrop (closes sidebar on tap) -->
+      <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Close panel" tabindex="-1"></button>
+
+      <!-- ===== MAIN CONTENT ===== -->
+      <main class="main-content">
         <section class="panel listing-panel">
-          <div class="section-heading">
-            <h2>Outlet products</h2>
-            <span id="products-count" class="badge"></span>
+          <div class="listing-header">
+            <div class="listing-header-left">
+              <h2>Outlet products</h2>
+              <span id="products-count" class="badge"></span>
+            </div>
           </div>
           <div id="products-table"></div>
         </section>
-      </section>
-    </main>
-    <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Close side panel"></button>
+      </main>
+
+    </div><!-- /.app-layout -->
 
     <script type="module" src="/app.js"></script>
   </body>

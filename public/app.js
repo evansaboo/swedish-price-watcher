@@ -29,7 +29,8 @@ const state = {
   schedulerNextRunAt: null,
   schedulerFormDirty: false,
   latestRunStartedAt: null,
-  sidebarOpen: true
+  // Default: open on desktop, closed on mobile
+  sidebarOpen: window.matchMedia('(min-width: 1025px)').matches
 };
 
 const UI_PREFERENCES_STORAGE_KEY = 'elgiganten-outlet-ui-preferences-v1';
@@ -53,6 +54,8 @@ const elements = {
   sidebarToggle: document.querySelector('#sidebar-toggle'),
   sidebarClose: document.querySelector('#sidebar-close'),
   sidebarBackdrop: document.querySelector('#sidebar-backdrop'),
+  filterRailBadge: document.querySelector('#filter-rail-badge'),
+  railButtons: [...document.querySelectorAll('[data-open-section]')],
   activeFilters: document.querySelector('#active-filters'),
   favoritesEditor: document.querySelector('#favorites-editor'),
   favoritesEditorWrap: document.querySelector('#favorites-editor-wrap'),
@@ -205,7 +208,8 @@ function hydrateUiPreferences() {
   if (typeof saved.sidebarOpen === 'boolean') {
     state.sidebarOpen = saved.sidebarOpen;
   } else {
-    state.sidebarOpen = false;
+    // Default: open on desktop, closed on mobile
+    state.sidebarOpen = window.matchMedia('(min-width: 1025px)').matches;
   }
 
   elements.searchInput.value = state.search;
@@ -261,13 +265,34 @@ function applyFilterPreset(preset) {
   renderFilterPresetButtons();
 }
 
+function getActiveFilterCount() {
+  let count = 0;
+  if (state.search) count++;
+  if (state.category) count++;
+  if (state.favoritesOnly) count++;
+  if (state.discountedOnly) count++;
+  if (state.newOnly) count++;
+  if (state.referenceOnly) count++;
+  if (state.minDiscountPercent) count++;
+  if (state.maxPriceSek) count++;
+  return count;
+}
+
 function renderSidebarState() {
   document.body.classList.toggle('sidebar-open', state.sidebarOpen);
   elements.sidebarToggle.setAttribute('aria-expanded', state.sidebarOpen ? 'true' : 'false');
-  const actionLabel = state.sidebarOpen ? 'Collapse side panel' : 'Expand side panel';
-  elements.sidebarToggle.setAttribute('aria-label', actionLabel);
-  elements.sidebarToggle.title = actionLabel;
   elements.sidebarToggle.classList.toggle('active', state.sidebarOpen);
+
+  // Update filter count badge on collapsed rail
+  if (elements.filterRailBadge) {
+    const count = getActiveFilterCount();
+    if (count > 0) {
+      elements.filterRailBadge.textContent = count > 9 ? '9+' : String(count);
+      elements.filterRailBadge.classList.remove('hidden');
+    } else {
+      elements.filterRailBadge.classList.add('hidden');
+    }
+  }
 }
 
 function setSidebarOpen(open, { persist = true } = {}) {
@@ -610,13 +635,15 @@ function renderActiveFilters() {
   }
 
   if (!activeFilters.length) {
-    elements.activeFilters.innerHTML = '<span class="muted-inline">No active filters.</span>';
+    elements.activeFilters.innerHTML = '<span class="muted-text">No active filters.</span>';
     renderFilterPresetButtons();
+    renderSidebarState();
     return;
   }
 
   elements.activeFilters.innerHTML = activeFilters.map((label) => `<span class="filter-chip">${escapeHtml(label)}</span>`).join('');
   renderFilterPresetButtons();
+  renderSidebarState();
 }
 
 function renderSchedulerStatus() {
@@ -1079,6 +1106,23 @@ elements.sidebarClose.addEventListener('click', () => {
 elements.sidebarBackdrop.addEventListener('click', () => {
   setSidebarOpen(false);
 });
+
+// Icon rail buttons: expand sidebar and scroll to section
+for (const btn of elements.railButtons) {
+  btn.addEventListener('click', () => {
+    const sectionId = btn.getAttribute('data-open-section');
+    setSidebarOpen(true);
+    if (sectionId) {
+      // Slight delay to let the sidebar animate open before scrolling
+      setTimeout(() => {
+        const section = document.getElementById(sectionId);
+        if (section) {
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 80);
+    }
+  });
+}
 for (const button of elements.filterPresetButtons) {
   button.addEventListener('click', () => {
     applyFilterPreset(button.getAttribute('data-filter-preset'));
