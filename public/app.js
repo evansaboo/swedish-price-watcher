@@ -552,26 +552,18 @@ function renderStats(status, products, categories) {
   const averageDiscountPercent = discountValues.length
     ? Math.round(discountValues.reduce((sum, value) => sum + value, 0) / discountValues.length)
     : null;
-  const cards = [
-    ['Tracked outlet products', status.counts.outletItems],
-    ['Shown in table', products.length],
-    ['Matched new price', matchedProducts],
-    ['Discounted products', discountedProducts],
-    ['Avg discount', Number.isFinite(averageDiscountPercent) ? `${averageDiscountPercent}%` : 'n/a'],
-    ['Favorite categories', state.favoriteCategories.length],
-    ['Categories', categories.length],
-    ['Last completed', formatDate(status.lastRunCompletedAt)]
+
+  const pills = [
+    [status.counts.outletItems, 'tracked'],
+    [products.length, 'shown'],
+    [matchedProducts, 'matched'],
+    [discountedProducts, 'discounted'],
+    [Number.isFinite(averageDiscountPercent) ? `${averageDiscountPercent}%` : '–', 'avg off'],
+    [formatDate(status.lastRunCompletedAt), 'last scan']
   ];
 
-  elements.statsGrid.innerHTML = cards
-    .map(
-      ([label, value]) => `
-        <article class="stat-card">
-          <span class="stat-label">${escapeHtml(label)}</span>
-          <strong class="stat-value">${escapeHtml(value)}</strong>
-        </article>
-      `
-    )
+  elements.statsGrid.innerHTML = pills
+    .map(([value, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(value))}</strong>&thinsp;${escapeHtml(label)}</span>`)
     .join('');
 }
 

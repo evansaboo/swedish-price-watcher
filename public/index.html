@@ -195,24 +195,20 @@
       <!-- ===== MAIN CONTENT ===== -->
       <main class="main-content">
 
-        <!-- Overview bar: stats + last run info -->
-        <section class="overview-bar">
-          <div class="overview-bar-stats" id="stats-grid"></div>
-          <details class="overview-bar-details">
-            <summary class="overview-bar-summary-toggle">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              Last run
-            </summary>
-            <pre id="run-summary" class="run-summary"></pre>
-          </details>
-        </section>
-
         <section class="panel listing-panel">
           <div class="listing-header">
             <div class="listing-header-left">
               <h2>Outlet products</h2>
               <span id="products-count" class="badge"></span>
             </div>
+          </div>
+          <!-- Compact stats + log strip -->
+          <div class="listing-meta">
+            <div id="stats-grid" class="stats-pills"></div>
+            <details class="run-log-toggle">
+              <summary>Log</summary>
+              <pre id="run-summary" class="run-summary"></pre>
+            </details>
           </div>
           <div id="products-table"></div>
         </section>

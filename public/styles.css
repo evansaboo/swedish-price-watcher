@@ -556,53 +556,83 @@ input[type='search']::-webkit-search-cancel-button { cursor: pointer; }
 }
 
 /* ============================================================
-   OVERVIEW BAR (stats + last run — above product table)
+   LISTING META BAR  (compact stats + log — inside listing panel)
    ============================================================ */
-.overview-bar {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  padding: 0.85rem 1.25rem;
-  margin-bottom: 0.85rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-}
-
-.overview-bar-stats {
-  /* stats-grid inside this container flows in a row */
-}
-
-.overview-bar-details {
-  border-top: 1px solid var(--border);
-  padding-top: 0.55rem;
-}
-
-.overview-bar-summary-toggle {
+.listing-meta {
   display: flex;
   align-items: center;
-  gap: 0.38rem;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+  padding: 0.42rem 0.72rem;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: var(--text-muted);
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
+  min-height: 2rem;
 }
-.overview-bar-summary-toggle::-webkit-details-marker { display: none; }
-.overview-bar-summary-toggle::before {
-  content: '▶';
-  font-size: 0.55rem;
-  transition: transform 0.15s;
-}
-details[open] .overview-bar-summary-toggle::before { transform: rotate(90deg); }
 
-/* In the overview bar, stats span across full width */
-.overview-bar-stats .stats-grid {
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+/* Inline pills: "1,234 tracked · 45 matched · avg 28% off · …" */
+.stats-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.stat-pill {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  padding: 0 0.55rem;
+  border-right: 1px solid var(--border);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.stat-pill:first-child { padding-left: 0; }
+.stat-pill:last-child  { border-right: none; }
+.stat-pill strong {
+  color: var(--text);
+  font-weight: 700;
+  margin-right: 0.18rem;
+}
+
+/* Log toggle (the <details> at the right end of the meta bar) */
+.run-log-toggle {
+  flex-shrink: 0;
+}
+.run-log-toggle > summary {
+  cursor: pointer;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  user-select: none;
+  border-radius: 4px;
+  padding: 0.1rem 0.25rem;
+  transition: color 0.15s;
+}
+.run-log-toggle > summary::-webkit-details-marker { display: none; }
+.run-log-toggle > summary::before {
+  content: '▶';
+  font-size: 0.5rem;
+  transition: transform 0.15s;
+  opacity: 0.6;
+}
+details[open].run-log-toggle > summary::before { transform: rotate(90deg); }
+.run-log-toggle > summary:hover { color: var(--text); }
+
+/* When expanded, the log pops below the meta bar */
+.run-log-toggle[open] {
+  width: 100%;
+  flex-basis: 100%;
 }
 
 /* ============================================================
@@ -831,14 +861,11 @@ details[open] .overview-bar-summary-toggle::before { transform: rotate(90deg); }
 }
 
 /* ============================================================
-   STATS
+   STATS  (pill container — rendered inside .listing-meta)
    ============================================================ */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 0.5rem;
-}
+/* .stats-pills and .stat-pill are defined in LISTING META BAR above */
 
+/* stat-card and stat-label/value are legacy; kept for potential reuse */
 .stat-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
