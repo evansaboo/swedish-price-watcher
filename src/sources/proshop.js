@@ -4,11 +4,11 @@ import { parseSekValue } from '../lib/utils.js';
 /**
  * The pageFunction executed inside Apify's cheerio-scraper actor.
  * Runs on Apify infrastructure (bypasses Cloudflare) and extracts products
- * from ProShop outlet listing pages.
+ * from ProShop outlet/demo listing pages. Dynamically enqueues next pages.
  */
 const CHEERIO_PAGE_FUNCTION = /* js */ `
 async function pageFunction(context) {
-  const { $, request } = context;
+  const { $, request, enqueueRequest } = context;
   const products = [];
 
   // Correct class: site-productlist-item
@@ -42,7 +42,14 @@ async function pageFunction(context) {
     }
   });
 
+  // If this page had products, enqueue the next page automatically
   if (products.length > 0) {
+    try {
+      const urlObj = new URL(request.url);
+      const currentPage = parseInt(urlObj.searchParams.get('page') || '1', 10);
+      urlObj.searchParams.set('page', String(currentPage + 1));
+      await enqueueRequest({ url: urlObj.href, userData: request.userData });
+    } catch (e) {}
     return products;
   }
 
@@ -69,11 +76,23 @@ async function pageFunction(context) {
   });
 
   if (jsonLdProducts.length > 0) {
+    try {
+      const urlObj = new URL(request.url);
+      const currentPage = parseInt(urlObj.searchParams.get('page') || '1', 10);
+      urlObj.searchParams.set('page', String(currentPage + 1));
+      await enqueueRequest({ url: urlObj.href, userData: request.userData });
+    } catch (e) {}
     return jsonLdProducts;
   }
 
-  // Nothing found — return debug info so we can diagnose
-  return [{ _debug: true, url: request.url, bodySnippet: context.body.substring(0, 3000) }];
+  // Nothing found — this is either an empty page (past last page) or a selector issue
+  // Only emit debug info for page 1 so we can diagnose selector problems
+  const urlObj2 = new URL(request.url);
+  const isFirstPage = !urlObj2.searchParams.get('page') || urlObj2.searchParams.get('page') === '1';
+  if (isFirstPage) {
+    return [{ _debug: true, url: request.url, bodySnippet: context.body.substring(0, 3000) }];
+  }
+  return [];
 }
 `;
 
@@ -112,24 +131,30 @@ function mapProshopItem(item, source, now) {
 }
 
 /**
- * Collect ProShop outlet products via Apify's cheerio-scraper actor.
+ * Collect ProShop outlet+demo products via Apify's cheerio-scraper actor.
  *
  * ProShop is Cloudflare-protected so direct fetch fails from Railway.
  * The actor runs on Apify infrastructure with rotating proxies, bypassing CF.
+ * Pages are discovered dynamically: the pageFunction enqueues page N+1 whenever
+ * page N returns products, stopping naturally at the last page.
  */
 export async function collectFromProshop({ source, fetcher, sourceState, now, _ApifyClient }) {
-  const maxPages = Number.isFinite(source.maxPages) ? source.maxPages : 10;
-  const baseUrl = 'https://www.proshop.se/Outlet';
+  // maxRequestsPerCrawl caps total pages across both paths (Outlet + Demo).
+  // ProShop currently has ~38 Outlet pages and ~61 Demo pages = ~100 pages total.
+  const maxRequestsPerCrawl = Number.isFinite(source.maxRequestsPerCrawl)
+    ? source.maxRequestsPerCrawl
+    : 150;
 
   const token = _ApifyClient
     ? 'stub'
     : (process.env[source.apiTokenEnvVar ?? 'APIFY_TOKEN']?.trim() ?? process.env.APIFY_TOKEN?.trim() ?? '');
   if (!token) throw new Error(`No Apify token configured for ${source.label ?? source.id}.`);
 
-  const startUrls = [];
-  for (let page = 1; page <= maxPages; page++) {
-    startUrls.push({ url: `${baseUrl}?sortby=0&pagesize=30&page=${page}` });
-  }
+  // Start from page 1 of both Outlet and Demo sections
+  const startUrls = [
+    { url: 'https://www.proshop.se/Outlet?sortby=0&pagesize=30&page=1' },
+    { url: 'https://www.proshop.se/Demo?sortby=0&pagesize=30&page=1' },
+  ];
 
   const ClientClass = _ApifyClient ?? ApifyClient;
   const client = new ClientClass({ token });
@@ -139,9 +164,9 @@ export async function collectFromProshop({ source, fetcher, sourceState, now, _A
       startUrls,
       pageFunction: CHEERIO_PAGE_FUNCTION,
       proxyConfiguration: { useApifyProxy: true },
-      maxRequestsPerCrawl: maxPages + 2,
+      maxRequestsPerCrawl,
     },
-    { timeout: Math.floor((source.actorTimeoutMs ?? 240_000) / 1000) }
+    { timeout: Math.floor((source.actorTimeoutMs ?? 300_000) / 1000) }
   );
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems();

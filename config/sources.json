@@ -87,13 +87,13 @@
       "id": "proshop-outlet",
       "type": "proshop-outlet",
       "enabled": true,
-      "label": "ProShop Outlet",
+      "label": "ProShop Outlet + Demo",
       "category": "electronics",
       "condition": "outlet",
-      "maxPages": 8,
+      "maxRequestsPerCrawl": 150,
       "apiTokenEnvVar": "APIFY_TOKEN",
-      "actorTimeoutMs": 240000,
-      "notes": "Uses Apify cheerio-scraper to scrape ProShop's Cloudflare-protected outlet listing. Extracts products from li.site-productlist-item elements across up to 8 pages."
+      "actorTimeoutMs": 300000,
+      "notes": "Uses Apify cheerio-scraper to scrape ProShop's Cloudflare-protected outlet and demo listings. Starts from page 1 of both /Outlet and /Demo and dynamically enqueues next pages until empty (up to maxRequestsPerCrawl=150)."
     },
     {
       "id": "power-deals",
@@ -103,8 +103,8 @@
       "category": "electronics",
       "condition": "outlet",
       "apiTokenEnvVar": "APIFY_TOKEN",
-      "actorTimeoutMs": 300000,
-      "notes": "Uses Apify playwright-scraper to render Power.se's Angular SPA deals page. Injects consent cookie and reloads to capture product API responses. Falls back to DOM extraction."
+      "actorTimeoutMs": 480000,
+      "notes": "Uses Apify playwright-scraper to render Power.se's Angular SPA deals page. Injects consent cookie, reloads, then scrolls repeatedly to load all products via infinite scroll (up to 40 rounds). Deduplicates by product code."
     },
     {
       "id": "approved-rss-feed",

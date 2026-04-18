@@ -4,12 +4,23 @@ import { parseSekValue } from '../lib/utils.js';
 /**
  * The pageFunction executed inside Apify's playwright-scraper actor.
  * Power.se is an Angular SPA — we intercept network responses to capture
- * the product API payload before falling back to DOM extraction.
+ * the product API payload, then scroll to load all pages via infinite scroll.
  */
 const PLAYWRIGHT_PAGE_FUNCTION = /* js */ `
 async function pageFunction(context) {
   const { page } = context;
   const capturedProducts = [];
+  const seenProductCodes = new Set();
+
+  function addProducts(products) {
+    for (const p of products) {
+      const key = String(p.code ?? p.id ?? p.productId ?? p.name ?? '').trim();
+      if (key && !seenProductCodes.has(key)) {
+        seenProductCodes.add(key);
+        capturedProducts.push(p);
+      }
+    }
+  }
 
   // Intercept API responses — set up BEFORE reload so we catch everything
   page.on('response', async (response) => {
@@ -32,7 +43,7 @@ async function pageFunction(context) {
           data.hits ||
           null;
         if (Array.isArray(products) && products.length > 0) {
-          capturedProducts.push(...products);
+          addProducts(products);
         }
       } catch {}
     }
@@ -51,35 +62,40 @@ async function pageFunction(context) {
 
   // Reload so Angular starts fresh with consent already set and we capture all API calls
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 3000));
 
-  // Scroll to trigger lazy loading
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2)).catch(() => {});
-  await new Promise((r) => setTimeout(r, 1000));
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
-  await new Promise((r) => setTimeout(r, 1500));
+  // Scroll repeatedly to trigger infinite scroll / lazy loading
+  // Keep scrolling until no new products are loaded for 2 consecutive rounds
+  let previousCount = 0;
+  let noNewRounds = 0;
+  const maxScrollRounds = 40;
 
-  // Wait for Angular to render products
-  await page
-    .waitForFunction(
-      () => {
-        const selectors = [
-          'app-product-list-item',
-          'app-product-card',
-          'power-product-card',
-          '[data-test="product-list-item"]',
-          '.product-list-item',
-          '[class*="product-card"]',
-          '[class*="ProductCard"]',
-          '[class*="product-item"]',
-        ];
-        return selectors.some((sel) => document.querySelectorAll(sel).length >= 2);
-      },
-      { timeout: 30000 }
-    )
-    .catch(() => {});
+  for (let round = 0; round < maxScrollRounds; round++) {
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+    await new Promise((r) => setTimeout(r, 2000));
 
-  await new Promise((r) => setTimeout(r, 2000));
+    // Also try clicking a "load more" button if present
+    const loadMoreClicked = await page.evaluate(() => {
+      const btn = document.querySelector(
+        'button[class*="load-more"], button[class*="loadMore"], .load-more button, ' +
+        '[data-test*="load-more"], button:not([disabled])[class*="show-more"]'
+      );
+      if (btn) { btn.click(); return true; }
+      return false;
+    }).catch(() => false);
+    if (loadMoreClicked) {
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    const currentCount = capturedProducts.length;
+    if (currentCount === previousCount) {
+      noNewRounds++;
+      if (noNewRounds >= 2) break; // No new products for 2 rounds — done
+    } else {
+      noNewRounds = 0;
+    }
+    previousCount = currentCount;
+  }
 
   if (capturedProducts.length > 0) {
     return capturedProducts;
@@ -94,7 +110,6 @@ async function pageFunction(context) {
     );
 
     if (items.length === 0) {
-      // Debug: dump body to diagnose
       return [
         {
           _debug: true,
