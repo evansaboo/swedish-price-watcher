@@ -902,6 +902,20 @@ details[open].run-log-toggle > summary::before { transform: rotate(90deg); }
   opacity: 0.55;
 }
 
+.source-schedule-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(217,119,6,0.1);
+  border: 1px solid rgba(217,119,6,0.3);
+  color: #92400e;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+}
+
 .source-info {
   flex: 1;
   min-width: 0;

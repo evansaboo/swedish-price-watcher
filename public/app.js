@@ -588,22 +588,22 @@ function renderSources(sources, isScanning, currentSourceId) {
   elements.sourcesList.innerHTML = sources
     .map((source) => {
       const isCurrentlyScanning = isScanning && currentSourceId === source.id;
-      const statusLabel = isCurrentlyScanning ? 'scanning' : (source.enabled ? source.status : 'disabled');
+      const statusLabel = isCurrentlyScanning ? 'scanning' : source.status;
       const metaText = source.lastSuccessAt
         ? `Last scan: ${formatDate(source.lastSuccessAt)}${source.lastCount != null ? ` · ${source.lastCount} items` : ''}`
-        : source.enabled ? 'Never scanned' : 'Disabled';
+        : 'Never scanned';
+      const scheduleBadge = !source.enabled
+        ? `<span class="source-schedule-badge" title="Excluded from scheduled scans">paused</span>`
+        : '';
 
       return `
-        <div class="source-row${source.enabled ? '' : ' source-disabled'}">
+        <div class="source-row">
           <div class="source-info">
-            <span class="source-name">${escapeHtml(source.label)}</span>
+            <span class="source-name">${escapeHtml(source.label)}${scheduleBadge}</span>
             <span class="source-meta">${escapeHtml(metaText)}</span>
           </div>
           <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}</span>
-          ${source.enabled
-            ? `<button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>`
-            : ''
-          }
+          <button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>
         </div>
       `;
     })

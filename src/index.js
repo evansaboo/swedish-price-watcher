@@ -69,8 +69,10 @@ async function triggerScan(trigger, options = {}) {
 
   const sourcesToRun = config.sources.filter(
     (entry) => {
-      const effectiveEnabled = isSourceEnabled(entry, store.getState());
-      return effectiveEnabled && (!requestedSourceIds || requestedSourceIds.has(entry.id));
+      // Manual scan with explicit sourceIds: always allow regardless of enabled state
+      if (requestedSourceIds) return requestedSourceIds.has(entry.id);
+      // Scheduled / full scan: respect enabled overrides
+      return isSourceEnabled(entry, store.getState());
     }
   );
 
