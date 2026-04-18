@@ -92,8 +92,8 @@
       "condition": "outlet",
       "maxRequestsPerCrawl": 150,
       "apiTokenEnvVar": "APIFY_TOKEN",
-      "actorTimeoutMs": 300000,
-      "notes": "Uses Apify cheerio-scraper to scrape ProShop's Cloudflare-protected outlet and demo listings. Starts from page 1 of both /Outlet and /Demo and dynamically enqueues next pages until empty (up to maxRequestsPerCrawl=150)."
+      "actorTimeoutMs": 600000,
+      "notes": "Uses Apify playwright-scraper with RESIDENTIAL proxies to bypass Cloudflare. Scrapes /Outlet (~38 pages) and /Demo (~61 pages) dynamically. ~2475 products total in ~7 min at concurrency 2."
     },
     {
       "id": "power-deals",
