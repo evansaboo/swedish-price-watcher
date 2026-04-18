@@ -31,6 +31,7 @@
 - Light, readable interface.
 - Fast filtering workflow with useful defaults and quick-filter actions.
 - Keep "new product" highlighting and filtering consistent between backend and UI.
+- Always follow good UX/UI practices: prioritize clarity, responsive behavior, accessibility, and low-friction user flows.
 
 ## Engineering Rules for This Repo
 - Make focused, production-safe changes and keep tests passing.

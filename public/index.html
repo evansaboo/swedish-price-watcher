@@ -13,6 +13,7 @@
         <h1>Find the best outlet deals faster</h1>
       </div>
       <div class="actions">
+        <button id="sidebar-toggle" type="button" aria-expanded="true" aria-controls="sidebar">Hide panel</button>
         <button id="refresh-button" type="button">Refresh</button>
         <button id="scan-button" type="button">Run scan</button>
       </div>
@@ -21,7 +22,12 @@
     <section id="notice-banner" class="notice hidden" aria-live="polite"></section>
 
     <main class="workspace">
-      <aside class="sidebar">
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-toolbar">
+          <strong>Side panel</strong>
+          <button id="sidebar-close" type="button" class="ghost-button">Close</button>
+        </div>
+
         <section class="panel controls-panel">
           <div class="section-heading">
             <h2>Filters</h2>
@@ -148,6 +154,7 @@
         </section>
       </section>
     </main>
+    <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Close side panel"></button>
 
     <script type="module" src="/app.js"></script>
   </body>

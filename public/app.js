@@ -28,7 +28,8 @@ const state = {
   schedulerIsInActiveWindow: true,
   schedulerNextRunAt: null,
   schedulerFormDirty: false,
-  latestRunStartedAt: null
+  latestRunStartedAt: null,
+  sidebarOpen: true
 };
 
 const UI_PREFERENCES_STORAGE_KEY = 'elgiganten-outlet-ui-preferences-v1';
@@ -48,6 +49,10 @@ const elements = {
   maxPriceFilter: document.querySelector('#max-price-filter'),
   clearFiltersButton: document.querySelector('#clear-filters-button'),
   filterPresetButtons: [...document.querySelectorAll('[data-filter-preset]')],
+  sidebar: document.querySelector('#sidebar'),
+  sidebarToggle: document.querySelector('#sidebar-toggle'),
+  sidebarClose: document.querySelector('#sidebar-close'),
+  sidebarBackdrop: document.querySelector('#sidebar-backdrop'),
   activeFilters: document.querySelector('#active-filters'),
   favoritesEditor: document.querySelector('#favorites-editor'),
   favoritesEditorWrap: document.querySelector('#favorites-editor-wrap'),
@@ -135,7 +140,8 @@ function saveUiPreferences() {
     favoritesEditorOpen: state.favoritesEditorOpen,
     favoritesSearch: state.favoritesSearch,
     sortBy: state.sortBy,
-    sortDirection: state.sortDirection
+    sortDirection: state.sortDirection,
+    sidebarOpen: state.sidebarOpen
   };
 
   try {
@@ -196,6 +202,12 @@ function hydrateUiPreferences() {
     state.sortDirection = saved.sortDirection;
   }
 
+  if (typeof saved.sidebarOpen === 'boolean') {
+    state.sidebarOpen = saved.sidebarOpen;
+  } else {
+    state.sidebarOpen = !window.matchMedia('(max-width: 1080px)').matches;
+  }
+
   elements.searchInput.value = state.search;
   elements.favoritesOnly.checked = state.favoritesOnly;
   elements.discountedOnly.checked = state.discountedOnly;
@@ -205,6 +217,7 @@ function hydrateUiPreferences() {
   elements.maxPriceFilter.value = state.maxPriceSek;
   elements.favoritesSearchInput.value = state.favoritesSearch;
   renderFilterPresetButtons();
+  renderSidebarState();
 }
 
 function getFavoriteCategorySet() {
@@ -246,6 +259,21 @@ function applyFilterPreset(preset) {
 
   saveUiPreferences();
   renderFilterPresetButtons();
+}
+
+function renderSidebarState() {
+  document.body.classList.toggle('sidebar-open', state.sidebarOpen);
+  elements.sidebarToggle.setAttribute('aria-expanded', state.sidebarOpen ? 'true' : 'false');
+  elements.sidebarToggle.textContent = state.sidebarOpen ? 'Hide panel' : 'Show panel';
+}
+
+function setSidebarOpen(open, { persist = true } = {}) {
+  state.sidebarOpen = Boolean(open);
+  renderSidebarState();
+
+  if (persist) {
+    saveUiPreferences();
+  }
 }
 
 function sortIndicator(column) {
@@ -1039,6 +1067,15 @@ elements.newOnly.addEventListener('change', () => updateFilters());
 elements.referenceOnly.addEventListener('change', () => updateFilters());
 elements.minDiscountFilter.addEventListener('input', () => updateFilters({ debounce: true }));
 elements.maxPriceFilter.addEventListener('input', () => updateFilters({ debounce: true }));
+elements.sidebarToggle.addEventListener('click', () => {
+  setSidebarOpen(!state.sidebarOpen);
+});
+elements.sidebarClose.addEventListener('click', () => {
+  setSidebarOpen(false);
+});
+elements.sidebarBackdrop.addEventListener('click', () => {
+  setSidebarOpen(false);
+});
 for (const button of elements.filterPresetButtons) {
   button.addEventListener('click', () => {
     applyFilterPreset(button.getAttribute('data-filter-preset'));
@@ -1048,6 +1085,13 @@ for (const button of elements.filterPresetButtons) {
     });
   });
 }
+
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && state.sidebarOpen) {
+    setSidebarOpen(false);
+  }
+});
+
 elements.clearFiltersButton.addEventListener('click', () => {
   resetFilters();
   loadDashboard().catch((error) => {
