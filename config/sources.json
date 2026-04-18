@@ -48,6 +48,15 @@
       "notes": "Runs an Apify-backed Elgiganten Sweden outlet search and keeps only URLs under /product/outlet/ before sending Discord alerts."
     },
     {
+      "id": "webhallen-fyndware",
+      "type": "webhallen-api",
+      "enabled": true,
+      "label": "Webhallen Fyndware (outlet)",
+      "category": "electronics",
+      "condition": "outlet",
+      "notes": "Fetches all Fyndvara (outlet) products from Webhallen via their internal productdiscovery API. No Apify required. Includes regularPrice as reference price for discount calculation."
+    },
+    {
       "id": "komplett-outlet-electronics",
       "type": "komplett-sitemap",
       "enabled": false,
