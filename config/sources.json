@@ -1,10 +1,20 @@
 {
   "sources": [
     {
-      "id": "elgiganten-outlet-latest",
-      "type": "apify-elgiganten",
+      "id": "elgiganten-outlet",
+      "type": "elgiganten-algolia",
       "enabled": true,
-      "label": "Elgiganten outlet latest",
+      "label": "Elgiganten Outlet",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxProducts": 15000,
+      "notes": "Direct Algolia API (public search key). Filter productTaxonomy.id:PT793 returns all B-grade outlet products. price.amount = outlet price; bItem.aItemPrice = new-item reference price for discount %. ~13 000+ products, no Apify required."
+    },
+    {
+      "id": "elgiganten-outlet-legacy",
+      "type": "apify-elgiganten",
+      "enabled": false,
+      "label": "Elgiganten outlet (Apify legacy — disabled)",
       "category": "electronics",
       "condition": "outlet",
       "actorId": "shahidirfan/elgiganten-scraper",

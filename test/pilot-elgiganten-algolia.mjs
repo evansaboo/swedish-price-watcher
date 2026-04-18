@@ -30,9 +30,12 @@ function parsePrice(priceObj) {
 
 function mapHit(hit) {
   const price = parsePrice(hit.price);
+  // bItem.aItemPrice = equivalent new-item (A-grade) price → reference for discount %
   const refPrice =
+    (typeof hit.bItem?.aItemPrice === 'number' && hit.bItem.aItemPrice > 0
+      ? hit.bItem.aItemPrice
+      : null) ??
     parsePrice(hit.beforePrice) ??
-    parsePrice(hit.cheapestBItem?.price) ??
     null;
 
   const url = hit.productUrl ?? hit.urlB2C ?? null;
@@ -48,7 +51,7 @@ function mapHit(hit) {
     price,
     refPrice,  // NOTE: null for outlet — Algolia doesn't expose the "new" price here
     discount,
-    grade: hit.displayGrade ?? hit.stockGrade ?? null,
+    grade: hit.bItem?.bGrade ?? hit.displayGrade ?? hit.stockGrade ?? null,
     category: hit.hierarchicalCategories?.lvl2 ?? hit.hierarchicalCategories?.lvl1 ?? null,
     imageUrl: hit.imageUrl ?? null,
     url,
