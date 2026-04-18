@@ -205,7 +205,7 @@ function hydrateUiPreferences() {
   if (typeof saved.sidebarOpen === 'boolean') {
     state.sidebarOpen = saved.sidebarOpen;
   } else {
-    state.sidebarOpen = !window.matchMedia('(max-width: 1080px)').matches;
+    state.sidebarOpen = false;
   }
 
   elements.searchInput.value = state.search;
@@ -264,7 +264,10 @@ function applyFilterPreset(preset) {
 function renderSidebarState() {
   document.body.classList.toggle('sidebar-open', state.sidebarOpen);
   elements.sidebarToggle.setAttribute('aria-expanded', state.sidebarOpen ? 'true' : 'false');
-  elements.sidebarToggle.textContent = state.sidebarOpen ? 'Hide panel' : 'Show panel';
+  const actionLabel = state.sidebarOpen ? 'Collapse side panel' : 'Expand side panel';
+  elements.sidebarToggle.setAttribute('aria-label', actionLabel);
+  elements.sidebarToggle.title = actionLabel;
+  elements.sidebarToggle.classList.toggle('active', state.sidebarOpen);
 }
 
 function setSidebarOpen(open, { persist = true } = {}) {
