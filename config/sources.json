@@ -77,27 +77,9 @@
       "includePaths": [
         "/demovaror/"
       ],
-      "matchReferenceIncludePaths": [
-        "/datorutrustning/",
-        "/dator-tillbehor/",
-        "/gaming/",
-        "/tv-ljud-bild/",
-        "/mobil-tablets-klockor/"
-      ],
-      "matchReferenceExcludePaths": [
-        "/demovaror/"
-      ],
-      "categoryRoots": [
-        "datorutrustning",
-        "dator-tillbehor",
-        "gaming",
-        "tv-ljud-bild",
-        "mobil-tablets-klockor"
-      ],
       "maxItems": 30,
       "updatedSinceDays": 180,
-      "referenceLookup": true,
-      "notes": "Streams sitemap.products.xml (stops at 10 MB) and filters for /demovaror/ B-grade entries. Fast: ~1-5s on Railway."
+      "notes": "Streams sitemap.products.xml, stops at 3 MB (aborts early after finding enough /demovaror/ entries). Reference prices come directly from each product page via the embedded originalProductPrice field."
     },
     {
       "id": "komplett-outlet-apify",

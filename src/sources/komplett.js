@@ -18,7 +18,8 @@ const sitemapParser = new XMLParser({
 
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const SITEMAP_HEADERS = { 'user-agent': BROWSER_UA, accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8' };
-const SITEMAP_TIMEOUT_MS = 60_000; // sitemap XML can be several MB
+const PAGE_HEADERS = { 'user-agent': BROWSER_UA, accept: 'text/html,*/*' };
+const SITEMAP_TIMEOUT_MS = 30_000; // tight timeout — we abort early via maxItems
 
 /**
  * Stream-read a sitemap XML, collecting <loc>/<lastmod> entries that satisfy
@@ -247,7 +248,7 @@ function findAvailability(pageText) {
   );
 }
 
-export function parseKomplettProductPage({ html, url, source, now, referenceObservation = null }) {
+export function parseKomplettProductPage({ html, url, source, now }) {
   const $ = load(html);
   const pageText = extractVisibleText(html);
   const title = stripText(
@@ -281,6 +282,32 @@ export function parseKomplettProductPage({ html, url, source, now, referenceObse
   const segments = getUrlPathSegments(url);
   const productId = segments[1] ?? slugify(title);
 
+  // Extract original price + original material number from the embedded custom element JSON.
+  // Komplett embeds: <komplett-demo-condition-info data='{"originalProductPrice":1499,"originalMaterialNumber":"1330084",...}'>
+  let originalProductPrice = null;
+  let originalMaterialNumber = null;
+
+  const demoInfoAttr = html.match(/komplett-demo-condition-info[^>]+data='([^']+)'/i)?.[1] ??
+    html.match(/komplett-demo-condition-info[^>]+data="([^"]+)"/i)?.[1];
+
+  if (demoInfoAttr) {
+    try {
+      const demoData = JSON.parse(demoInfoAttr.replace(/&#xA0;/g, ' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+      if (typeof demoData.originalProductPrice === 'number' && demoData.originalProductPrice > 0) {
+        originalProductPrice = Math.round(demoData.originalProductPrice);
+      }
+      if (demoData.originalMaterialNumber) {
+        originalMaterialNumber = String(demoData.originalMaterialNumber).trim();
+      }
+    } catch {
+      // ignore parse errors — fall back to no reference price
+    }
+  }
+
+  const referenceUrl = originalMaterialNumber
+    ? `https://www.komplett.se/product/${originalMaterialNumber}/`
+    : null;
+
   return {
     sourceId: source.id,
     sourceLabel: source.label ?? source.id,
@@ -292,11 +319,13 @@ export function parseKomplettProductPage({ html, url, source, now, referenceObse
     category: guessCategoryFromUrl(url),
     condition,
     priceSek,
-    marketValueSek: referenceObservation?.priceSek ?? source.marketValueSek,
-    referencePriceSek: referenceObservation?.priceSek ?? source.referencePriceSek,
-    referenceUrl: referenceObservation?.url ?? null,
-    referenceTitle: referenceObservation?.title ?? null,
-    referenceSourceLabel: referenceObservation?.sourceLabel ?? null,
+    marketValueSek: originalProductPrice ?? source.marketValueSek,
+    referencePriceSek: originalProductPrice ?? source.referencePriceSek,
+    referenceUrl,
+    referenceTitle: null,
+    referenceSourceLabel: originalProductPrice != null ? (source.label ?? source.id) : null,
+    referenceMatchType: originalProductPrice != null ? 'listing-reference' : null,
+    articleNumber: originalMaterialNumber,
     resaleEstimateSek: source.resaleEstimateSek,
     shippingEstimateSek: source.shippingEstimateSek,
     feesEstimateSek: source.feesEstimateSek,
@@ -331,32 +360,24 @@ function findReferenceCandidate(outletEntry, referenceIndex) {
 export async function collectFromKomplettSitemap({ source, fetcher, sourceState, now }) {
   const maxItems = Number.isFinite(source.maxItems) ? source.maxItems : 50;
 
-  // Stream the sitemap, collecting both outlet entries AND potential reference entries.
-  // Using maxBytes as the primary stop condition avoids the full-download timeout on Railway.
-  const allEntries = await streamSitemapEntries(source.sitemapUrl, SITEMAP_HEADERS, {
-    maxItems: 100_000, // rely on maxBytes, not item count
-    maxBytes: source.sitemapMaxBytes ?? 10_000_000, // stop at 10 MB
+  // Stream only /demovaror/ entries and abort as soon as we have maxItems * 4 of them.
+  // Reference prices are extracted directly from each product page (originalProductPrice
+  // in the komplett-demo-condition-info element), so we don't need reference URLs from
+  // the sitemap at all.
+  const candidateEntries = await streamSitemapEntries(source.sitemapUrl, SITEMAP_HEADERS, {
+    maxItems: maxItems * 4, // abort early — stops reading after finding enough
+    maxBytes: source.sitemapMaxBytes ?? 3_000_000, // hard cap at 3 MB (< 10s on slow links)
     timeoutMs: source.sitemapTimeoutMs ?? SITEMAP_TIMEOUT_MS,
-    locFilter: (loc) => {
-      if (pathMatches(loc, source.includePaths, source.excludePaths)) return true;
-      // Also keep reference candidates so we can build the reference index.
-      if (source.referenceLookup) {
-        return pathMatches(loc, source.matchReferenceIncludePaths, source.matchReferenceExcludePaths);
-      }
-      return false;
-    },
-  });
+    locFilter: (loc) => pathMatches(loc, source.includePaths, source.excludePaths),
+  }).then((entries) =>
+    entries
+      .filter((entry) => categoryRootMatches(entry.loc, source.categoryRoots))
+      .filter((entry) => updatedRecentlyEnough(entry, source.updatedSinceDays))
+      .sort(latestFirst)
+      .slice(0, maxItems)
+  );
 
-  const candidateEntries = allEntries
-    .filter((entry) => pathMatches(entry.loc, source.includePaths, source.excludePaths))
-    .filter((entry) => categoryRootMatches(entry.loc, source.categoryRoots))
-    .filter((entry) => updatedRecentlyEnough(entry, source.updatedSinceDays))
-    .sort(latestFirst)
-    .slice(0, maxItems);
-
-  const referenceIndex = source.referenceLookup ? buildReferenceIndex(allEntries, source) : new Map();
   const pageStates = sourceState.pageStates ?? (sourceState.pageStates = {});
-  const referencePageStates = sourceState.referencePageStates ?? (sourceState.referencePageStates = {});
   const observations = [];
 
   sourceState.lastDiscoveryCount = candidateEntries.length;
@@ -364,59 +385,15 @@ export async function collectFromKomplettSitemap({ source, fetcher, sourceState,
   for (const entry of candidateEntries) {
     const pageState = pageStates[entry.loc] ?? (pageStates[entry.loc] = {});
     const pageResult = await fetcher.fetchText(source, pageState, entry.loc, {
-      headers: SITEMAP_HEADERS,
+      headers: PAGE_HEADERS,
       skipRobotsCheck: true,
     });
     const observation =
       pageResult.notModified && pageState.cachedObservation
-        ? {
-            ...pageState.cachedObservation,
-            seenAt: now
-          }
-        : parseKomplettProductPage({
-            html: pageResult.body,
-            url: entry.loc,
-            source,
-            now
-          });
+        ? { ...pageState.cachedObservation, seenAt: now }
+        : parseKomplettProductPage({ html: pageResult.body, url: entry.loc, source, now });
 
-    if (!observation) {
-      continue;
-    }
-
-    const referenceCandidate = source.referenceLookup ? findReferenceCandidate(entry, referenceIndex) : null;
-
-    if (referenceCandidate && referenceCandidate.loc !== entry.loc) {
-      const referenceState = referencePageStates[referenceCandidate.loc] ?? (referencePageStates[referenceCandidate.loc] = {});
-      const referenceResult = await fetcher.fetchText(source, referenceState, referenceCandidate.loc, {
-        headers: SITEMAP_HEADERS,
-        skipRobotsCheck: true,
-      });
-      const referenceObservation =
-        referenceResult.notModified && referenceState.cachedObservation
-          ? {
-              ...referenceState.cachedObservation,
-              seenAt: now
-            }
-          : parseKomplettProductPage({
-              html: referenceResult.body,
-              url: referenceCandidate.loc,
-              source: {
-                ...source,
-                condition: 'new'
-              },
-              now
-            });
-
-      if (referenceObservation) {
-        observation.marketValueSek = referenceObservation.priceSek;
-        observation.referencePriceSek = referenceObservation.priceSek;
-        observation.referenceUrl = referenceObservation.url;
-        observation.referenceTitle = referenceObservation.title;
-        observation.referenceSourceLabel = referenceObservation.sourceLabel;
-        referenceState.cachedObservation = referenceObservation;
-      }
-    }
+    if (!observation) continue;
 
     pageState.cachedObservation = observation;
     observations.push(observation);

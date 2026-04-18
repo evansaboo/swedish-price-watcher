@@ -19,10 +19,6 @@ const sitemapXml = `
       <loc>https://www.komplett.se/product/1334755/demovaror/datorutrustning/demo-ovrigt/asus-nuc-15-pro-slim-u7-255h-b-grade</loc>
       <lastmod>2026-04-15</lastmod>
     </url>
-    <url>
-      <loc>https://www.komplett.se/product/1334700/dator-tillbehor/stationar-dator/asus-nuc-15-pro-slim-u7-255h</loc>
-      <lastmod>2026-04-14</lastmod>
-    </url>
   </urlset>
 `;
 
@@ -37,34 +33,18 @@ const outletHtml = `
       <h1>ASUS NUC 15 PRO Slim U7 255H -B-Grade</h1>
       <p>B-grade pris</p>
       <strong>6 383:-</strong>
+      <komplett-demo-condition-info data='{"isDemo":true,"originalMaterialNumber":"1334700","demoType":"01 - As new","demoPrice":0.0,"originalProductPrice":9390.0,"relatedDemos":[]}'></komplett-demo-condition-info>
       <p>1 st i lager (1-3 dagar leveranstid)</p>
     </body>
   </html>
 `;
 
-const regularHtml = `
-  <html>
-    <head>
-      <title>ASUS NUC 15 PRO Slim U7 255H | Komplett.se</title>
-      <meta name="title" content="ASUS NUC 15 PRO Slim U7 255H" />
-      <meta name="description" content="Regular unit" />
-    </head>
-    <body>
-      <h1>ASUS NUC 15 PRO Slim U7 255H</h1>
-      <strong>9 390:-</strong>
-      <p>5 st i lager (1-3 dagar leveranstid)</p>
-    </body>
-  </html>
-`;
-
-test('collects Komplett outlet items and matches regular references', async () => {
+test('collects Komplett outlet items with reference price from embedded JSON', async () => {
   const sitemapUrl = 'https://www.komplett.se/sitemap.products.xml';
   const productResponses = new Map([
     ['https://www.komplett.se/product/1334755/demovaror/datorutrustning/demo-ovrigt/asus-nuc-15-pro-slim-u7-255h-b-grade', outletHtml],
-    ['https://www.komplett.se/product/1334700/dator-tillbehor/stationar-dator/asus-nuc-15-pro-slim-u7-255h', regularHtml]
   ]);
 
-  // Patch global fetch so streamSitemapEntries (which calls native fetch) gets mock data.
   const originalFetch = globalThis.fetch;
   globalThis.fetch = makeFetchMock(sitemapXml, sitemapUrl);
 
@@ -79,16 +59,12 @@ test('collects Komplett outlet items and matches regular references', async () =
       source: {
         id: 'komplett-outlet-electronics',
         type: 'komplett-sitemap',
-        label: 'Komplett outlet electronics',
+        label: 'Komplett B-grade',
         condition: 'outlet',
         sitemapUrl,
         includePaths: ['/demovaror/'],
-        matchReferenceIncludePaths: ['/datorutrustning/', '/dator-tillbehor/', '/gaming/', '/tv-ljud-bild/', '/mobil-tablets-klockor/'],
-        matchReferenceExcludePaths: ['/demovaror/'],
-        categoryRoots: ['datorutrustning', 'dator-tillbehor', 'gaming', 'tv-ljud-bild', 'mobil-tablets-klockor'],
         maxItems: 10,
         updatedSinceDays: 180,
-        referenceLookup: true,
         shippingEstimateSek: 0,
         feesEstimateSek: 0
       },
@@ -99,12 +75,10 @@ test('collects Komplett outlet items and matches regular references', async () =
 
     assert.equal(observations.length, 1);
     assert.equal(observations[0].priceSek, 6383);
+    // Reference price now comes from the embedded komplett-demo-condition-info JSON
     assert.equal(observations[0].marketValueSek, 9390);
     assert.equal(observations[0].referencePriceSek, 9390);
-    assert.equal(
-      observations[0].referenceUrl,
-      'https://www.komplett.se/product/1334700/dator-tillbehor/stationar-dator/asus-nuc-15-pro-slim-u7-255h'
-    );
+    assert.equal(observations[0].referenceUrl, 'https://www.komplett.se/product/1334700/');
     assert.equal(observations[0].productKey, 'asus-nuc-15-pro-slim-u7-255h');
   } finally {
     globalThis.fetch = originalFetch;
