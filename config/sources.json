@@ -64,7 +64,17 @@
       "label": "Webhallen Fyndware (outlet)",
       "category": "electronics",
       "condition": "outlet",
-      "notes": "Fetches all Fyndvara (outlet) products from Webhallen via their internal productdiscovery API. No Apify required. Includes regularPrice as reference price for discount calculation."
+      "notes": "Fetches all Fyndvara (outlet) products from Webhallen via their internal productdiscovery/search/fyndware API (~1957 products, 100/page). No Apify required. Includes regularPrice as reference price for discount calculation."
+    },
+    {
+      "id": "webhallen-toplist-deals",
+      "type": "webhallen-api",
+      "enabled": true,
+      "label": "Webhallen Deals",
+      "category": "electronics",
+      "condition": "deal",
+      "toplistId": 64,
+      "notes": "Fetches Webhallen Fyndvaror via toplist/64 API (1709 products, sorted by deal score). Complements the fyndware search source."
     },
     {
       "id": "komplett-outlet-electronics",

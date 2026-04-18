@@ -1,8 +1,10 @@
 import { normalizeProductIdentity, sleep, slugify, stripText } from '../lib/utils.js';
 
 const BASE_URL = 'https://www.webhallen.com';
-const PRODUCT_DISCOVERY_URL = `${BASE_URL}/api/productdiscovery/search/fyndware`;
+const FYNDWARE_API_URL = `${BASE_URL}/api/productdiscovery/search/fyndware`;
+const TOPLIST_API_URL = `${BASE_URL}/api/productdiscovery/toplist`;
 const PAGE_SIZE = 100;
+const TOPLIST_PAGE_SIZE = 24; // toplist API has a fixed page size
 const MAX_PAGES = 30; // safety cap (~3000 products)
 
 const AJAX_HEADERS = {
@@ -106,14 +108,18 @@ function mapProduct(product, source, now) {
 }
 
 export async function collectFromWebhallen({ source, fetcher, now }) {
+  return source.toplistId != null
+    ? collectFromToplist({ source, fetcher, now })
+    : collectFromFyndwareSearch({ source, fetcher, now });
+}
+
+async function collectFromFyndwareSearch({ source, fetcher, now }) {
   const observations = [];
   let page = 1;
-  // Inter-page pause — much shorter than the global 8s HTML scraping delay;
-  // this is a JSON API so 400ms is plenty to be polite.
   const interPageDelayMs = source.apiDelayMs ?? 400;
 
   while (page <= MAX_PAGES) {
-    const url = `${PRODUCT_DISCOVERY_URL}?pageNo=${page}&limit=${PAGE_SIZE}`;
+    const url = `${FYNDWARE_API_URL}?pageNo=${page}&limit=${PAGE_SIZE}`;
 
     let payload;
     try {
@@ -142,6 +148,53 @@ export async function collectFromWebhallen({ source, fetcher, now }) {
     const fetched = (page - 1) * PAGE_SIZE + products.length;
     if (Number.isFinite(filteredCount) && fetched >= filteredCount) break;
     if (products.length < PAGE_SIZE) break;
+
+    page++;
+    await sleep(interPageDelayMs);
+  }
+
+  return observations;
+}
+
+/**
+ * Collect products from a Webhallen toplist (e.g. toplist/64 = Fyndvaror,
+ * toplist/39 = Datorer deals, toplist/42 = Mobil deals).
+ * Page size is fixed at 24 by the API.
+ */
+async function collectFromToplist({ source, fetcher, now }) {
+  const toplistId = source.toplistId;
+  const interPageDelayMs = source.apiDelayMs ?? 300;
+  const observations = [];
+  let page = 1;
+
+  while (page <= MAX_PAGES) {
+    const url =
+      `${TOPLIST_API_URL}/${toplistId}?page=${page}&touchpoint=MOBILE` +
+      `&totalProductCountSet=true&engine=voyadoElevate`;
+
+    let payload;
+    try {
+      payload = await fetcher.fetchJsonApi(url, {
+        headers: AJAX_HEADERS,
+        skipHostDelay: true,
+      });
+    } catch (err) {
+      if (observations.length > 0) break;
+      throw err;
+    }
+
+    const products = payload?.products ?? [];
+    if (!Array.isArray(products) || products.length === 0) break;
+
+    for (const product of products) {
+      const obs = mapProduct(product, source, now);
+      if (obs) observations.push(obs);
+    }
+
+    const filteredCount = payload?.filteredProductCount;
+    const fetched = (page - 1) * TOPLIST_PAGE_SIZE + products.length;
+    if (Number.isFinite(filteredCount) && fetched >= filteredCount) break;
+    if (products.length < TOPLIST_PAGE_SIZE) break;
 
     page++;
     await sleep(interPageDelayMs);
