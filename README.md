@@ -1,154 +1,132 @@
 # Swedish Price Watcher
 
-A local Node.js outlet tracker for **Elgiganten Sweden**. It uses an Apify-backed source to collect outlet listings, stores local history, and can push Discord updates for favorite categories.
+A production outlet price tracker for Swedish electronics stores. Runs on Railway, scrapes six sources via Apify, and sends incremental Discord notifications as each scan completes.
 
-## Default setup
+## Active sources
 
-The default source is now:
-
-- **Elgiganten outlet latest** via `shahidirfan/elgiganten-scraper` on Apify
-- outlet products are filtered to `/product/outlet/`
-- the UI is simplified to focus on: **price, new price, discount, discount percent**
-- you can mark categories as favorites and use them for filtering and Discord updates
-
-This avoids fighting Elgiganten's direct anti-bot protections from the app runtime.
+| Store | What it tracks | Method |
+|-------|---------------|--------|
+| **Elgiganten** | Outlet products | Apify custom actor + keyword queries |
+| **NetOnNet** | Outlet/clearance | Direct Next.js HTML scraping |
+| **Webhallen** | Fyndvara (outlet) | Webhallen internal API |
+| **Komplett** | B-grade / demovaror | `apify/cheerio-scraper` (Cloudflare bypass) |
+| **ProShop** | Mega Outlet | `apify/cheerio-scraper` (Cloudflare bypass) |
+| **Power** | Erbjudanden (deals) | `apify/playwright-scraper` (Angular SPA) |
 
 ## What it does
 
-- scans Elgiganten outlet search results through Apify with high pagination limits
-- keeps a local record of listings it has already seen
-- enriches outlet products by matching them against non-outlet Elgiganten listings
-- shows a simplified outlet table with discount columns based on matched non-outlet prices
-- includes a compact favorites workflow (selected chips + expandable category picker)
-- adds richer filters (favorites-only, discounted-only, new-products-only, matched-price-only, min discount %, max price)
-- lets you mark favorite categories from discovered outlet categories
-- persists your latest filter/sort/favorites-panel UI state in the browser
-- lets you configure scan scheduler interval/on-off directly from the dashboard
-- supports active-hour windows in Swedish time (for example 07:00-00:00 only)
-- sends Discord updates for favorite categories when:
-  - a new discounted item appears
-  - an existing item in a favorite category gets a price drop
+- Scans all sources in parallel with per-source incremental Discord notifications
+- Keeps a local record of listings and highlights new vs seen products
+- Enriches outlet products by matching against non-outlet catalog prices
+- Shows a discount table (outlet price, reference price, % off) in the dashboard
+- Lets you mark favorite categories and filter/sort by them
+- Cancel button to abort stuck scans
+- Scheduled scans with configurable interval and active-hour windows (Swedish time)
+- Discord alerts for: new discounted listings, price drops in favorite categories, amazing deals
 
 ## Setup
 
 ```bash
-cd /Users/evan.saboo/swedish-price-watcher
 cp .env.example .env
 npm install
-```
-
-Add these values to `.env`:
-
-- `APIFY_TOKEN` - your Apify API token
-- `APIFY_TOKEN_2`, `APIFY_TOKEN_3` ... (optional) - extra Apify tokens used in round-robin for higher throughput
-- `DISCORD_WEBHOOK_URL` - your Discord webhook URL
-
-The Elgiganten source automatically rotates requests across `APIFY_TOKEN` and any configured extra token env vars.
-
-Then start the app:
-
-```bash
 npm start
 ```
 
-Open `http://127.0.0.1:3030` if you want the local dashboard, or just let scheduled scans post to Discord.
+Open `http://127.0.0.1:3030`.
 
-The scheduler uses `SCAN_INTERVAL_MINUTES` as its first-run default, and can then be changed live in the dashboard.
+### Environment variables
 
-The default source profile is tuned for higher outlet coverage and faster catalog price matching (more pages, wider keyword expansion, and larger reference lookups).
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `APIFY_TOKEN` | Yes | Apify API token for all Apify-backed sources |
+| `APIFY_TOKEN_2`, `APIFY_TOKEN_3` | No | Extra tokens for Elgiganten round-robin |
+| `DISCORD_WEBHOOK_URL` | No | Discord channel webhook for notifications |
+| `SCAN_INTERVAL_MINUTES` | No | Initial scheduler interval (default: 30) |
+| `RUN_ON_START` | No | Set `true` to scan immediately on boot |
 
-## Railway deployment (always-on, no VM)
+## Railway deployment
 
-This repo is Railway-ready via `railway.json`.
+This repo is Railway-ready via `railway.json`. Project: `distinguished-vibrancy`.
 
-1. Create a new Railway project from this GitHub repo.
-2. Set environment variables:
-   - `APIFY_TOKEN`
-   - `APIFY_TOKEN_2`, `APIFY_TOKEN_3` ... (optional)
-   - `DISCORD_WEBHOOK_URL` (optional)
-   - `SCAN_INTERVAL_MINUTES` (e.g. `60`)
-   - `RUN_ON_START=true`
-3. Deploy.
+1. Create a Railway project from this GitHub repo.
+2. Set the environment variables above.
+3. Deploy — the server binds to `0.0.0.0:$PORT` automatically.
 
-Notes:
+State persists via Apify KV store when `APIFY_TOKEN` is set.
 
-- Host binding is auto-set to `0.0.0.0` on Railway.
-- With `APIFY_TOKEN` set, Railway runtime uses Apify key-value state storage so scans and history persist across restarts/redeploys.
-- If you already had `HOST=127.0.0.1` in Railway variables, it is ignored on Railway now to prevent healthcheck failures.
+### Railway CLI
 
-## Run one scan manually
+```bash
+# Link to the project (one-time)
+railway link
+
+# Check logs
+railway logs --tail 50
+
+# Test production health
+railway run curl -s https://swedish-price-watcher-production.up.railway.app/health
+
+# Trigger a manual scan in production
+railway run curl -s -X POST https://swedish-price-watcher-production.up.railway.app/api/scan
+```
+
+## Run a scan manually (local)
 
 ```bash
 npm run scan
 ```
 
-## How notifications work
+## Dashboard controls
 
-- `notificationMode: "new-listings"` sends Discord alerts when a listing is first seen
-- listings are deduplicated in local state, so the same listing is not repeatedly announced every scan
-- messages are batched per source for Discord instead of sending one webhook call per item
-- listing embeds include price context fields, including initial price and discount percent when available
-- Discord webhook sends now retry on temporary rate limits (`429`) and no longer fail the full scan when notifications are throttled
-- favorite categories (set in the dashboard) trigger additional Discord events for:
-  - new discounted listings
-  - listing price drops
+- **Scan all** — starts a full scan of all enabled sources
+- **Cancel** — aborts an in-progress scan (appears during scanning)
+- **Scan** (per-source) — scan a single source independently
+- **Scheduler** — set interval, active window (e.g. 07:00–00:00 Stockholm), enable/disable
 
-The default Elgiganten source uses `notificationMode: "favorite-events"` so Discord only gets favorite-category events instead of every new listing.
+## Notifications
 
-## Source config
+Discord sends happen **per source as it finishes**, so you see results incrementally rather than waiting for all sources. Each message includes price context and discount %.
 
-Edit `config/sources.json`.
+Notification modes per source (set in `config/sources.json`):
 
-### Elgiganten Apify source fields
+| Mode | When it fires |
+|------|---------------|
+| `favorite-events` | New discounted item or price drop in a favorite category |
+| `amazing-deals` | Items above the amazing-deal threshold |
+| `new-listings` | Every first-seen listing |
+| `none` | Silent |
+
+## Adding a new source
+
+1. Create `src/sources/{name}.js` — export `collectFrom{Name}({ source, fetcher, sourceState, now })`
+2. Register handler in `src/sources/index.js`
+3. Add type to `supportedSourceTypes` Set in `src/config.js`
+4. Add entry to `config/sources.json`
+
+Use `apify/cheerio-scraper` for Cloudflare-protected static sites, `apify/playwright-scraper` for Angular/React SPAs.
+
+## Source config reference
+
+Edit `config/sources.json`. Common fields:
 
 | Field | Meaning |
-| --- | --- |
-| `type` | Must be `apify-elgiganten` |
-| `actorId` | Apify actor name, either `owner/actor` or `owner~actor` |
-| `apiTokenEnvVar` | Primary environment variable containing an Apify token (default: `APIFY_TOKEN`) |
-| `apiTokenEnvVars` | Optional list of additional token env var names for round-robin (for example `["APIFY_TOKEN_2","APIFY_TOKEN_3"]`) |
-| `actorInput` | JSON payload sent to the Apify actor |
-| `actorKeywordQueries` | Extra keyword-based actor runs merged into the same scan (useful for outlet category gaps like gaming/components) |
-| `actorKeywordResultsWanted` | Per-keyword result target |
-| `actorKeywordMaxPages` | Per-keyword page limit |
-| `actorTimeoutMs` | Timeout for the actor run request |
-| `actorRequestRetries` | Retries for transient Apify API failures (e.g. `502`) |
-| `actorRetryBaseMs` | Initial retry backoff delay |
-| `actorRetryMaxMs` | Maximum retry backoff delay |
-| `notificationMode` | `new-listings`, `favorite-events`, `amazing-deals`, or `none` |
-| `notificationBatchSize` | Max listings bundled into one Discord message |
-| `includePaths` | URL fragments that must exist in listing URLs (used for outlet-only filtering) |
-| `referenceLookup` | Enable non-outlet match lookups for category names + new-price comparisons |
-| `referenceLookupMaxPerScan` | Max outlet items to enrich per scan |
+|-------|---------|
+| `id` | Unique source identifier |
+| `type` | Handler type (see active sources table) |
+| `enabled` | `true`/`false` |
+| `label` | Display name in the UI |
+| `apiTokenEnvVar` | Env var name for the Apify token (default: `APIFY_TOKEN`) |
+| `actorTimeoutMs` | Max wait for Apify actor run |
+| `notificationMode` | Discord notification strategy |
+| `maxPages` | Pagination limit (for paged sources) |
+
+### Elgiganten-specific fields
+
+| Field | Meaning |
+|-------|---------|
+| `actorId` | Apify actor (`owner/actor`) |
+| `actorKeywordQueries` | Extra keyword searches merged into the scan |
+| `includePaths` | URL fragments that must exist (e.g. `/product/outlet/`) |
+| `referenceLookup` | Enable non-outlet price matching |
+| `referenceLookupMaxPerScan` | Max items to enrich per scan |
 | `referenceLookupConcurrency` | Parallel lookup workers |
-| `referenceLookupRetryHours` | Wait time before retrying a failed lookup for the same listing |
-| `referenceLookupResultsWanted` | Result size per lookup query |
-| `referenceLookupMaxPages` | Page limit per lookup query |
-
-### Default actor input
-
-The bundled source uses:
-
-```json
-{
-  "startUrl": "https://www.elgiganten.se/search?q=outlet&view=products",
-  "results_wanted": 1200,
-  "max_pages": 40,
-  "includeRawRecord": true
-}
-```
-
-Category filters use resolved Elgiganten category names when a match is available.
-
-The source also keeps only URLs matching `/product/outlet/` so alerts stay outlet-focused.
-
-Transient Apify failures (for example `502 Bad Gateway`) are retried automatically with backoff.
-
-To improve coverage beyond the generic outlet search page without excessive Apify spend, the default config also runs a small keyword query set and merges/deduplicates all results into one outlet set.
-
-If a product has no non-outlet match yet, the dashboard shows `match pending` in the **New price** column.
-
-## Notes
-
-- Direct Elgiganten requests from this runtime are often blocked by anti-bot checks, so the tracker uses Apify instead of scraping Elgiganten HTML directly.
-- The old Komplett source is still in `config/sources.json`, but disabled.
