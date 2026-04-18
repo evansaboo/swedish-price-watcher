@@ -144,7 +144,7 @@ select:focus-visible {
   position: relative;
   width: var(--sidebar-collapsed-width);
   min-width: 0;
-  z-index: 15;
+  z-index: 40;
 }
 
 .sidebar-rail {
@@ -206,7 +206,7 @@ select:focus-visible {
   opacity: 0;
   pointer-events: none;
   transition: transform 0.2s ease, opacity 0.2s ease;
-  z-index: 30;
+  z-index: 41;
 }
 
 .listing-content {
@@ -239,10 +239,11 @@ body.sidebar-open .sidebar {
   inset: 0;
   border: none;
   background: rgba(20, 33, 52, 0.22);
+  display: none;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
-  z-index: 20;
+  z-index: 30;
 }
 
 body.sidebar-open .sidebar-backdrop {
@@ -324,18 +325,27 @@ body.sidebar-open .sidebar-backdrop {
 label {
   display: grid;
   gap: 0.28rem;
+  min-width: 0;
 }
 
 .controls-panel .filters {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0.62rem;
+  min-width: 0;
+}
+
+.controls-panel .filters input:not([type='checkbox']),
+.controls-panel .filters select {
+  width: 100%;
+  min-width: 0;
 }
 
 .toggle-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .checkbox {
@@ -347,6 +357,8 @@ label {
   border-radius: 10px;
   background: var(--panel-soft);
   padding: 0.5rem 0.6rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .checkbox input {
@@ -614,6 +626,10 @@ a:hover {
 @media (max-width: 1080px) {
   body {
     padding: 0.95rem;
+  }
+
+  .sidebar-backdrop {
+    display: block;
   }
 
   .sidebar {
