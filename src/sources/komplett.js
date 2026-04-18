@@ -467,7 +467,7 @@ function mapKomplettCategoryProduct(product, source, refPriceCache, now) {
  */
 const CHEERIO_PAGE_FUNCTION = /* js */ `
 async function pageFunction(context) {
-  const html = context.$.html();
+  const html = context.body;
   const idx = html.indexOf('"products":[');
   if (idx === -1) return [];
   const start = idx + '"products":'.length;

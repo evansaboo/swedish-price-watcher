@@ -94,6 +94,9 @@ async function triggerScan(trigger, options = {}) {
   const sourceResults = [];
 
   state.stats.lastRunStartedAt = startedAt;
+  if (trigger === 'scheduled') {
+    state.stats.lastScheduledRunStartedAt = startedAt;
+  }
   await store.save();
 
   try {

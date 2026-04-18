@@ -423,7 +423,7 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
     const state = store.getState();
     const sourceStatuses = config.sources.map((source) => describeSourceStatus(source, state.sourceStates[source.id]));
     const currentSource = config.sources.find((source) => source.id === scanState.currentSourceId);
-    const schedulerState = buildSchedulerStatus(scheduler?.getState?.() ?? null, state.stats.lastRunStartedAt);
+    const schedulerState = buildSchedulerStatus(scheduler?.getState?.() ?? null, state.stats.lastScheduledRunStartedAt);
 
     return {
       isRunning: scanState.running,
