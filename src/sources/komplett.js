@@ -519,7 +519,7 @@ export async function collectFromKomplettCategory({ source, fetcher, sourceState
     pageFunction: CHEERIO_PAGE_FUNCTION,
     proxyConfiguration: { useApifyProxy: true },
     maxRequestsPerCrawl: maxPages + 2,
-  }, { timeoutSecs: Math.floor((source.actorTimeoutMs ?? 300_000) / 1000) });
+  }, { timeout: Math.floor((source.actorTimeoutMs ?? 300_000) / 1000) });
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems();
 
