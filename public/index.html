@@ -47,22 +47,31 @@
             Max price (SEK)
             <input id="max-price-filter" type="number" min="0" step="1" placeholder="e.g. 5000" />
           </label>
-          <label class="checkbox">
-            <input id="favorites-only" type="checkbox" />
-            Favorite categories
-          </label>
-          <label class="checkbox">
-            <input id="discounted-only" type="checkbox" />
-            Discounted products only
-          </label>
-          <label class="checkbox">
-            <input id="new-only" type="checkbox" />
-            New products only
-          </label>
-          <label class="checkbox">
-            <input id="reference-only" type="checkbox" />
-            Matched new price only
-          </label>
+          <div class="toggle-grid">
+            <label class="checkbox">
+              <input id="favorites-only" type="checkbox" />
+              Favorite categories
+            </label>
+            <label class="checkbox">
+              <input id="discounted-only" type="checkbox" />
+              Discounted products only
+            </label>
+            <label class="checkbox">
+              <input id="new-only" type="checkbox" />
+              New products only
+            </label>
+            <label class="checkbox">
+              <input id="reference-only" type="checkbox" />
+              Matched new price only
+            </label>
+          </div>
+        </div>
+        <div class="filter-presets">
+          <span class="muted-inline">Quick filters:</span>
+          <button type="button" class="preset-button" data-filter-preset="new">New</button>
+          <button type="button" class="preset-button" data-filter-preset="discounted">Discounted</button>
+          <button type="button" class="preset-button" data-filter-preset="matched">Matched</button>
+          <button type="button" class="preset-button" data-filter-preset="favorites">Favorites</button>
         </div>
         <div id="active-filters" class="active-filters"></div>
         <div class="scheduler-settings">

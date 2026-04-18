@@ -47,6 +47,7 @@ const elements = {
   minDiscountFilter: document.querySelector('#min-discount-filter'),
   maxPriceFilter: document.querySelector('#max-price-filter'),
   clearFiltersButton: document.querySelector('#clear-filters-button'),
+  filterPresetButtons: [...document.querySelectorAll('[data-filter-preset]')],
   activeFilters: document.querySelector('#active-filters'),
   favoritesEditor: document.querySelector('#favorites-editor'),
   favoritesEditorWrap: document.querySelector('#favorites-editor-wrap'),
@@ -203,10 +204,48 @@ function hydrateUiPreferences() {
   elements.minDiscountFilter.value = state.minDiscountPercent;
   elements.maxPriceFilter.value = state.maxPriceSek;
   elements.favoritesSearchInput.value = state.favoritesSearch;
+  renderFilterPresetButtons();
 }
 
 function getFavoriteCategorySet() {
   return new Set(state.favoriteCategories.map((category) => normalizeCategoryKey(category)));
+}
+
+function getActiveFilterPreset() {
+  const active = [
+    state.newOnly ? 'new' : null,
+    state.discountedOnly ? 'discounted' : null,
+    state.referenceOnly ? 'matched' : null,
+    state.favoritesOnly ? 'favorites' : null
+  ].filter(Boolean);
+
+  return active.length === 1 ? active[0] : null;
+}
+
+function renderFilterPresetButtons() {
+  const activePreset = getActiveFilterPreset();
+
+  for (const button of elements.filterPresetButtons) {
+    const preset = button.getAttribute('data-filter-preset');
+    const isActive = preset === activePreset;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  }
+}
+
+function applyFilterPreset(preset) {
+  state.newOnly = preset === 'new';
+  state.discountedOnly = preset === 'discounted';
+  state.referenceOnly = preset === 'matched';
+  state.favoritesOnly = preset === 'favorites';
+
+  elements.newOnly.checked = state.newOnly;
+  elements.discountedOnly.checked = state.discountedOnly;
+  elements.referenceOnly.checked = state.referenceOnly;
+  elements.favoritesOnly.checked = state.favoritesOnly;
+
+  saveUiPreferences();
+  renderFilterPresetButtons();
 }
 
 function sortIndicator(column) {
@@ -541,10 +580,12 @@ function renderActiveFilters() {
 
   if (!activeFilters.length) {
     elements.activeFilters.innerHTML = '<span class="muted-inline">No active filters.</span>';
+    renderFilterPresetButtons();
     return;
   }
 
   elements.activeFilters.innerHTML = activeFilters.map((label) => `<span class="filter-chip">${escapeHtml(label)}</span>`).join('');
+  renderFilterPresetButtons();
 }
 
 function renderSchedulerStatus() {
@@ -805,7 +846,7 @@ function renderProducts(products) {
 
       return `
         <tr class="${rowClass}">
-          <td>
+          <td data-label="Product">
             <div class="product-title">
               <strong>${escapeHtml(product.title)}</strong>
             </div>
@@ -815,15 +856,15 @@ function renderProducts(products) {
               <span class="meta">${escapeHtml(matchLabel)}</span>
             </div>
           </td>
-          <td>
+          <td data-label="Category">
             <span class="category-pill">${categoryFavorite ? '★ ' : ''}${escapeHtml(product.category)}</span>
           </td>
-          <td>${formatSek(product.currentPriceSek)}</td>
-          <td>${Number.isFinite(product.initialPriceSek) ? formatSek(product.initialPriceSek) : 'match pending'}</td>
-          <td>${Number.isFinite(product.discountSek) ? formatSek(product.discountSek) : 'n/a'}</td>
-          <td>${Number.isFinite(product.discountPercent) ? `${product.discountPercent}%` : 'n/a'}</td>
-          <td>${formatDate(product.lastSeenAt)}</td>
-          <td><a href="${escapeHtml(product.url)}" target="_blank" rel="noreferrer">Open</a></td>
+          <td data-label="Price">${formatSek(product.currentPriceSek)}</td>
+          <td data-label="New price">${Number.isFinite(product.initialPriceSek) ? formatSek(product.initialPriceSek) : 'match pending'}</td>
+          <td data-label="Discount">${Number.isFinite(product.discountSek) ? formatSek(product.discountSek) : 'n/a'}</td>
+          <td data-label="Discount %">${Number.isFinite(product.discountPercent) ? `${product.discountPercent}%` : 'n/a'}</td>
+          <td data-label="Last seen">${formatDate(product.lastSeenAt)}</td>
+          <td data-label="Link"><a href="${escapeHtml(product.url)}" target="_blank" rel="noreferrer">Open</a></td>
         </tr>
       `;
     })
@@ -897,6 +938,7 @@ function applyCurrentFilterState() {
   state.minDiscountPercent = elements.minDiscountFilter.value.trim();
   state.maxPriceSek = elements.maxPriceFilter.value.trim();
   saveUiPreferences();
+  renderFilterPresetButtons();
 }
 
 function resetFilters() {
@@ -918,6 +960,7 @@ function resetFilters() {
   elements.minDiscountFilter.value = '';
   elements.maxPriceFilter.value = '';
   saveUiPreferences();
+  renderFilterPresetButtons();
 }
 
 async function loadDashboard() {
@@ -996,6 +1039,15 @@ elements.newOnly.addEventListener('change', () => updateFilters());
 elements.referenceOnly.addEventListener('change', () => updateFilters());
 elements.minDiscountFilter.addEventListener('input', () => updateFilters({ debounce: true }));
 elements.maxPriceFilter.addEventListener('input', () => updateFilters({ debounce: true }));
+for (const button of elements.filterPresetButtons) {
+  button.addEventListener('click', () => {
+    applyFilterPreset(button.getAttribute('data-filter-preset'));
+    loadDashboard().catch((error) => {
+      setNotice(error.message, 'error');
+      elements.runSummary.textContent = error.message;
+    });
+  });
+}
 elements.clearFiltersButton.addEventListener('click', () => {
   resetFilters();
   loadDashboard().catch((error) => {
