@@ -48,6 +48,16 @@
       "notes": "Runs an Apify-backed Elgiganten Sweden outlet search and keeps only URLs under /product/outlet/ before sending Discord alerts."
     },
     {
+      "id": "netonnet-outlet",
+      "type": "netonnet-outlet",
+      "enabled": true,
+      "label": "NetOnNet Outlet",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxPages": 10,
+      "notes": "Scrapes NetOnNet's outlet/clearance page via Next.js RSC HTML parsing. Collects up to ~480 products across 10 pages with no API key required."
+    },
+    {
       "id": "webhallen-fyndware",
       "type": "webhallen-api",
       "enabled": true,

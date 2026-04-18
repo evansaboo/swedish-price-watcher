@@ -1,0 +1,197 @@
+import { normalizeProductIdentity } from '../lib/utils.js';
+
+const BASE_URL = 'https://www.netonnet.se';
+const OUTLET_URL = `${BASE_URL}/art/outlet`;
+const PRODUCTS_PER_PAGE = 48;
+
+// Category slug → human-readable label
+const CATEGORY_MAP = {
+  ljud: 'Ljud',
+  gaming: 'Gaming',
+  'dator-surfplatta': 'Dator & Surfplatta',
+  'mobil-smartwatch': 'Mobil & Smartwatch',
+  'hem-fritid': 'Hem & Fritid',
+  'foto-kamera': 'Foto & Kamera',
+  tv: 'TV',
+  natverk: 'Nätverk',
+  'smarta-hem': 'Smarta Hem',
+  outlet: 'Outlet',
+  personvard: 'Personvård',
+  vitvaror: 'Vitvaror',
+  datorkomponenter: 'Datorkomponenter',
+  grill: 'Grill',
+  refurbished: 'Refurbished',
+  'el-verktyg': 'El & Verktyg',
+  sport: 'Sport',
+  leksaker: 'Leksaker',
+};
+
+const PAGE_HEADERS = {
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'accept-language': 'sv-SE,sv;q=0.9',
+};
+
+function parseTotalPages(html) {
+  const m = html.match(/"page":\d+,"totalPages":(\d+)/);
+  return m ? parseInt(m[1], 10) : 1;
+}
+
+function resolveCategory(canonicalUrl) {
+  if (!canonicalUrl) return null;
+  // URL shape: /art/{category-slug}/{subcategory-slug}/...
+  const parts = canonicalUrl.replace(/^\/art\//, '').split('/').filter(Boolean);
+  const slug = parts[0] ?? null;
+  return CATEGORY_MAP[slug] ?? slug ?? null;
+}
+
+function buildImageUrl(articleNumber, imageId) {
+  if (!articleNumber || !imageId) return null;
+  return `${BASE_URL}/GetFile/ProductImagePrimary/(${articleNumber})_${imageId}_200.jpg`;
+}
+
+function extractProducts(html) {
+  // Products are embedded in RSC JSON as \"itemListName\":\"category=/art/outlet\"
+  // Each match starts a product card payload
+  const positions = [];
+  const marker = '\\"itemListName\\":\\"category=/art/outlet\\"';
+  let searchFrom = 0;
+  while (true) {
+    const idx = html.indexOf(marker, searchFrom);
+    if (idx === -1) break;
+    positions.push(idx);
+    searchFrom = idx + marker.length;
+  }
+
+  const products = [];
+  const seen = new Set();
+
+  for (const pos of positions) {
+    // 6KB context is enough for one full product card RSC payload
+    const ctx = html.slice(pos, pos + 6000);
+
+    const artM = ctx.match(/\\"articleNumber\\":\\"(\d+)\\"/);
+    if (!artM) continue;
+    const articleNumber = artM[1];
+    if (seen.has(articleNumber)) continue;
+    seen.add(articleNumber);
+
+    const priceM = ctx.match(/\\"price\\":\{\\"priceList\\"[^}]+\\"price\\":(\d+(?:\.\d+)?)/);
+    const urlM = ctx.match(/\\"canonicalUrl\\":\\"(\/[^"\\]+)\\"/);
+    const brandM = ctx.match(/\\"brand\\":\\"([^"\\]+)\\"/);
+    const histM = ctx.match(/\\"lowestHistoricalPrice\\":(null|-?\d+(?:\.\d+)?)/);
+    const altM = ctx.match(/\\"altDesc\\":\\"([^"\\]+)\\"/);
+    // Image src pattern: /GetFile/ProductImagePrimary/(ARTICLENO)_IMAGEID_{0}.{1}
+    const imgM = ctx.match(/\\"src\\":\\"\/GetFile\/ProductImagePrimary\/\((\d+)\)_(\d+)_\{0\}/);
+
+    const price = priceM ? parseFloat(priceM[1]) : null;
+    if (!price || !urlM) continue;
+
+    const canonicalUrl = urlM[1];
+    const historicalPrice = histM && histM[1] !== 'null' ? parseFloat(histM[1]) : null;
+
+    products.push({
+      articleNumber,
+      name: altM ? altM[1] : null,
+      brand: brandM ? brandM[1] : null,
+      price,
+      lowestHistoricalPrice: historicalPrice,
+      canonicalUrl,
+      category: resolveCategory(canonicalUrl),
+      imageUrl: buildImageUrl(articleNumber, imgM ? imgM[2] : null),
+    });
+  }
+
+  return products;
+}
+
+function mapProduct(product, source, now) {
+  const name = product.name ?? '';
+  const brand = product.brand ?? '';
+  // Avoid duplicating brand when altDesc already starts with brand name
+  const title = (name && brand && name.toLowerCase().startsWith(brand.toLowerCase()))
+    ? name
+    : [brand, name].filter(Boolean).join(' ');
+  if (!title || !product.price) return null;
+
+  const productKey = normalizeProductIdentity(product.name ?? title);
+  const url = `${BASE_URL}${product.canonicalUrl}`;
+
+  return {
+    sourceId: source.id,
+    sourceLabel: source.label ?? source.id,
+    sourceType: source.type,
+    externalId: product.articleNumber,
+    productKey,
+    title,
+    url,
+    category: product.category,
+    condition: 'outlet',
+    conditionLabel: 'Outlet',
+    priceSek: product.price,
+    // NetOnNet does not always provide a reference price in the outlet listing RSC
+    marketValueSek: product.lowestHistoricalPrice ?? null,
+    referencePriceSek: product.lowestHistoricalPrice ?? null,
+    referenceUrl: null,
+    referenceTitle: null,
+    referenceSourceLabel: null,
+    availability: 'unknown',
+    imageUrl: product.imageUrl ?? null,
+    notes: source.notes ?? null,
+    seenAt: now,
+  };
+}
+
+export async function collectFromNetonnet({ source, sourceState, fetcher, now }) {
+  const observations = [];
+
+  // Fetch first page to determine total page count
+  const firstUrl = OUTLET_URL;
+  let firstResult;
+  try {
+    firstResult = await fetcher.fetchText(source, sourceState, firstUrl, {
+      headers: PAGE_HEADERS,
+    });
+  } catch (err) {
+    throw new Error(`NetOnNet: failed to fetch first outlet page: ${err.message}`);
+  }
+
+  if (firstResult.notModified) return observations;
+
+  const firstHtml = firstResult.body;
+  const totalPages = parseTotalPages(firstHtml);
+
+  const firstProducts = extractProducts(firstHtml);
+  for (const p of firstProducts) {
+    const obs = mapProduct(p, source, now);
+    if (obs) observations.push(obs);
+  }
+
+  // Fetch remaining pages (0-indexed: ?p=1 is page 2)
+  const limit = Math.min(totalPages, source.maxPages ?? 20);
+  for (let pageIdx = 1; pageIdx < limit; pageIdx++) {
+    const pageUrl = `${OUTLET_URL}?p=${pageIdx}`;
+    let result;
+    try {
+      result = await fetcher.fetchText(source, null, pageUrl, {
+        headers: PAGE_HEADERS,
+      });
+    } catch (err) {
+      // Partial results on error are still valuable
+      if (observations.length > 0) break;
+      throw err;
+    }
+
+    const products = extractProducts(result.body);
+    if (products.length === 0) break;
+
+    for (const p of products) {
+      const obs = mapProduct(p, source, now);
+      if (obs) observations.push(obs);
+    }
+
+    // Stop when we've seen fewer products than a full page (last page)
+    if (products.length < PRODUCTS_PER_PAGE) break;
+  }
+
+  return observations;
+}
