@@ -1,4 +1,4 @@
-import { parseSekValue, sleep } from '../lib/utils.js';
+import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js';
 
 const API_BASE = 'https://www.power.se/api/v2/productlists';
 const IMAGE_CDN = 'https://media.power-cdn.net';
@@ -43,15 +43,18 @@ function mapProduct(item, source, now) {
   return {
     sourceId: source.id,
     sourceLabel: source.label ?? source.id,
+    sourceType: source.type,
     externalId,
     title,
     url,
-    priceSek: price,
+    productKey: normalizeProductIdentity(title),    priceSek: price,
     referencePriceSek: refPrice,
     marketValueSek: refPrice,
     imageUrl: buildImageUrl(item.productImage),
     category: item.categoryName ?? 'electronics',
     condition: 'outlet',
+    conditionLabel: item.outletReason ?? 'Outlet',
+    availability: 'in_stock',
     outletReason: item.outletReason ?? null,
     seenAt: now,
   };

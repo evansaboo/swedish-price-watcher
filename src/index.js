@@ -208,7 +208,14 @@ async function triggerScan(trigger, options = {}) {
 
           state.deals = computeDeals(state, config.thresholds);
 
-          // Send Discord notifications immediately for this source's results.
+          // Save state immediately so the products API returns fresh data as each
+          // source finishes — Discord notifications run after so they never block
+          // the table from updating.
+          await store.save();
+
+          sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
+
+          // Send Discord notifications after state is persisted.
           const sourceNotif = await notifier.notifyScan({
             deals: state.deals,
             newItems: mergeResult.newItems,
@@ -220,11 +227,6 @@ async function triggerScan(trigger, options = {}) {
           mergeNotif(aggregatedNotif.amazingDeals, sourceNotif.amazingDeals);
           mergeNotif(aggregatedNotif.newListings, sourceNotif.newListings);
           mergeNotif(aggregatedNotif.favoriteCategoryEvents, sourceNotif.favoriteCategoryEvents);
-
-          sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
-
-          // Save state so the products API returns fresh data before other sources finish.
-          await store.save();
         });
 
         // Wait for this source's turn in the processing queue before resolving.

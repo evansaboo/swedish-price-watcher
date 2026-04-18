@@ -136,13 +136,26 @@ export class DiscordNotifier {
       };
     }
 
+    // Cap per-scan notifications to avoid flooding Discord on first runs.
+    // Group by sourceId so each store gets up to MAX_PER_SOURCE deals per scan.
+    const MAX_PER_SOURCE = 25;
+    const sentPerSource = new Map();
+    const cappedDeals = [];
+    for (const deal of amazingDeals) {
+      const count = sentPerSource.get(deal.sourceId) ?? 0;
+      if (count < MAX_PER_SOURCE) {
+        cappedDeals.push(deal);
+        sentPerSource.set(deal.sourceId, count + 1);
+      }
+    }
+
     const now = Date.now();
     let sent = 0;
-    let skipped = 0;
+    let skipped = amazingDeals.length - cappedDeals.length; // capped ones count as skipped
     let failed = 0;
     const errors = [];
 
-    for (const deal of amazingDeals) {
+    for (const deal of cappedDeals) {
       const notificationKey = `${deal.listingKey}:${deal.currentPriceSek}`;
       const previousSentAt = state.notifications[notificationKey];
 

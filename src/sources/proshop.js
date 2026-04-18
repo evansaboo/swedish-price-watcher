@@ -1,5 +1,5 @@
 import { ApifyClient } from 'apify-client';
-import { parseSekValue } from '../lib/utils.js';
+import { normalizeProductIdentity, parseSekValue } from '../lib/utils.js';
 
 /**
  * The pageFunction executed inside Apify's playwright-scraper actor.
@@ -72,15 +72,19 @@ function mapProshopItem(item, source, now) {
   return {
     sourceId: source.id,
     sourceLabel: source.label ?? source.id,
+    sourceType: source.type,
     externalId,
     title: name,
     url: fullUrl,
+    productKey: normalizeProductIdentity(name),
     priceSek: price,
     referencePriceSek: originalPrice,
     marketValueSek: originalPrice,
     imageUrl: item.imageUrl || null,
     category: category || 'outlet',
     condition: 'outlet',
+    conditionLabel: 'Outlet',
+    availability: 'in_stock',
     seenAt: now,
   };
 }
