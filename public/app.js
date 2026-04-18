@@ -596,10 +596,9 @@ function syncScanButton(status) {
   const progress = status.scanProgress ?? {};
   const total = Number(progress.totalSources ?? 0);
   const completed = Number(progress.completedSources ?? 0);
-  const activeStep = progress.currentSourceId ? Math.min(completed + 1, total || completed + 1) : completed;
 
   elements.scanButton.disabled = true;
-  elements.scanButton.textContent = total ? `Scanning ${activeStep}/${total}` : 'Scanning...';
+  elements.scanButton.textContent = total ? `Scanning ${completed}/${total}` : 'Scanning...';
 }
 
 function renderStats(status, response, categories) {
@@ -623,18 +622,17 @@ function renderStats(status, response, categories) {
     .join('');
 }
 
-function renderSources(sources, isScanning, currentSourceId) {
+function renderSources(sources, isScanning) {
   if (!elements.sourcesList || !sources?.length) return;
 
   elements.sourcesList.innerHTML = sources
     .filter((source) => source.enabled) // only show config-enabled sources
     .map((source) => {
-      const isCurrentlyScanning = isScanning && currentSourceId === source.id;
-      const statusLabel = isCurrentlyScanning ? 'scanning' : source.status;
+      const statusLabel = source.status;
       const relTime = formatRelativeTime(source.lastSuccessAt);
       const countText = source.lastCount != null ? ` · ${source.lastCount} items` : '';
       const lastScanLine = relTime ? `${relTime}${countText}` : 'Never scanned';
-      const errorLine = source.lastError && !isCurrentlyScanning
+      const errorLine = source.lastError
         ? `<span class="source-error-meta">${escapeHtml(source.lastError)}</span>`
         : '';
 
@@ -693,7 +691,7 @@ function renderScannerToggles(sources) {
           body: JSON.stringify({ enabled })
         });
         const sources = await fetchJson('/api/sources');
-        renderSources(sources, false, null);
+        renderSources(sources, false);
         renderScannerToggles(sources);
       } catch (err) {
         cb.checked = !enabled;
@@ -1187,10 +1185,8 @@ function renderNotice(status, response) {
     const progress = status.scanProgress ?? {};
     const total = Number(progress.totalSources ?? 0);
     const completed = Number(progress.completedSources ?? 0);
-    const activeStep = progress.currentSourceId ? Math.min(completed + 1, total || completed + 1) : completed;
-    const sourceText = progress.currentSourceLabel ? ` (${progress.currentSourceLabel})` : '';
 
-    setNotice(`Scan running ${total ? `${activeStep}/${total}` : 'in progress'}${sourceText}.`, 'info');
+    setNotice(`Scan running ${total ? `${completed}/${total} sources done` : 'in progress'}...`, 'info');
     return;
   }
 
@@ -1274,7 +1270,7 @@ async function loadDashboard() {
 
   syncScanButton(status);
   renderStats(status, response, categories);
-  renderSources(sources, status.isRunning, status.scanProgress?.currentSourceId);
+  renderSources(sources, status.isRunning);
   renderScannerToggles(sources);
   renderCategoryFilter(categories);
   renderStoreFilter(outletSources ?? []);
@@ -1299,7 +1295,7 @@ async function pollScanStatus() {
     fetchJson('/api/sources')
   ]);
   syncScanButton(status);
-  renderSources(sources, status.isRunning, status.scanProgress?.currentSourceId);
+  renderSources(sources, status.isRunning);
   renderScheduler(status.scheduler, { preserveDraft: true });
   renderNotice(status, latestProducts);
   elements.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);

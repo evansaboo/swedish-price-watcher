@@ -100,74 +100,76 @@ async function triggerScan(trigger, options = {}) {
   await store.save();
 
   try {
-    for (const source of sourcesToRun) {
-      scanState.currentSourceId = source.id;
-      const sourceState = state.sourceStates[source.id] ?? {};
-      state.sourceStates[source.id] = sourceState;
-      sourceState.lastAttemptAt = startedAt;
+    // Run all sources concurrently — each source's collection is pure I/O so
+    // parallelism is safe.  Each promise always resolves (never rejects) so we
+    // get a result record for every source regardless of outcome.
+    const collectionResults = await Promise.all(
+      sourcesToRun.map(async (source) => {
+        const sourceState = state.sourceStates[source.id] ?? {};
+        state.sourceStates[source.id] = sourceState;
+        sourceState.lastAttemptAt = startedAt;
 
-      try {
-        if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
-          sourceResults.push({
-            sourceId: source.id,
-            status: 'cooling-down',
-            disabledUntil: sourceState.disabledUntil
-          });
-          continue;
-        }
-
-        const collected = await collectSource({
-          source,
-          fetcher,
-          sourceState,
-          now: startedAt
-        });
-
-        observations += collected.length;
-        const mergeResult = mergeObservations(state, collected, config.maxHistoryEntries);
-        newItems.push(...mergeResult.newItems);
-        priceDrops.push(...mergeResult.priceDrops);
-
-        // Prune stale items: remove items from this source not seen in this scan
-        if (collected.length > 0) {
-          const seenKeys = new Set(collected.map((o) => buildListingKey(o.sourceId, o.externalId)));
-          let pruned = 0;
-          for (const key of Object.keys(state.items)) {
-            if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
-              delete state.items[key];
-              pruned += 1;
-            }
+        try {
+          if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
+            return { source, sourceState, status: 'cooling-down', disabledUntil: sourceState.disabledUntil };
           }
-          if (pruned > 0) {
-            console.log(`[${source.id}] Pruned ${pruned} stale item(s) no longer listed.`);
-          }
-        }
-        sourceState.lastSuccessAt = startedAt;
-        sourceState.lastError = null;
-        sourceState.lastCount = collected.length;
-        delete sourceState.disabledUntil;
 
-        sourceResults.push({
-          sourceId: source.id,
-          status: 'ok',
-          count: collected.length
-        });
-      } catch (error) {
+          const collected = await collectSource({ source, fetcher, sourceState, now: startedAt });
+          return { source, sourceState, status: 'ok', collected };
+        } catch (error) {
+          return { source, sourceState, status: 'error', error };
+        } finally {
+          // Increment as each source finishes so the UI updates incrementally
+          scanState.completedSources += 1;
+        }
+      })
+    );
+
+    // Process results sequentially (all state mutations happen after all I/O)
+    for (const result of collectionResults) {
+      const { source, sourceState } = result;
+
+      if (result.status === 'cooling-down') {
+        sourceResults.push({ sourceId: source.id, status: 'cooling-down', disabledUntil: result.disabledUntil });
+        continue;
+      }
+
+      if (result.status === 'error') {
+        const { error } = result;
         sourceState.lastError = error.message;
-
         if (error.disableHours) {
           sourceState.disabledUntil = new Date(Date.now() + error.disableHours * 60 * 60 * 1000).toISOString();
         }
-
-        sourceResults.push({
-          sourceId: source.id,
-          status: 'error',
-          message: error.message,
-          disabledUntil: sourceState.disabledUntil ?? null
-        });
-      } finally {
-        scanState.completedSources += 1;
+        sourceResults.push({ sourceId: source.id, status: 'error', message: error.message, disabledUntil: sourceState.disabledUntil ?? null });
+        continue;
       }
+
+      const { collected } = result;
+      observations += collected.length;
+      const mergeResult = mergeObservations(state, collected, config.maxHistoryEntries);
+      newItems.push(...mergeResult.newItems);
+      priceDrops.push(...mergeResult.priceDrops);
+
+      // Prune stale items: remove items from this source not seen in this scan
+      if (collected.length > 0) {
+        const seenKeys = new Set(collected.map((o) => buildListingKey(o.sourceId, o.externalId)));
+        let pruned = 0;
+        for (const key of Object.keys(state.items)) {
+          if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
+            delete state.items[key];
+            pruned += 1;
+          }
+        }
+        if (pruned > 0) {
+          console.log(`[${source.id}] Pruned ${pruned} stale item(s) no longer listed.`);
+        }
+      }
+      sourceState.lastSuccessAt = startedAt;
+      sourceState.lastError = null;
+      sourceState.lastCount = collected.length;
+      delete sourceState.disabledUntil;
+
+      sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
     }
 
     state.deals = computeDeals(state, config.thresholds);

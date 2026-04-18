@@ -422,7 +422,6 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
   app.get('/api/status', async () => {
     const state = store.getState();
     const sourceStatuses = config.sources.map((source) => describeSourceStatus(source, state.sourceStates[source.id]));
-    const currentSource = config.sources.find((source) => source.id === scanState.currentSourceId);
     const schedulerState = buildSchedulerStatus(scheduler?.getState?.() ?? null, state.stats.lastScheduledRunStartedAt);
 
     return {
@@ -433,8 +432,6 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       lastRunSummary: state.stats.lastRunSummary,
       scanProgress: {
         startedAt: scanState.startedAt,
-        currentSourceId: scanState.currentSourceId,
-        currentSourceLabel: currentSource?.label ?? scanState.currentSourceId,
         completedSources: scanState.completedSources,
         totalSources: scanState.totalSources
       },
