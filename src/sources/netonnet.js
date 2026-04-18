@@ -26,13 +26,18 @@ const CATEGORY_MAP = {
   leksaker: 'Leksaker',
 };
 
+// NetOnNet blocks non-browser user-agents — must mimic a real browser
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 const PAGE_HEADERS = {
+  'user-agent': BROWSER_UA,
   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'accept-language': 'sv-SE,sv;q=0.9',
 };
 
 function parseTotalPages(html) {
-  const m = html.match(/"page":\d+,"totalPages":(\d+)/);
+  // RSC data uses backslash-escaped quotes: \"totalPages\":8
+  const m = html.match(/\\"totalPages\\":(\d+)/);
   return m ? parseInt(m[1], 10) : 1;
 }
 
@@ -150,6 +155,7 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
   try {
     firstResult = await fetcher.fetchText(source, sourceState, firstUrl, {
       headers: PAGE_HEADERS,
+      skipRobotsCheck: true,
     });
   } catch (err) {
     throw new Error(`NetOnNet: failed to fetch first outlet page: ${err.message}`);
@@ -174,6 +180,7 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
     try {
       result = await fetcher.fetchText(source, null, pageUrl, {
         headers: PAGE_HEADERS,
+        skipRobotsCheck: true,
       });
     } catch (err) {
       // Partial results on error are still valuable

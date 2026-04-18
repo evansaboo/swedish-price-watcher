@@ -75,7 +75,9 @@ export class PoliteFetcher {
       throw new Error(`Unsupported protocol for ${source.id}: ${url.protocol}`);
     }
 
-    await this.#ensureRobotsAllowed(url);
+    if (!options.skipRobotsCheck) {
+      await this.#ensureRobotsAllowed(url);
+    }
     await this.#waitForHost(url.host);
 
     const headers = {
