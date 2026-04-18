@@ -51,11 +51,11 @@
       "id": "netonnet-outlet",
       "type": "netonnet-outlet",
       "enabled": true,
-      "label": "NetOnNet Outlet",
+      "label": "NetOnNet Outlet + Fyndvaror",
       "category": "electronics",
       "condition": "outlet",
-      "maxPages": 10,
-      "notes": "Scrapes NetOnNet's outlet/clearance page via Next.js RSC HTML parsing. Collects up to ~480 products across 10 pages with no API key required."
+      "maxPages": 25,
+      "notes": "Scrapes both /art/outlet (~8 pages) and /art/fyndvaror (~18 pages) via RSC HTML parsing. Fixed marker to match both category paths. ~1200 products total."
     },
     {
       "id": "webhallen-fyndware",

@@ -2,6 +2,7 @@ import { normalizeProductIdentity, sleep } from '../lib/utils.js';
 
 const BASE_URL = 'https://www.netonnet.se';
 const OUTLET_URL = `${BASE_URL}/art/outlet`;
+const FYNDVAROR_URL = `${BASE_URL}/art/fyndvaror`;
 const PRODUCTS_PER_PAGE = 48;
 
 // ms to wait between requests — polite but not the global 8s hostDelayMs
@@ -59,10 +60,10 @@ function buildImageUrl(articleNumber, imageId) {
 }
 
 function extractProducts(html) {
-  // Products are embedded in RSC JSON as \"itemListName\":\"category=/art/outlet\"
-  // Each match starts a product card payload
+  // Products are embedded in RSC JSON with backslash-escaped quotes.
+  // Marker matches any /art/ category page (outlet, fyndvaror, etc.)
+  const marker = '\\"itemListName\\":\\"category=/art/';
   const positions = [];
-  const marker = '\\"itemListName\\":\\"category=/art/outlet\\"';
   let searchFrom = 0;
   while (true) {
     const idx = html.indexOf(marker, searchFrom);
@@ -156,37 +157,27 @@ function parseReferencePrice(html) {
   return m ? parseInt(m[1], 10) : null;
 }
 
-export async function collectFromNetonnet({ source, sourceState, fetcher, now }) {
+async function scrapeAllPages(basePageUrl, source, sourceState, fetcher, now, maxPages) {
   const observations = [];
 
-  // Fetch first page to determine total page count
-  const firstUrl = OUTLET_URL;
-  let firstResult;
-  try {
-    firstResult = await fetcher.fetchText(source, sourceState, firstUrl, {
-      headers: PAGE_HEADERS,
-      skipRobotsCheck: true,
-      skipHostDelay: true,
-    });
-  } catch (err) {
-    throw new Error(`NetOnNet: failed to fetch first outlet page: ${err.message}`);
-  }
+  const firstResult = await fetcher.fetchText(source, sourceState, basePageUrl, {
+    headers: PAGE_HEADERS,
+    skipRobotsCheck: true,
+    skipHostDelay: true,
+  });
 
   if (firstResult.notModified) return observations;
 
   const firstHtml = firstResult.body;
-  const totalPages = parseTotalPages(firstHtml);
+  const totalPages = Math.min(parseTotalPages(firstHtml), maxPages);
 
-  const firstProducts = extractProducts(firstHtml);
-  for (const p of firstProducts) {
+  for (const p of extractProducts(firstHtml)) {
     const obs = mapProduct(p, source, now);
     if (obs) observations.push(obs);
   }
 
-  // Fetch remaining pages (0-indexed: ?p=1 is page 2)
-  const limit = Math.min(totalPages, source.maxPages ?? 20);
-  for (let pageIdx = 1; pageIdx < limit; pageIdx++) {
-    const pageUrl = `${OUTLET_URL}?p=${pageIdx}`;
+  for (let pageIdx = 1; pageIdx < totalPages; pageIdx++) {
+    const pageUrl = `${basePageUrl}?p=${pageIdx}`;
     let result;
     try {
       result = await fetcher.fetchText(source, null, pageUrl, {
@@ -195,7 +186,6 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
         skipHostDelay: true,
       });
     } catch (err) {
-      // Partial results on error are still valuable
       if (observations.length > 0) break;
       throw err;
     }
@@ -210,8 +200,35 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
 
     await sleep(PAGE_DELAY_MS);
 
-    // Stop when we've seen fewer products than a full page (last page)
     if (products.length < PRODUCTS_PER_PAGE) break;
+  }
+
+  return observations;
+}
+
+export async function collectFromNetonnet({ source, sourceState, fetcher, now }) {
+  const maxPages = source.maxPages ?? 25;
+
+  // Scrape both /art/outlet (~8 pages) and /art/fyndvaror (~18 pages)
+  const [outletObs, fyndvarorObs] = await Promise.all([
+    scrapeAllPages(OUTLET_URL, source, sourceState, fetcher, now, maxPages).catch((err) => {
+      console.warn(`[netonnet] outlet scrape failed: ${err.message}`);
+      return [];
+    }),
+    scrapeAllPages(FYNDVAROR_URL, source, sourceState, fetcher, now, maxPages).catch((err) => {
+      console.warn(`[netonnet] fyndvaror scrape failed: ${err.message}`);
+      return [];
+    }),
+  ]);
+
+  // Deduplicate by externalId (same product can appear in both sections)
+  const seen = new Set();
+  const observations = [];
+  for (const obs of [...outletObs, ...fyndvarorObs]) {
+    if (!seen.has(obs.externalId)) {
+      seen.add(obs.externalId);
+      observations.push(obs);
+    }
   }
 
   // ── Reference price lookup ─────────────────────────────────────────────────
