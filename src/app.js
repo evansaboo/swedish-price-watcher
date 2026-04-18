@@ -177,6 +177,58 @@ function buildOutletProducts(state) {
     });
 }
 
+const VALID_SORT_COLUMNS = new Set([
+  'title', 'category', 'currentPriceSek', 'initialPriceSek',
+  'discountSek', 'discountPercent', 'lastSeenAt'
+]);
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+function sortAndPaginateProducts(products, query) {
+  const sortBy = VALID_SORT_COLUMNS.has(query.sortBy) ? query.sortBy : 'discountPercent';
+  const sortDir = query.sortDir === 'asc' ? 1 : -1;
+  const rawPage = Number.parseInt(String(query.page ?? '1'), 10);
+  const rawSize = Number.parseInt(String(query.pageSize ?? String(DEFAULT_PAGE_SIZE)), 10);
+  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number.isFinite(rawSize) ? rawSize : DEFAULT_PAGE_SIZE));
+
+  // Compute aggregates over the full filtered set before slicing
+  const discounted = products.filter((p) => Number.isFinite(p.discountSek) && p.discountSek > 0).length;
+  const matched = products.filter((p) => Number.isFinite(p.initialPriceSek)).length;
+  const discountValues = products.map((p) => p.discountPercent).filter((v) => Number.isFinite(v));
+  const avgDiscountPercent = discountValues.length
+    ? Math.round(discountValues.reduce((sum, v) => sum + v, 0) / discountValues.length)
+    : null;
+
+  const sorted = [...products].sort((a, b) => {
+    let cmp;
+    if (sortBy === 'title' || sortBy === 'category') {
+      cmp = String(a[sortBy] ?? '').localeCompare(String(b[sortBy] ?? ''), 'sv-SE');
+    } else if (sortBy === 'lastSeenAt') {
+      cmp = (Date.parse(a.lastSeenAt) || 0) - (Date.parse(b.lastSeenAt) || 0);
+    } else {
+      const va = Number.isFinite(a[sortBy]) ? a[sortBy] : -Infinity;
+      const vb = Number.isFinite(b[sortBy]) ? b[sortBy] : -Infinity;
+      cmp = va - vb;
+    }
+    if (cmp !== 0) return cmp * sortDir;
+    return String(a.title ?? '').localeCompare(String(b.title ?? ''), 'sv-SE');
+  });
+
+  const total = sorted.length;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+  const page = Math.min(Math.max(1, Number.isFinite(rawPage) ? rawPage : 1), totalPages);
+  const offset = (page - 1) * pageSize;
+
+  return {
+    items: sorted.slice(offset, offset + pageSize),
+    total,
+    page,
+    pageSize,
+    totalPages,
+    aggregates: { discounted, matched, avgDiscountPercent }
+  };
+}
+
 function filterOutletProducts(products, query, favoriteCategorySet, latestRunStartedAt = null) {
   const search = String(query.search ?? '').trim().toLowerCase();
   const category = String(query.category ?? '').trim().toLowerCase();
@@ -417,7 +469,8 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
   app.get('/api/outlet-products', async (request) => {
     const state = store.getState();
     const favoriteCategorySet = getFavoriteCategorySet(state);
-    return filterOutletProducts(buildOutletProducts(state), request.query, favoriteCategorySet, state.stats.lastRunStartedAt);
+    const filtered = filterOutletProducts(buildOutletProducts(state), request.query, favoriteCategorySet, state.stats.lastRunStartedAt);
+    return sortAndPaginateProducts(filtered, request.query);
   });
 
   app.get('/api/outlet-categories', async () => {

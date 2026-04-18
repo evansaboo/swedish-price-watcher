@@ -173,7 +173,8 @@ test('returns simplified outlet products and favorite category stats', async () 
     method: 'GET',
     url: '/api/outlet-products?favoritesOnly=true'
   });
-  const products = productsResponse.json();
+  const productsData = productsResponse.json();
+  const products = productsData.items ?? productsData;
 
   assert.equal(productsResponse.statusCode, 200);
   assert.equal(products.length, 2);
@@ -190,21 +191,21 @@ test('returns simplified outlet products and favorite category stats', async () 
     method: 'GET',
     url: '/api/outlet-products?referenceOnly=true&minDiscountPercent=25&maxPriceSek=3000'
   });
-  const filteredProducts = filteredResponse.json();
   const newOnlyResponse = await app.inject({
     method: 'GET',
     url: '/api/outlet-products?newOnly=true'
   });
-  const newOnlyProducts = newOnlyResponse.json();
 
   assert.equal(categoriesResponse.statusCode, 200);
   assert.equal(categories.length, 2);
   assert.equal(categories.find((category) => category.name === 'Horlurar').favorite, true);
   assert.equal(categories.find((category) => category.name === 'TV').favorite, false);
   assert.equal(filteredResponse.statusCode, 200);
+  const filteredProducts = (filteredResponse.json().items ?? filteredResponse.json());
   assert.equal(filteredProducts.length, 1);
   assert.equal(filteredProducts[0].listingKey, 'elgiganten-outlet-latest:1000290');
   assert.equal(newOnlyResponse.statusCode, 200);
+  const newOnlyProducts = (newOnlyResponse.json().items ?? newOnlyResponse.json());
   assert.equal(newOnlyProducts.length, 1);
   assert.equal(newOnlyProducts[0].listingKey, 'elgiganten-outlet-latest:1000290');
 

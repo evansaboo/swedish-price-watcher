@@ -20,6 +20,8 @@ const state = {
   favoritesSearch: '',
   sortBy: 'discountPercent',
   sortDirection: 'desc',
+  currentPage: 1,
+  pageSize: 50,
   schedulerEnabled: true,
   schedulerIntervalMinutes: 180,
   schedulerWindowEnabled: false,
@@ -411,7 +413,7 @@ function sortProducts(products) {
   });
 }
 
-function updateSort(column, products) {
+function updateSort(column) {
   if (!column) {
     return;
   }
@@ -423,8 +425,9 @@ function updateSort(column, products) {
     state.sortDirection = defaultDirectionForColumn(column);
   }
 
+  state.currentPage = 1; // reset to first page on sort change
   saveUiPreferences();
-  renderProducts(products);
+  loadDashboard().catch((error) => setNotice(error.message, 'error'));
 }
 
 function renderSortHeader(label, column) {
@@ -506,6 +509,29 @@ function buildProductsQueryString() {
   return query ? `?${query}` : '';
 }
 
+function buildOutletProductsQuery() {
+  const params = new URLSearchParams();
+  const minDiscountPercent = parsePositiveInteger(state.minDiscountPercent);
+  const maxPriceSek = parsePositiveInteger(state.maxPriceSek);
+
+  if (state.search) params.set('search', state.search);
+  if (state.category) params.set('category', state.category);
+  if (state.store) params.set('store', state.store);
+  if (state.favoritesOnly) params.set('favoritesOnly', 'true');
+  if (state.discountedOnly) params.set('discountedOnly', 'true');
+  if (state.newOnly) params.set('newOnly', 'true');
+  if (state.referenceOnly) params.set('referenceOnly', 'true');
+  if (minDiscountPercent) params.set('minDiscountPercent', String(minDiscountPercent));
+  if (maxPriceSek) params.set('maxPriceSek', String(maxPriceSek));
+
+  params.set('sortBy', state.sortBy);
+  params.set('sortDir', state.sortDirection);
+  params.set('page', String(state.currentPage));
+  params.set('pageSize', String(state.pageSize));
+
+  return `?${params.toString()}`;
+}
+
 function setNotice(message = '', variant = 'info') {
   elements.noticeBanner.textContent = message;
   elements.noticeBanner.className = message ? `notice ${variant}` : 'notice hidden';
@@ -560,17 +586,16 @@ function syncScanButton(status) {
   elements.scanButton.textContent = total ? `Scanning ${activeStep}/${total}` : 'Scanning...';
 }
 
-function renderStats(status, products, categories) {
-  const discountedProducts = products.filter((product) => Number.isFinite(product.discountSek) && product.discountSek > 0).length;
-  const matchedProducts = products.filter((product) => Number.isFinite(product.initialPriceSek)).length;
-  const discountValues = products.map((product) => product.discountPercent).filter((value) => Number.isFinite(value));
-  const averageDiscountPercent = discountValues.length
-    ? Math.round(discountValues.reduce((sum, value) => sum + value, 0) / discountValues.length)
-    : null;
+function renderStats(status, response, categories) {
+  const agg = response?.aggregates ?? {};
+  const total = response?.total ?? 0;
+  const discountedProducts = agg.discounted ?? 0;
+  const matchedProducts = agg.matched ?? 0;
+  const averageDiscountPercent = agg.avgDiscountPercent ?? null;
 
   const pills = [
     [status.counts.outletItems, 'tracked'],
-    [products.length, 'shown'],
+    [total, 'filtered'],
     [matchedProducts, 'matched'],
     [discountedProducts, 'discounted'],
     [Number.isFinite(averageDiscountPercent) ? `${averageDiscountPercent}%` : '–', 'avg off'],
@@ -1018,17 +1043,51 @@ function renderFavoritesEditor() {
   }
 }
 
-function renderProducts(products) {
-  elements.productsCount.textContent = `${products.length} shown`;
+function renderPagination(response) {
+  const { page, totalPages, total, pageSize } = response;
+  if (totalPages <= 1) return '';
 
-  if (!products.length) {
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+
+  // Build page number list with ellipses
+  const pages = new Set([1, totalPages, page, page - 1, page + 1, page - 2, page + 2]);
+  const sorted = [...pages].filter((p) => p >= 1 && p <= totalPages).sort((a, b) => a - b);
+
+  let buttons = '';
+  let lastPage = 0;
+  for (const p of sorted) {
+    if (lastPage && p - lastPage > 1) buttons += `<span class="page-ellipsis">…</span>`;
+    const active = p === page ? ' active' : '';
+    buttons += `<button type="button" class="page-btn${active}" data-page="${p}" aria-label="Page ${p}"${p === page ? ' aria-current="page"' : ''}>${p}</button>`;
+    lastPage = p;
+  }
+
+  return `
+    <div class="pagination">
+      <span class="pagination-info">Showing ${start}–${end} of ${total}</span>
+      <div class="pagination-controls">
+        <button type="button" class="page-btn page-nav" data-page="${page - 1}" aria-label="Previous page"${page <= 1 ? ' disabled' : ''}>‹</button>
+        ${buttons}
+        <button type="button" class="page-btn page-nav" data-page="${page + 1}" aria-label="Next page"${page >= totalPages ? ' disabled' : ''}>›</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderProducts(response) {
+  const products = response?.items ?? [];
+  const total = response?.total ?? products.length;
+
+  elements.productsCount.textContent = `${total} results`;
+
+  if (!total) {
     elements.productsTable.innerHTML = '<p class="empty-state">No outlet products match the current filters.</p>';
     return;
   }
 
   const favoriteSet = getFavoriteCategorySet();
-  const sortedProducts = sortProducts(products);
-  const rows = sortedProducts
+  const rows = products
     .map((product) => {
       const categoryFavorite = favoriteSet.has(normalizeCategoryKey(product.category));
       const newProduct = isNewProduct(product);
@@ -1084,16 +1143,26 @@ function renderProducts(products) {
         <tbody>${rows}</tbody>
       </table>
     </div>
+    ${renderPagination(response)}
   `;
 
   for (const sortButton of elements.productsTable.querySelectorAll('button[data-sort-key]')) {
     sortButton.addEventListener('click', () => {
-      updateSort(sortButton.getAttribute('data-sort-key'), products);
+      updateSort(sortButton.getAttribute('data-sort-key'));
+    });
+  }
+
+  for (const pageButton of elements.productsTable.querySelectorAll('button[data-page]')) {
+    pageButton.addEventListener('click', () => {
+      const targetPage = Number(pageButton.getAttribute('data-page'));
+      if (!Number.isFinite(targetPage) || targetPage < 1) return;
+      state.currentPage = targetPage;
+      loadDashboard().catch((error) => setNotice(error.message, 'error'));
     });
   }
 }
 
-function renderNotice(status, products) {
+function renderNotice(status, response) {
   if (status.isRunning) {
     const progress = status.scanProgress ?? {};
     const total = Number(progress.totalSources ?? 0);
@@ -1110,17 +1179,15 @@ function renderNotice(status, products) {
     return;
   }
 
-  if (!products.length) {
+  const total = response?.total ?? 0;
+  const unmatched = response?.aggregates ? (total - (response.aggregates.matched ?? 0)) : 0;
+
+  if (!total) {
     setNotice('No outlet products available for the selected filters. Run another scan or adjust filters.', 'warning');
     return;
   }
 
-  const missingReferenceCount = products.filter((product) => !Number.isFinite(product.initialPriceSek)).length;
-  const referenceNote =
-    missingReferenceCount > 0
-      ? ` ${missingReferenceCount} products are still waiting for a non-outlet price match.`
-      : '';
-
+  const referenceNote = unmatched > 0 ? ` ${unmatched} products are still waiting for a non-outlet price match.` : '';
   setNotice(`Outlet products loaded.${referenceNote}`, 'info');
 }
 
@@ -1181,12 +1248,12 @@ async function loadDashboard() {
     saveUiPreferences();
   }
 
-  const query = buildProductsQueryString();
-  const products = await fetchJson(`/api/outlet-products${query}`);
-  latestProducts = products;
+  const query = buildOutletProductsQuery();
+  const response = await fetchJson(`/api/outlet-products${query}`);
+  latestProducts = response;
 
   syncScanButton(status);
-  renderStats(status, products, categories);
+  renderStats(status, response, categories);
   renderSources(sources, status.isRunning, status.scanProgress?.currentSourceId);
   renderScannerToggles(sources);
   renderCategoryFilter(categories);
@@ -1195,8 +1262,8 @@ async function loadDashboard() {
   renderScheduler(status.scheduler);
   renderFavoriteChips();
   renderFavoritesEditor();
-  renderProducts(products);
-  renderNotice(status, products);
+  renderProducts(response);
+  renderNotice(status, response);
   elements.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
 
   if (status.isRunning) {
@@ -1227,6 +1294,7 @@ async function pollScanStatus() {
 
 function updateFilters({ debounce = false } = {}) {
   applyCurrentFilterState();
+  state.currentPage = 1; // reset to first page on any filter change
 
   if (debounce) {
     scheduleFilterApply();

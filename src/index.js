@@ -2,7 +2,7 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PoliteFetcher } from './lib/fetcher.js';
 import { ApifyStore, JsonStore, reconcileStateWithSources } from './lib/store.js';
-import { isSourceEnabled } from './lib/utils.js';
+import { buildListingKey, isSourceEnabled } from './lib/utils.js';
 import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
@@ -124,6 +124,21 @@ async function triggerScan(trigger, options = {}) {
         const mergeResult = mergeObservations(state, collected, config.maxHistoryEntries);
         newItems.push(...mergeResult.newItems);
         priceDrops.push(...mergeResult.priceDrops);
+
+        // Prune stale items: remove items from this source not seen in this scan
+        if (collected.length > 0) {
+          const seenKeys = new Set(collected.map((o) => buildListingKey(o.sourceId, o.externalId)));
+          let pruned = 0;
+          for (const key of Object.keys(state.items)) {
+            if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
+              delete state.items[key];
+              pruned += 1;
+            }
+          }
+          if (pruned > 0) {
+            console.log(`[${source.id}] Pruned ${pruned} stale item(s) no longer listed.`);
+          }
+        }
         sourceState.lastSuccessAt = startedAt;
         sourceState.lastError = null;
         sourceState.lastCount = collected.length;
