@@ -146,6 +146,12 @@ function mapProduct(product, source, now) {
   };
 }
 
+// Parse the lowestHistoricalPrice from an individual product page RSC payload
+function parseReferencePrice(html) {
+  const m = html.match(/\\"lowestHistoricalPrice\\":(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 export async function collectFromNetonnet({ source, sourceState, fetcher, now }) {
   const observations = [];
 
@@ -198,6 +204,45 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
 
     // Stop when we've seen fewer products than a full page (last page)
     if (products.length < PRODUCTS_PER_PAGE) break;
+  }
+
+  // ── Reference price lookup ─────────────────────────────────────────────────
+  // The outlet list page omits lowestHistoricalPrice for most items.
+  // Fetch individual product pages to resolve missing reference prices,
+  // caching results in sourceState so subsequent scans avoid re-fetching.
+  const refCache = sourceState.referencePriceCache ?? (sourceState.referencePriceCache = {});
+  const maxLookups = source.maxReferenceLookups ?? 40;
+  let lookupsDone = 0;
+
+  for (const obs of observations) {
+    if (obs.referencePriceSek != null) continue; // already have it from list page
+    const articleNo = obs.externalId;
+    if (!articleNo) continue;
+
+    if (refCache[articleNo] != null) {
+      // Use cached value from a previous scan
+      obs.referencePriceSek = refCache[articleNo];
+      obs.marketValueSek = refCache[articleNo];
+      continue;
+    }
+
+    if (lookupsDone >= maxLookups) continue; // cap requests per scan
+
+    try {
+      const result = await fetcher.fetchText(source, {}, obs.url, {
+        headers: PAGE_HEADERS,
+        skipRobotsCheck: true,
+      });
+      const refPrice = parseReferencePrice(result.body ?? '');
+      if (refPrice != null && refPrice > 0) {
+        refCache[articleNo] = refPrice;
+        obs.referencePriceSek = refPrice;
+        obs.marketValueSek = refPrice;
+      }
+    } catch {
+      // Non-fatal — missing reference price is fine
+    }
+    lookupsDone++;
   }
 
   return observations;

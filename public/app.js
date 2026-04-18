@@ -1033,8 +1033,9 @@ function renderProducts(products) {
       const categoryFavorite = favoriteSet.has(normalizeCategoryKey(product.category));
       const newProduct = isNewProduct(product);
       const dealClass = Number.isFinite(product.discountPercent) && product.discountPercent >= 30 ? 'deal-tag hot' : 'deal-tag';
-      const dealLabel = Number.isFinite(product.discountPercent) ? `${product.discountPercent}% off` : 'Awaiting match';
-      const matchLabel = Number.isFinite(product.initialPriceSek) ? 'Matched new price' : 'Match pending';
+      const dealLabel = Number.isFinite(product.discountPercent) && product.discountPercent > 0
+        ? `${product.discountPercent}% off`
+        : Number.isFinite(product.initialPriceSek) ? 'No discount' : 'No ref price';
       const rowClass = newProduct ? 'new-product-row' : '';
       const newBadge = newProduct ? '<span class="deal-tag new">New</span>' : '';
       const storeBadge = product.sourceLabel ? `<span class="store-badge">${escapeHtml(product.sourceLabel)}</span>` : '';
@@ -1049,14 +1050,13 @@ function renderProducts(products) {
               ${newBadge}
               ${storeBadge}
               <span class="${dealClass}">${escapeHtml(dealLabel)}</span>
-              <span class="meta">${escapeHtml(matchLabel)}</span>
             </div>
           </td>
           <td data-label="Category">
             <span class="category-pill">${categoryFavorite ? '★ ' : ''}${escapeHtml(product.category)}</span>
           </td>
           <td data-label="Price">${formatSek(product.currentPriceSek)}</td>
-          <td data-label="New price">${Number.isFinite(product.initialPriceSek) ? formatSek(product.initialPriceSek) : 'match pending'}</td>
+          <td data-label="New price">${Number.isFinite(product.initialPriceSek) ? formatSek(product.initialPriceSek) : '—'}</td>
           <td data-label="Discount">${Number.isFinite(product.discountSek) ? formatSek(product.discountSek) : 'n/a'}</td>
           <td data-label="Discount %">${Number.isFinite(product.discountPercent) ? `${product.discountPercent}%` : 'n/a'}</td>
           <td data-label="Last seen">${formatDate(product.lastSeenAt)}</td>
