@@ -80,7 +80,9 @@ const elements = {
   productsCount: document.querySelector('#products-count'),
   productsTable: document.querySelector('#products-table'),
   refreshButton: document.querySelector('#refresh-button'),
-  scanButton: document.querySelector('#scan-button')
+  scanButton: document.querySelector('#scan-button'),
+  scanProgressBar: document.querySelector('#scan-progress-bar'),
+  scanProgressFill: document.querySelector('#scan-progress-fill')
 };
 
 let scanPollTimer = null;
@@ -590,15 +592,25 @@ function syncScanButton(status) {
   if (!status.isRunning) {
     elements.scanButton.disabled = false;
     elements.scanButton.textContent = 'Scan all';
+    if (elements.scanProgressBar) elements.scanProgressBar.classList.add('hidden');
     return;
   }
 
   const progress = status.scanProgress ?? {};
   const total = Number(progress.totalSources ?? 0);
   const completed = Number(progress.completedSources ?? 0);
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   elements.scanButton.disabled = true;
   elements.scanButton.textContent = total ? `Scanning ${completed}/${total}` : 'Scanning...';
+
+  if (elements.scanProgressBar) {
+    elements.scanProgressBar.classList.remove('hidden');
+    elements.scanProgressBar.setAttribute('aria-valuenow', pct);
+  }
+  if (elements.scanProgressFill) {
+    elements.scanProgressFill.style.width = `${pct}%`;
+  }
 }
 
 function renderStats(status, response, categories) {
@@ -622,19 +634,30 @@ function renderStats(status, response, categories) {
     .join('');
 }
 
-function renderSources(sources, isScanning) {
+function renderSources(sources, isScanning, sourceProgress) {
   if (!elements.sourcesList || !sources?.length) return;
 
   elements.sourcesList.innerHTML = sources
     .filter((source) => source.enabled) // only show config-enabled sources
     .map((source) => {
-      const statusLabel = source.status;
+      const sp = isScanning ? (sourceProgress?.[source.id] ?? { status: 'queued' }) : null;
+      let statusLabel, statusExtra;
+      if (sp) {
+        if (sp.status === 'running') { statusLabel = 'scanning'; statusExtra = ''; }
+        else if (sp.status === 'done') { statusLabel = 'done'; statusExtra = sp.count != null ? ` · ${sp.count}` : ''; }
+        else if (sp.status === 'error') { statusLabel = 'error'; statusExtra = ''; }
+        else if (sp.status === 'cooling-down') { statusLabel = 'cooling-down'; statusExtra = ''; }
+        else { statusLabel = 'queued'; statusExtra = ''; }
+      } else {
+        statusLabel = source.status;
+        statusExtra = '';
+      }
       const relTime = formatRelativeTime(source.lastSuccessAt);
-      const countText = source.lastCount != null ? ` · ${source.lastCount} items` : '';
+      const countText = !sp && source.lastCount != null ? ` · ${source.lastCount} items` : '';
       const lastScanLine = relTime ? `${relTime}${countText}` : 'Never scanned';
-      const errorLine = source.lastError
+      const errorLine = !sp && source.lastError
         ? `<span class="source-error-meta">${escapeHtml(source.lastError)}</span>`
-        : '';
+        : (sp?.status === 'error' && sp.message ? `<span class="source-error-meta">${escapeHtml(sp.message)}</span>` : '');
 
       return `
         <div class="source-row">
@@ -643,7 +666,7 @@ function renderSources(sources, isScanning) {
             <span class="source-meta">${escapeHtml(lastScanLine)}</span>
             ${errorLine}
           </div>
-          <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}</span>
+          <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}${escapeHtml(statusExtra)}</span>
           <button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>
         </div>
       `;
@@ -1182,11 +1205,8 @@ function renderProducts(response) {
 
 function renderNotice(status, response) {
   if (status.isRunning) {
-    const progress = status.scanProgress ?? {};
-    const total = Number(progress.totalSources ?? 0);
-    const completed = Number(progress.completedSources ?? 0);
-
-    setNotice(`Scan running ${total ? `${completed}/${total} sources done` : 'in progress'}...`, 'info');
+    // Progress bar handles the visual — just clear any stale notice
+    setNotice('', '');
     return;
   }
 
@@ -1270,7 +1290,7 @@ async function loadDashboard() {
 
   syncScanButton(status);
   renderStats(status, response, categories);
-  renderSources(sources, status.isRunning);
+  renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
   renderScannerToggles(sources);
   renderCategoryFilter(categories);
   renderStoreFilter(outletSources ?? []);
@@ -1295,7 +1315,7 @@ async function pollScanStatus() {
     fetchJson('/api/sources')
   ]);
   syncScanButton(status);
-  renderSources(sources, status.isRunning);
+  renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
   renderScheduler(status.scheduler, { preserveDraft: true });
   renderNotice(status, latestProducts);
   elements.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);

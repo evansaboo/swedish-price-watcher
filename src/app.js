@@ -433,7 +433,8 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       scanProgress: {
         startedAt: scanState.startedAt,
         completedSources: scanState.completedSources,
-        totalSources: scanState.totalSources
+        totalSources: scanState.totalSources,
+        sourceProgress: scanState.sourceProgress ?? {}
       },
       counts: {
         trackedItems: Object.keys(state.items).length,

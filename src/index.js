@@ -85,6 +85,7 @@ async function triggerScan(trigger, options = {}) {
   scanState.currentSourceId = null;
   scanState.completedSources = 0;
   scanState.totalSources = sourcesToRun.length;
+  scanState.sourceProgress = {};
 
   const startedAt = new Date().toISOString();
   scanState.startedAt = startedAt;
@@ -111,12 +112,16 @@ async function triggerScan(trigger, options = {}) {
 
         try {
           if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
+            scanState.sourceProgress[source.id] = { status: 'cooling-down' };
             return { source, sourceState, status: 'cooling-down', disabledUntil: sourceState.disabledUntil };
           }
 
+          scanState.sourceProgress[source.id] = { status: 'running' };
           const collected = await collectSource({ source, fetcher, sourceState, now: startedAt });
+          scanState.sourceProgress[source.id] = { status: 'done', count: collected.length };
           return { source, sourceState, status: 'ok', collected };
         } catch (error) {
+          scanState.sourceProgress[source.id] = { status: 'error', message: error.message };
           return { source, sourceState, status: 'error', error };
         } finally {
           // Increment as each source finishes so the UI updates incrementally
@@ -219,6 +224,7 @@ async function triggerScan(trigger, options = {}) {
     scanState.currentSourceId = null;
     scanState.completedSources = 0;
     scanState.totalSources = 0;
+    scanState.sourceProgress = {};
   }
 }
 

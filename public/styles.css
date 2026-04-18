@@ -266,6 +266,33 @@ input[type='search']::-webkit-search-cancel-button { cursor: pointer; }
 .notice.error   { background: rgba(220,38,38,0.08);   border-color: rgba(220,38,38,0.3);  }
 .notice.hidden  { display: none; }
 
+/* ===== SCAN PROGRESS BAR ===== */
+.scan-progress-bar {
+  height: 3px;
+  background: var(--border);
+  margin-bottom: 0.85rem;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.scan-progress-bar.hidden { display: none; }
+.scan-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.4s ease;
+}
+/* Indeterminate animation when total is unknown (width stays 0) */
+.scan-progress-bar:not([aria-valuenow]) .scan-progress-fill,
+.scan-progress-bar[aria-valuenow="0"] .scan-progress-fill {
+  width: 30%;
+  animation: scan-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes scan-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
 /* ============================================================
    APP LAYOUT  (flex row: sidebar + main)
    ============================================================ */
@@ -962,7 +989,10 @@ details[open].run-log-toggle > summary::before { transform: rotate(90deg); }
 .source-status.error    { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.3);  color: var(--danger); }
 .source-status.cooling-down { background: rgba(217,119,6,0.08); border-color: rgba(217,119,6,0.3); color: var(--warning); }
 .source-status.disabled { background: var(--surface-soft);  border-color: var(--border);        color: var(--text-muted); }
-.source-status.scanning { background: var(--accent-soft);   border-color: var(--accent-border); color: var(--accent); }
+.source-status.scanning { background: var(--accent-soft);   border-color: var(--accent-border); color: var(--accent); animation: pulse-border 1.2s ease-in-out infinite; }
+.source-status.done     { background: rgba(22,163,74,0.1);  border-color: rgba(22,163,74,0.3);  color: #15803d; }
+.source-status.queued   { background: var(--surface-soft);  border-color: var(--border);        color: var(--text-muted); }
+@keyframes pulse-border { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 
 .source-scan-btn {
   flex-shrink: 0;
