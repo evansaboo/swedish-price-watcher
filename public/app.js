@@ -660,7 +660,7 @@ function renderScannerToggles(sources) {
   }
 }
 
-
+async function triggerSourceScan(sourceIds = null) {
   try {
     const body = sourceIds ? { sourceIds } : {};
     const response = await fetch('/api/run', {
