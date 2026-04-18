@@ -20,61 +20,80 @@
 
     <section id="notice-banner" class="notice hidden" aria-live="polite"></section>
 
-    <main class="layout">
-      <section class="panel stats" id="stats-grid"></section>
-
-      <section class="panel controls-panel">
-        <div class="section-heading">
-          <h2>Filters</h2>
-          <button id="clear-filters-button" type="button" class="ghost-button">Clear filters</button>
-        </div>
-        <div class="filters">
-          <label>
-            Search
-            <input id="search-input" type="search" placeholder="Search product name or category" />
-          </label>
-          <label>
-            Category
-            <select id="category-filter">
-              <option value="">All categories</option>
-            </select>
-          </label>
-          <label>
-            Min discount %
-            <input id="min-discount-filter" type="number" min="0" max="99" step="1" placeholder="e.g. 20" />
-          </label>
-          <label>
-            Max price (SEK)
-            <input id="max-price-filter" type="number" min="0" step="1" placeholder="e.g. 5000" />
-          </label>
-          <div class="toggle-grid">
-            <label class="checkbox">
-              <input id="favorites-only" type="checkbox" />
-              Favorite categories
-            </label>
-            <label class="checkbox">
-              <input id="discounted-only" type="checkbox" />
-              Discounted products only
-            </label>
-            <label class="checkbox">
-              <input id="new-only" type="checkbox" />
-              New products only
-            </label>
-            <label class="checkbox">
-              <input id="reference-only" type="checkbox" />
-              Matched new price only
-            </label>
+    <main class="workspace">
+      <aside class="sidebar">
+        <section class="panel controls-panel">
+          <div class="section-heading">
+            <h2>Filters</h2>
+            <button id="clear-filters-button" type="button" class="ghost-button">Clear filters</button>
           </div>
-        </div>
-        <div class="filter-presets">
-          <span class="muted-inline">Quick filters:</span>
-          <button type="button" class="preset-button" data-filter-preset="new">New</button>
-          <button type="button" class="preset-button" data-filter-preset="discounted">Discounted</button>
-          <button type="button" class="preset-button" data-filter-preset="matched">Matched</button>
-          <button type="button" class="preset-button" data-filter-preset="favorites">Favorites</button>
-        </div>
-        <div id="active-filters" class="active-filters"></div>
-        <div class="scheduler-settings">
+          <div class="filters">
+            <label>
+              Search
+              <input id="search-input" type="search" placeholder="Search product name or category" />
+            </label>
+            <label>
+              Category
+              <select id="category-filter">
+                <option value="">All categories</option>
+              </select>
+            </label>
+            <label>
+              Min discount %
+              <input id="min-discount-filter" type="number" min="0" max="99" step="1" placeholder="e.g. 20" />
+            </label>
+            <label>
+              Max price (SEK)
+              <input id="max-price-filter" type="number" min="0" step="1" placeholder="e.g. 5000" />
+            </label>
+            <div class="toggle-grid">
+              <label class="checkbox">
+                <input id="favorites-only" type="checkbox" />
+                Favorite categories
+              </label>
+              <label class="checkbox">
+                <input id="discounted-only" type="checkbox" />
+                Discounted products only
+              </label>
+              <label class="checkbox">
+                <input id="new-only" type="checkbox" />
+                New products only
+              </label>
+              <label class="checkbox">
+                <input id="reference-only" type="checkbox" />
+                Matched new price only
+              </label>
+            </div>
+          </div>
+          <div class="filter-presets">
+            <span class="muted-inline">Quick filters:</span>
+            <button type="button" class="preset-button" data-filter-preset="new">New</button>
+            <button type="button" class="preset-button" data-filter-preset="discounted">Discounted</button>
+            <button type="button" class="preset-button" data-filter-preset="matched">Matched</button>
+            <button type="button" class="preset-button" data-filter-preset="favorites">Favorites</button>
+          </div>
+          <div id="active-filters" class="active-filters"></div>
+        </section>
+
+        <section class="panel favorites-panel">
+          <div class="section-heading">
+            <h2>Category favorites</h2>
+            <div class="inline-actions">
+              <span id="favorites-count" class="badge"></span>
+              <button id="toggle-favorites-editor" type="button" class="ghost-button">Manage</button>
+            </div>
+          </div>
+          <div id="favorite-chips" class="favorite-chips"></div>
+          <div id="favorites-editor-wrap" class="favorites-editor-wrap hidden">
+            <label>
+              Search categories
+              <input id="favorites-search-input" type="search" placeholder="Type to filter categories" />
+            </label>
+            <div id="favorites-editor" class="favorites-grid"></div>
+          </div>
+        </section>
+
+        <section class="panel scheduler-settings">
           <div class="section-heading compact">
             <h3>Scheduler</h3>
             <span id="scheduler-status" class="muted-inline"></span>
@@ -102,40 +121,31 @@
             </label>
             <button id="save-scheduler-button" type="button">Save scheduler</button>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section class="panel favorites-panel">
-        <div class="section-heading">
-          <h2>Category favorites</h2>
-          <div class="inline-actions">
-            <span id="favorites-count" class="badge"></span>
-            <button id="toggle-favorites-editor" type="button" class="ghost-button">Manage</button>
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Overview</h2>
           </div>
-        </div>
-        <div id="favorite-chips" class="favorite-chips"></div>
-        <div id="favorites-editor-wrap" class="favorites-editor-wrap hidden">
-          <label>
-            Search categories
-            <input id="favorites-search-input" type="search" placeholder="Type to filter categories" />
-          </label>
-          <div id="favorites-editor" class="favorites-grid"></div>
-        </div>
-      </section>
+          <div class="stats" id="stats-grid"></div>
+        </section>
 
-      <section class="panel">
-        <div class="section-heading">
-          <h2>Outlet products</h2>
-          <span id="products-count" class="badge"></span>
-        </div>
-        <div id="products-table"></div>
-      </section>
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Last run summary</h2>
+          </div>
+          <pre id="run-summary" class="summary"></pre>
+        </section>
+      </aside>
 
-      <section class="panel">
-        <div class="section-heading">
-          <h2>Last run summary</h2>
-        </div>
-        <pre id="run-summary" class="summary"></pre>
+      <section class="listing-content">
+        <section class="panel listing-panel">
+          <div class="section-heading">
+            <h2>Outlet products</h2>
+            <span id="products-count" class="badge"></span>
+          </div>
+          <div id="products-table"></div>
+        </section>
       </section>
     </main>
 
