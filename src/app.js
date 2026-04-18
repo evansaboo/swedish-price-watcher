@@ -568,7 +568,13 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       }
     }
 
-    if (!config.sources.some((source) => isSourceEnabled(source, store.getState()) && (!sourceIds || sourceIds.includes(source.id)))) {
+    // For manual scans with explicit sourceIds, only require the source to exist (not necessarily scheduler-enabled)
+    // For a full scan, require at least one scheduler-enabled source
+    const canRun = sourceIds
+      ? config.sources.some((source) => sourceIds.includes(source.id) && source.enabled)
+      : config.sources.some((source) => isSourceEnabled(source, store.getState()));
+
+    if (!canRun) {
       reply.code(400);
       return {
         ok: false,

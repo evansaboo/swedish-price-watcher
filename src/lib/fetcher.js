@@ -97,7 +97,8 @@ export class PoliteFetcher {
     const response = await this.#timedFetch(urlString, {
       method: options.method ?? 'GET',
       headers,
-      body: options.body
+      body: options.body,
+      timeoutMs: options.timeoutMs
     });
 
     this.#recordHostRequest(url.host);

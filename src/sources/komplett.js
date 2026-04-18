@@ -16,6 +16,10 @@ const sitemapParser = new XMLParser({
   trimValues: true
 });
 
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const SITEMAP_HEADERS = { 'user-agent': BROWSER_UA, accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8' };
+const SITEMAP_TIMEOUT_MS = 60_000; // sitemap XML can be several MB
+
 function asArray(value) {
   return Array.isArray(value) ? value : value == null ? [] : [value];
 }
@@ -261,7 +265,9 @@ function findReferenceCandidate(outletEntry, referenceIndex) {
 
 export async function collectFromKomplettSitemap({ source, fetcher, sourceState, now }) {
   const sitemapResult = await fetcher.fetchText(source, null, source.sitemapUrl, {
-    accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8'
+    headers: SITEMAP_HEADERS,
+    timeoutMs: source.sitemapTimeoutMs ?? SITEMAP_TIMEOUT_MS,
+    skipRobotsCheck: true, // robots.txt on same host often blocks bot UA too
   });
   const sitemapEntries = parseSitemapEntries(sitemapResult.body);
   const candidateEntries = sitemapEntries
@@ -280,7 +286,8 @@ export async function collectFromKomplettSitemap({ source, fetcher, sourceState,
   for (const entry of candidateEntries) {
     const pageState = pageStates[entry.loc] ?? (pageStates[entry.loc] = {});
     const pageResult = await fetcher.fetchText(source, pageState, entry.loc, {
-      accept: 'text/html,application/xhtml+xml'
+      headers: SITEMAP_HEADERS,
+      skipRobotsCheck: true,
     });
     const observation =
       pageResult.notModified && pageState.cachedObservation
@@ -304,7 +311,8 @@ export async function collectFromKomplettSitemap({ source, fetcher, sourceState,
     if (referenceCandidate && referenceCandidate.loc !== entry.loc) {
       const referenceState = referencePageStates[referenceCandidate.loc] ?? (referencePageStates[referenceCandidate.loc] = {});
       const referenceResult = await fetcher.fetchText(source, referenceState, referenceCandidate.loc, {
-        accept: 'text/html,application/xhtml+xml'
+        headers: SITEMAP_HEADERS,
+        skipRobotsCheck: true,
       });
       const referenceObservation =
         referenceResult.notModified && referenceState.cachedObservation
