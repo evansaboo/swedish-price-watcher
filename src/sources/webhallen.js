@@ -1,4 +1,4 @@
-import { normalizeProductIdentity, slugify, stripText } from '../lib/utils.js';
+import { normalizeProductIdentity, sleep, slugify, stripText } from '../lib/utils.js';
 
 const BASE_URL = 'https://www.webhallen.com';
 const PRODUCT_DISCOVERY_URL = `${BASE_URL}/api/productdiscovery/search/fyndware`;
@@ -108,6 +108,9 @@ function mapProduct(product, source, now) {
 export async function collectFromWebhallen({ source, fetcher, now }) {
   const observations = [];
   let page = 1;
+  // Inter-page pause — much shorter than the global 8s HTML scraping delay;
+  // this is a JSON API so 400ms is plenty to be polite.
+  const interPageDelayMs = source.apiDelayMs ?? 400;
 
   while (page <= MAX_PAGES) {
     const url = `${PRODUCT_DISCOVERY_URL}?pageNo=${page}&limit=${PAGE_SIZE}`;
@@ -116,7 +119,7 @@ export async function collectFromWebhallen({ source, fetcher, now }) {
     try {
       payload = await fetcher.fetchJsonApi(url, {
         headers: AJAX_HEADERS,
-        skipHostDelay: false,
+        skipHostDelay: true, // manage delay ourselves — 8s per page would take 3+ minutes
       });
     } catch (err) {
       if (observations.length > 0) {
@@ -141,6 +144,7 @@ export async function collectFromWebhallen({ source, fetcher, now }) {
     if (products.length < PAGE_SIZE) break;
 
     page++;
+    await sleep(interPageDelayMs);
   }
 
   return observations;
