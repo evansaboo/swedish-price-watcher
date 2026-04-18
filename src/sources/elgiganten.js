@@ -7,11 +7,13 @@ const ALGOLIA_URL =
   '&x-algolia-application-id=Z0FL7R8UBH';
 
 const INDEX = 'commerce_b2c_OCSEELG';
-// PT793 = Elgiganten outlet taxonomy filter
 const OUTLET_FILTER = 'productTaxonomy.id:PT793';
 const HITS_PER_PAGE = 100;
-const PAGE_DELAY_MS = 200;
-const MAX_PAGES = 200; // safety cap (~20 000 products)
+// Algolia's paginationLimitedTo is 1500 for this index — any single query/filter
+// returns at most 1500 results. We split by brand (607 brands, max 867 per brand)
+// to retrieve all ~13 000 outlet products.
+const BRAND_QUERY_CONCURRENCY = 5; // parallel brand queries
+const PAGE_DELAY_MS = 150;
 
 const ALGOLIA_HEADERS = {
   'Content-Type': 'application/json',
@@ -20,20 +22,62 @@ const ALGOLIA_HEADERS = {
   'x-algolia-application-id': 'Z0FL7R8UBH',
 };
 
-function buildRequestBody(page) {
-  return JSON.stringify({
+async function algoliaPost(fetcher, body) {
+  return fetcher.fetchJsonApi(ALGOLIA_URL, {
+    method: 'POST',
+    headers: ALGOLIA_HEADERS,
+    body: JSON.stringify(body),
+    skipHostDelay: true,
+  });
+}
+
+/** Fetch all brand names from facets — returns Map<brand, count>. */
+async function fetchBrands(fetcher) {
+  const payload = await algoliaPost(fetcher, {
     requests: [
       {
         indexName: INDEX,
         filters: OUTLET_FILTER,
-        hitsPerPage: HITS_PER_PAGE,
-        page,
+        hitsPerPage: 0,
+        page: 0,
         query: '',
-        // Only request facets on page 0 to get total count cheaply
-        facets: page === 0 ? ['hierarchicalCategories.lvl1', 'brand'] : [],
+        facets: ['brand'],
+        maxValuesPerFacet: 1000,
       },
     ],
   });
+  const brandFacets = payload?.results?.[0]?.facets?.brand ?? {};
+  return new Map(Object.entries(brandFacets));
+}
+
+/** Paginate all outlet products for a single brand. */
+async function fetchBrandProducts(fetcher, brand) {
+  const brandFilter = `${OUTLET_FILTER} AND brand:"${brand.replace(/"/g, '\\"')}"`;
+  const hits = [];
+  let page = 0;
+
+  for (;;) {
+    let result;
+    try {
+      const payload = await algoliaPost(fetcher, {
+        requests: [{ indexName: INDEX, filters: brandFilter, hitsPerPage: HITS_PER_PAGE, page, query: '' }],
+      });
+      result = payload?.results?.[0];
+    } catch (err) {
+      // Partial is fine — a single brand failure is not fatal
+      break;
+    }
+
+    const pageHits = result?.hits ?? [];
+    hits.push(...pageHits);
+
+    const totalPages = result?.nbPages ?? 1;
+    page++;
+    if (page >= totalPages || pageHits.length === 0) break;
+    await sleep(PAGE_DELAY_MS);
+  }
+
+  return hits;
 }
 
 function mapHit(hit, source, now) {
@@ -41,13 +85,13 @@ function mapHit(hit, source, now) {
   const title = String(hit.title ?? hit.name ?? '').trim();
   if (!externalId || !title) return null;
 
-  // price.amount = outlet price; bItem.aItemPrice = equivalent new-item price
   const priceSek =
     typeof hit.price?.amount === 'number' && hit.price.amount > 0
       ? hit.price.amount
       : null;
   if (!priceSek) return null;
 
+  // bItem.aItemPrice = equivalent new (A-grade) item price → used for discount %
   const referencePriceSek =
     typeof hit.bItem?.aItemPrice === 'number' && hit.bItem.aItemPrice > 0
       ? hit.bItem.aItemPrice
@@ -55,17 +99,14 @@ function mapHit(hit, source, now) {
 
   const url = hit.productUrl ?? hit.urlB2C ?? null;
   const imageUrl = hit.imageUrl ?? null;
-
   const category =
     hit.hierarchicalCategories?.lvl2 ??
     hit.hierarchicalCategories?.lvl1 ??
     hit.hierarchicalCategories?.lvl0 ??
     'electronics';
 
-  // bGradeTitle is a human-readable label, e.g. "Mellanstor skada på höger sida"
   const conditionLabel = hit.bItem?.bGradeTitle ?? hit.bItem?.bGrade ?? 'Outlet';
   const grade = hit.bItem?.bGrade ?? null;
-
   const inStock = hit.isBuyableOnline ?? hit.isBuyableInternet ?? false;
 
   return {
@@ -95,54 +136,44 @@ function mapHit(hit, source, now) {
 
 /**
  * Collect Elgiganten outlet products via the Algolia search API.
- * No Apify/Playwright needed — uses the public search key embedded in the site JS.
  *
- * Reference price (new-item price) comes from hit.bItem.aItemPrice, so discount %
- * is fully computable without any secondary lookup.
+ * Algolia enforces a paginationLimitedTo of 1500 results per query, so a single
+ * paginated query only yields ~1500 products out of 13 000+. We work around this
+ * by splitting on brand: fetch all ~607 brand names first, then query each brand
+ * independently (max ~867 products/brand, well under 1500). Results are deduplicated
+ * by externalId before returning.
  */
 export async function collectFromElgiganten({ source, sourceState, fetcher, now }) {
   const maxProducts = source.maxProducts ?? 15000;
-  const observations = [];
   const seen = new Set();
-  let page = 0;
-  let totalPages = MAX_PAGES;
+  const observations = [];
 
-  while (page < totalPages && observations.length < maxProducts) {
-    let payload;
-    try {
-      payload = await fetcher.fetchJsonApi(ALGOLIA_URL, {
-        method: 'POST',
-        headers: ALGOLIA_HEADERS,
-        body: buildRequestBody(page),
-        skipHostDelay: true,
-      });
-    } catch (err) {
-      if (observations.length > 0) break; // partial results OK
-      throw new Error(`Elgiganten Algolia API failed at page ${page}: ${err.message}`);
+  // Step 1: discover all brands
+  let brands;
+  try {
+    brands = await fetchBrands(fetcher);
+  } catch (err) {
+    throw new Error(`Elgiganten: failed to fetch brand facets — ${err.message}`);
+  }
+
+  const brandList = [...brands.keys()];
+
+  // Step 2: fetch products per brand in small parallel batches
+  for (let i = 0; i < brandList.length && observations.length < maxProducts; i += BRAND_QUERY_CONCURRENCY) {
+    const batch = brandList.slice(i, i + BRAND_QUERY_CONCURRENCY);
+    const results = await Promise.all(batch.map((brand) => fetchBrandProducts(fetcher, brand)));
+
+    for (const hits of results) {
+      for (const hit of hits) {
+        const obs = mapHit(hit, source, now);
+        if (!obs || seen.has(obs.externalId)) continue;
+        seen.add(obs.externalId);
+        observations.push(obs);
+      }
     }
-
-    const result = payload?.results?.[0];
-    if (!result) break;
-
-    // Set accurate page count on first response
-    if (page === 0) {
-      totalPages = Math.min(result.nbPages ?? MAX_PAGES, MAX_PAGES);
-    }
-
-    const hits = result.hits ?? [];
-    if (hits.length === 0) break;
-
-    for (const hit of hits) {
-      const obs = mapHit(hit, source, now);
-      if (!obs || seen.has(obs.externalId)) continue;
-      seen.add(obs.externalId);
-      observations.push(obs);
-    }
-
-    page++;
-    if (page < totalPages) await sleep(PAGE_DELAY_MS);
   }
 
   sourceState.lastDiscoveryCount = observations.length;
   return observations;
 }
+
