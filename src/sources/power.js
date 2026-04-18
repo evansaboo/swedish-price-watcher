@@ -2,8 +2,11 @@ import { parseSekValue, sleep } from '../lib/utils.js';
 
 const API_BASE = 'https://www.power.se/api/v2/productlists';
 const IMAGE_CDN = 'https://media.power-cdn.net';
-const PAGE_SIZE = 100;
-const PAGE_DELAY_MS = 300;
+// The Power API returns ~1.65× the requested size per call, so size=500 yields
+// ~800 products/request — roughly 13 requests for 10k products vs 100 requests
+// at size=100. Use actual returned count as the from= increment to avoid gaps.
+const PAGE_SIZE = 500;
+const PAGE_DELAY_MS = 100;
 // s=5 = sort by deal score; o=true = outlet/returned products only; cd=false = include discontinued
 const API_PARAMS = 's=5&o=true&cd=false';
 
@@ -89,6 +92,9 @@ export async function collectFromPower({ source, sourceState, fetcher, now }) {
 
     if (data.isLastPage || products.length === 0) break;
 
+    // from advances by PAGE_SIZE (the unique-product offset step).
+    // The API bundles extra related products per page, so returned count > PAGE_SIZE,
+    // but the actual unique-product cursor advances by exactly PAGE_SIZE.
     from += PAGE_SIZE;
     await sleep(PAGE_DELAY_MS);
   }
