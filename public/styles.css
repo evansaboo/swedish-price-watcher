@@ -934,9 +934,17 @@ details[open].run-log-toggle > summary::before { transform: rotate(90deg); }
   color: var(--text-muted);
   margin-top: 0.08rem;
   display: block;
+  line-height: 1.35;
+}
+.source-error-meta {
+  font-size: 0.68rem;
+  color: var(--danger);
+  display: block;
+  margin-top: 0.1rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 180px;
 }
 
 .source-status {

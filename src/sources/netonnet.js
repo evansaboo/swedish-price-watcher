@@ -1,8 +1,12 @@
-import { normalizeProductIdentity } from '../lib/utils.js';
+import { normalizeProductIdentity, sleep } from '../lib/utils.js';
 
 const BASE_URL = 'https://www.netonnet.se';
 const OUTLET_URL = `${BASE_URL}/art/outlet`;
 const PRODUCTS_PER_PAGE = 48;
+
+// ms to wait between requests — polite but not the global 8s hostDelayMs
+const PAGE_DELAY_MS = 400;
+const REF_DELAY_MS = 300;
 
 // Category slug → human-readable label
 const CATEGORY_MAP = {
@@ -162,6 +166,7 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
     firstResult = await fetcher.fetchText(source, sourceState, firstUrl, {
       headers: PAGE_HEADERS,
       skipRobotsCheck: true,
+      skipHostDelay: true,
     });
   } catch (err) {
     throw new Error(`NetOnNet: failed to fetch first outlet page: ${err.message}`);
@@ -187,6 +192,7 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
       result = await fetcher.fetchText(source, null, pageUrl, {
         headers: PAGE_HEADERS,
         skipRobotsCheck: true,
+        skipHostDelay: true,
       });
     } catch (err) {
       // Partial results on error are still valuable
@@ -201,6 +207,8 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
       const obs = mapProduct(p, source, now);
       if (obs) observations.push(obs);
     }
+
+    await sleep(PAGE_DELAY_MS);
 
     // Stop when we've seen fewer products than a full page (last page)
     if (products.length < PRODUCTS_PER_PAGE) break;
@@ -232,6 +240,7 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
       const result = await fetcher.fetchText(source, {}, obs.url, {
         headers: PAGE_HEADERS,
         skipRobotsCheck: true,
+        skipHostDelay: true,
       });
       const refPrice = parseReferencePrice(result.body ?? '');
       if (refPrice != null && refPrice > 0) {
@@ -243,6 +252,7 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
       // Non-fatal — missing reference price is fine
     }
     lookupsDone++;
+    await sleep(REF_DELAY_MS);
   }
 
   return observations;

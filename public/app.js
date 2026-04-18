@@ -99,6 +99,22 @@ function formatDate(value) {
   return new Date(value).toLocaleString('sv-SE');
 }
 
+function formatRelativeTime(value) {
+  if (!value) return null;
+  const ms = Date.now() - new Date(value).getTime();
+  if (ms < 0) return formatDate(value);
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return 'Just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(value).toLocaleDateString('sv-SE', { month: 'short', day: 'numeric' });
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -615,15 +631,19 @@ function renderSources(sources, isScanning, currentSourceId) {
     .map((source) => {
       const isCurrentlyScanning = isScanning && currentSourceId === source.id;
       const statusLabel = isCurrentlyScanning ? 'scanning' : source.status;
-      const metaText = source.lastSuccessAt
-        ? `Last scan: ${formatDate(source.lastSuccessAt)}${source.lastCount != null ? ` · ${source.lastCount} items` : ''}`
-        : 'Never scanned';
+      const relTime = formatRelativeTime(source.lastSuccessAt);
+      const countText = source.lastCount != null ? ` · ${source.lastCount} items` : '';
+      const lastScanLine = relTime ? `${relTime}${countText}` : 'Never scanned';
+      const errorLine = source.lastError && !isCurrentlyScanning
+        ? `<span class="source-error-meta">${escapeHtml(source.lastError)}</span>`
+        : '';
 
       return `
         <div class="source-row">
           <div class="source-info">
             <span class="source-name">${escapeHtml(source.label)}</span>
-            <span class="source-meta">${escapeHtml(metaText)}</span>
+            <span class="source-meta">${escapeHtml(lastScanLine)}</span>
+            ${errorLine}
           </div>
           <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}</span>
           <button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>
