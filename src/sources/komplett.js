@@ -20,6 +20,71 @@ const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 const SITEMAP_HEADERS = { 'user-agent': BROWSER_UA, accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8' };
 const SITEMAP_TIMEOUT_MS = 60_000; // sitemap XML can be several MB
 
+/**
+ * Stream-read a sitemap XML, collecting <loc>/<lastmod> entries that satisfy
+ * `locFilter(loc)`.  Aborts the HTTP connection as soon as `maxItems` matching
+ * entries are found or `maxBytes` have been read (whichever comes first).
+ *
+ * This avoids downloading the full (often multi-MB) sitemap.products.xml when
+ * only a small subset of URLs is required.
+ */
+async function streamSitemapEntries(sitemapUrl, headers, { maxItems = 200, maxBytes = 8_000_000, timeoutMs = 90_000, locFilter = () => true } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('sitemap stream timeout')), timeoutMs);
+
+  try {
+    const response = await fetch(sitemapUrl, { headers, signal: controller.signal });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} for ${sitemapUrl}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let bytesRead = 0;
+    const entries = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      bytesRead += value.length;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse complete <url>…</url> blocks from the accumulated buffer.
+      let blockStart;
+      while ((blockStart = buffer.indexOf('<url>')) !== -1) {
+        const blockEnd = buffer.indexOf('</url>', blockStart);
+        if (blockEnd === -1) break; // incomplete block — wait for more data
+
+        const block = buffer.slice(blockStart, blockEnd + 6);
+        buffer = buffer.slice(blockEnd + 6);
+
+        const locMatch = block.match(/<loc>(.*?)<\/loc>/s);
+        const lastmodMatch = block.match(/<lastmod>(.*?)<\/lastmod>/s);
+        if (locMatch && locFilter(locMatch[1].trim())) {
+          entries.push({ loc: locMatch[1].trim(), lastmod: lastmodMatch?.[1].trim() ?? null });
+        }
+
+        if (entries.length >= maxItems) {
+          reader.cancel().catch(() => {});
+          return entries;
+        }
+      }
+
+      if (bytesRead >= maxBytes) {
+        reader.cancel().catch(() => {});
+        break;
+      }
+    }
+
+    return entries;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value : value == null ? [] : [value];
 }
@@ -264,19 +329,32 @@ function findReferenceCandidate(outletEntry, referenceIndex) {
 }
 
 export async function collectFromKomplettSitemap({ source, fetcher, sourceState, now }) {
-  const sitemapResult = await fetcher.fetchText(source, null, source.sitemapUrl, {
-    headers: SITEMAP_HEADERS,
+  const maxItems = Number.isFinite(source.maxItems) ? source.maxItems : 50;
+
+  // Stream the sitemap, collecting both outlet entries AND potential reference entries.
+  // Using maxBytes as the primary stop condition avoids the full-download timeout on Railway.
+  const allEntries = await streamSitemapEntries(source.sitemapUrl, SITEMAP_HEADERS, {
+    maxItems: 100_000, // rely on maxBytes, not item count
+    maxBytes: source.sitemapMaxBytes ?? 10_000_000, // stop at 10 MB
     timeoutMs: source.sitemapTimeoutMs ?? SITEMAP_TIMEOUT_MS,
-    skipRobotsCheck: true, // robots.txt on same host often blocks bot UA too
+    locFilter: (loc) => {
+      if (pathMatches(loc, source.includePaths, source.excludePaths)) return true;
+      // Also keep reference candidates so we can build the reference index.
+      if (source.referenceLookup) {
+        return pathMatches(loc, source.matchReferenceIncludePaths, source.matchReferenceExcludePaths);
+      }
+      return false;
+    },
   });
-  const sitemapEntries = parseSitemapEntries(sitemapResult.body);
-  const candidateEntries = sitemapEntries
+
+  const candidateEntries = allEntries
     .filter((entry) => pathMatches(entry.loc, source.includePaths, source.excludePaths))
     .filter((entry) => categoryRootMatches(entry.loc, source.categoryRoots))
     .filter((entry) => updatedRecentlyEnough(entry, source.updatedSinceDays))
     .sort(latestFirst)
-    .slice(0, Number.isFinite(source.maxItems) ? source.maxItems : 10);
-  const referenceIndex = source.referenceLookup ? buildReferenceIndex(sitemapEntries, source) : new Map();
+    .slice(0, maxItems);
+
+  const referenceIndex = source.referenceLookup ? buildReferenceIndex(allEntries, source) : new Map();
   const pageStates = sourceState.pageStates ?? (sourceState.pageStates = {});
   const referencePageStates = sourceState.referencePageStates ?? (sourceState.referencePageStates = {});
   const observations = [];
