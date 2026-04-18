@@ -13,6 +13,9 @@
   --warn: #c27a00;
   --bad: #cf2f2f;
   --shadow: 0 10px 24px rgba(24, 45, 78, 0.08);
+  --sidebar-collapsed-width: 52px;
+  --sidebar-expanded-width: 280px;
+  --sidebar-gap: 0.65rem;
 }
 
 * {
@@ -131,7 +134,7 @@ select:focus-visible {
 .workspace {
   margin-top: 0.85rem;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr);
   gap: 0.9rem;
   align-items: start;
   min-width: 0;
@@ -139,13 +142,13 @@ select:focus-visible {
 
 .sidebar-shell {
   position: relative;
-  width: 48px;
+  width: var(--sidebar-collapsed-width);
   min-width: 0;
   z-index: 15;
 }
 
 .sidebar-rail {
-  width: 48px;
+  width: var(--sidebar-collapsed-width);
   min-height: 72vh;
   border: 1px solid var(--panel-border);
   border-radius: 14px;
@@ -191,9 +194,9 @@ select:focus-visible {
   gap: 0.9rem;
   position: absolute;
   top: 0;
-  left: calc(48px + 0.65rem);
-  width: min(360px, calc(100vw - 5.5rem));
-  max-width: calc(100vw - 5.5rem);
+  left: calc(var(--sidebar-collapsed-width) + var(--sidebar-gap));
+  width: min(var(--sidebar-expanded-width), calc(100vw - (var(--sidebar-collapsed-width) + 4.5rem)));
+  max-width: calc(100vw - (var(--sidebar-collapsed-width) + 4.5rem));
   max-height: calc(100dvh - 2rem);
   overflow-y: auto;
   overflow-x: hidden;
@@ -614,8 +617,8 @@ a:hover {
   }
 
   .sidebar {
-    width: min(340px, calc(100vw - 6rem));
-    max-width: calc(100vw - 6rem);
+    width: min(var(--sidebar-expanded-width), calc(100vw - (var(--sidebar-collapsed-width) + 4rem)));
+    max-width: calc(100vw - (var(--sidebar-collapsed-width) + 4rem));
     max-height: calc(100dvh - 1.9rem);
   }
 
@@ -650,8 +653,8 @@ a:hover {
   }
 
   .sidebar {
-    width: calc(100vw - 4.6rem);
-    max-width: calc(100vw - 4.6rem);
+    width: calc(100vw - (var(--sidebar-collapsed-width) + 2.2rem));
+    max-width: calc(100vw - (var(--sidebar-collapsed-width) + 2.2rem));
   }
 
   .panel {
