@@ -104,6 +104,14 @@ export function reconcileStateWithSources(state, sources) {
   return state;
 }
 
+/** Return a copy of state safe for serialization — excludes computed deals. */
+function stateForSerialization(state) {
+  // deals are recomputed from items at startup and after each scan,
+  // so there is no need to persist them. Omitting them roughly halves
+  // the state JSON size and reduces peak memory during saves.
+  return { ...state, deals: [] };
+}
+
 export class JsonStore {
   constructor(filePath) {
     this.filePath = filePath;
@@ -148,7 +156,7 @@ export class JsonStore {
 
   async save() {
     await this.ensureWritableFilePath();
-    await fs.writeFile(this.filePath, `${JSON.stringify(this.state, null, 2)}\n`, 'utf8');
+    await fs.writeFile(this.filePath, `${JSON.stringify(stateForSerialization(this.state), null, 2)}\n`, 'utf8');
   }
 }
 
@@ -232,7 +240,7 @@ export class ApifyStore {
         headers: {
           'content-type': 'application/json; charset=utf-8'
         },
-        body: JSON.stringify(this.state, null, 2)
+        body: JSON.stringify(stateForSerialization(this.state), null, 2)
       }
     );
 

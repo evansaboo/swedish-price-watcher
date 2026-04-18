@@ -23,6 +23,8 @@ const store = useApifyStateStore
 await store.load();
 reconcileStateWithSources(store.getState(), config.sources);
 const state = store.getState();
+// Recompute deals from loaded items — deals are not persisted to keep state lean.
+state.deals = computeDeals(state, config.thresholds);
 const configuredInterval = Number.isFinite(config.scanIntervalMinutes) && config.scanIntervalMinutes > 0 ? config.scanIntervalMinutes : 180;
 const existingSchedulerPreference = state.preferences?.scheduler ?? {};
 const parsedSchedulerInterval = Number.parseInt(String(existingSchedulerPreference.intervalMinutes ?? ''), 10);

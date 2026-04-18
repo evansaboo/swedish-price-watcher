@@ -12,7 +12,7 @@ const HITS_PER_PAGE = 100;
 // Algolia's paginationLimitedTo is 1500 for this index — any single query/filter
 // returns at most 1500 results. We split by brand (607 brands, max 867 per brand)
 // to retrieve all ~13 000 outlet products.
-const BRAND_QUERY_CONCURRENCY = 5; // parallel brand queries
+const BRAND_QUERY_CONCURRENCY = 3; // parallel brand queries — keep low to limit memory spike
 const PAGE_DELAY_MS = 150;
 
 const ALGOLIA_HEADERS = {
