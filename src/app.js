@@ -499,17 +499,21 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
   app.get('/api/sources', async () => {
     const state = store.getState();
 
-    return config.sources.map((source) => ({
-      id: source.id,
-      label: source.label,
-      type: source.type,
-      enabled: isSourceEnabled(source, state),
-      status: describeSourceStatus({ ...source, enabled: isSourceEnabled(source, state) }, state.sourceStates[source.id]),
-      lastSuccessAt: state.sourceStates[source.id]?.lastSuccessAt ?? null,
-      lastCount: state.sourceStates[source.id]?.lastCount ?? null,
-      lastError: state.sourceStates[source.id]?.lastError ?? null,
-      disabledUntil: state.sourceStates[source.id]?.disabledUntil ?? null
-    }));
+    return config.sources.map((source) => {
+      const schedulerEnabled = isSourceEnabled(source, state); // respects runtime overrides
+      return {
+        id: source.id,
+        label: source.label,
+        type: source.type,
+        enabled: source.enabled,           // config-file value only — for Sources section
+        schedulerEnabled,                  // scheduler override — for Scanners section
+        status: describeSourceStatus({ ...source, enabled: schedulerEnabled }, state.sourceStates[source.id]),
+        lastSuccessAt: state.sourceStates[source.id]?.lastSuccessAt ?? null,
+        lastCount: state.sourceStates[source.id]?.lastCount ?? null,
+        lastError: state.sourceStates[source.id]?.lastError ?? null,
+        disabledUntil: state.sourceStates[source.id]?.disabledUntil ?? null
+      };
+    });
   });
 
   app.patch('/api/sources/:id', async (request, reply) => {

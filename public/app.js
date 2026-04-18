@@ -586,20 +586,18 @@ function renderSources(sources, isScanning, currentSourceId) {
   if (!elements.sourcesList || !sources?.length) return;
 
   elements.sourcesList.innerHTML = sources
+    .filter((source) => source.enabled) // only show config-enabled sources
     .map((source) => {
       const isCurrentlyScanning = isScanning && currentSourceId === source.id;
       const statusLabel = isCurrentlyScanning ? 'scanning' : source.status;
       const metaText = source.lastSuccessAt
         ? `Last scan: ${formatDate(source.lastSuccessAt)}${source.lastCount != null ? ` · ${source.lastCount} items` : ''}`
         : 'Never scanned';
-      const scheduleBadge = !source.enabled
-        ? `<span class="source-schedule-badge" title="Excluded from scheduled scans">paused</span>`
-        : '';
 
       return `
         <div class="source-row">
           <div class="source-info">
-            <span class="source-name">${escapeHtml(source.label)}${scheduleBadge}</span>
+            <span class="source-name">${escapeHtml(source.label)}</span>
             <span class="source-meta">${escapeHtml(metaText)}</span>
           </div>
           <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}</span>
@@ -621,15 +619,17 @@ function renderSources(sources, isScanning, currentSourceId) {
 function renderScannerToggles(sources) {
   if (!elements.scannerToggles || !sources?.length) return;
 
+  // Only show sources that are enabled in config — scheduler controls which of those auto-run
   elements.scannerToggles.innerHTML = sources
+    .filter((source) => source.enabled)
     .map((source) => {
-      const checked = source.enabled ? 'checked' : '';
+      const checked = source.schedulerEnabled ? 'checked' : '';
       return `
         <label class="scanner-toggle-item" title="${escapeHtml(source.label)}">
           <input type="checkbox" class="scanner-toggle-cb" data-source-id="${escapeHtml(source.id)}" ${checked} />
           <span class="scanner-toggle-label">
             <span class="scanner-toggle-name">${escapeHtml(source.label)}</span>
-            <span class="scanner-toggle-meta">${source.lastCount != null ? source.lastCount + ' items' : source.enabled ? 'No data yet' : 'Disabled'}</span>
+            <span class="scanner-toggle-meta">${source.lastCount != null ? source.lastCount + ' items' : 'No data yet'}</span>
           </span>
         </label>
       `;
