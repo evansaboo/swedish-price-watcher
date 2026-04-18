@@ -56,16 +56,29 @@ const scanState = {
   totalSources: 0
 };
 
-async function triggerScan(trigger) {
+async function triggerScan(trigger, options = {}) {
   if (scanState.running) {
     return store.getState().stats.lastRunSummary;
+  }
+
+  // Optional: limit scan to specific source IDs
+  const requestedSourceIds = Array.isArray(options.sourceIds) && options.sourceIds.length > 0
+    ? new Set(options.sourceIds)
+    : null;
+
+  const sourcesToRun = config.sources.filter(
+    (entry) => entry.enabled && (!requestedSourceIds || requestedSourceIds.has(entry.id))
+  );
+
+  if (!sourcesToRun.length) {
+    throw Object.assign(new Error('No matching enabled sources to run.'), { statusCode: 400 });
   }
 
   scanState.running = true;
   scanState.lastError = null;
   scanState.currentSourceId = null;
   scanState.completedSources = 0;
-  scanState.totalSources = config.sources.filter((entry) => entry.enabled).length;
+  scanState.totalSources = sourcesToRun.length;
 
   const startedAt = new Date().toISOString();
   scanState.startedAt = startedAt;
@@ -78,7 +91,7 @@ async function triggerScan(trigger) {
   await store.save();
 
   try {
-    for (const source of config.sources.filter((entry) => entry.enabled)) {
+    for (const source of sourcesToRun) {
       scanState.currentSourceId = source.id;
       const sourceState = state.sourceStates[source.id] ?? {};
       state.sourceStates[source.id] = sourceState;

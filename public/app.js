@@ -57,6 +57,8 @@ const elements = {
   filterRailBadge: document.querySelector('#filter-rail-badge'),
   railButtons: [...document.querySelectorAll('[data-open-section]')],
   activeFilters: document.querySelector('#active-filters'),
+  sourcesList: document.querySelector('#sources-list'),
+  scanAllBtn: document.querySelector('#scan-all-btn'),
   favoritesEditor: document.querySelector('#favorites-editor'),
   favoritesEditorWrap: document.querySelector('#favorites-editor-wrap'),
   favoritesSearchInput: document.querySelector('#favorites-search-input'),
@@ -532,7 +534,7 @@ function scheduleFilterApply(delay = 250) {
 function syncScanButton(status) {
   if (!status.isRunning) {
     elements.scanButton.disabled = false;
-    elements.scanButton.textContent = 'Run scan';
+    elements.scanButton.textContent = 'Scan all';
     return;
   }
 
@@ -565,6 +567,65 @@ function renderStats(status, products, categories) {
   elements.statsGrid.innerHTML = pills
     .map(([value, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(value))}</strong>&thinsp;${escapeHtml(label)}</span>`)
     .join('');
+}
+
+function renderSources(sources, isScanning, currentSourceId) {
+  if (!elements.sourcesList || !sources?.length) return;
+
+  elements.sourcesList.innerHTML = sources
+    .map((source) => {
+      const isCurrentlyScanning = isScanning && currentSourceId === source.id;
+      const statusLabel = isCurrentlyScanning ? 'scanning' : (source.enabled ? source.status : 'disabled');
+      const metaText = source.lastSuccessAt
+        ? `Last scan: ${formatDate(source.lastSuccessAt)}${source.lastCount != null ? ` · ${source.lastCount} items` : ''}`
+        : source.enabled ? 'Never scanned' : 'Disabled';
+
+      return `
+        <div class="source-row${source.enabled ? '' : ' source-disabled'}">
+          <div class="source-info">
+            <span class="source-name">${escapeHtml(source.label)}</span>
+            <span class="source-meta">${escapeHtml(metaText)}</span>
+          </div>
+          <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}</span>
+          ${source.enabled
+            ? `<button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>`
+            : ''
+          }
+        </div>
+      `;
+    })
+    .join('');
+
+  // Wire up per-source scan buttons
+  for (const btn of elements.sourcesList.querySelectorAll('[data-source-id]')) {
+    btn.addEventListener('click', () => {
+      const sourceId = btn.getAttribute('data-source-id');
+      triggerSourceScan([sourceId]);
+    });
+  }
+}
+
+async function triggerSourceScan(sourceIds = null) {
+  try {
+    const body = sourceIds ? { sourceIds } : {};
+    const response = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setNotice(data.message || 'Failed to start scan.', 'error');
+      return;
+    }
+
+    setNotice(data.message || 'Scan started.', 'info');
+    scheduleScanPoll(1500);
+  } catch (error) {
+    setNotice(error.message, 'error');
+  }
 }
 
 function renderCategoryFilter(categories) {
@@ -1014,10 +1075,11 @@ function resetFilters() {
 }
 
 async function loadDashboard() {
-  const [status, categories, preferences] = await Promise.all([
+  const [status, categories, preferences, sources] = await Promise.all([
     fetchJson('/api/status'),
     fetchJson('/api/outlet-categories'),
-    fetchJson('/api/preferences')
+    fetchJson('/api/preferences'),
+    fetchJson('/api/sources')
   ]);
 
   state.latestRunStartedAt = status.lastRunSummary?.startedAt ?? status.lastRunStartedAt ?? null;
@@ -1036,6 +1098,7 @@ async function loadDashboard() {
 
   syncScanButton(status);
   renderStats(status, products, categories);
+  renderSources(sources, status.isRunning, status.scanProgress?.currentSourceId);
   renderCategoryFilter(categories);
   renderActiveFilters();
   renderScheduler(status.scheduler);
@@ -1053,8 +1116,12 @@ async function loadDashboard() {
 }
 
 async function pollScanStatus() {
-  const status = await fetchJson('/api/status');
+  const [status, sources] = await Promise.all([
+    fetchJson('/api/status'),
+    fetchJson('/api/sources')
+  ]);
   syncScanButton(status);
+  renderSources(sources, status.isRunning, status.scanProgress?.currentSourceId);
   renderScheduler(status.scheduler, { preserveDraft: true });
   renderNotice(status, latestProducts);
   elements.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
@@ -1202,21 +1269,12 @@ elements.schedulerWindowEnd.addEventListener('input', () => {
   renderSchedulerStatus();
 });
 
-elements.scanButton.addEventListener('click', async () => {
-  elements.scanButton.disabled = true;
-  elements.scanButton.textContent = 'Starting...';
+elements.scanButton.addEventListener('click', () => triggerSourceScan(null));
 
-  try {
-    const response = await fetchJson('/api/run', { method: 'POST' });
-    setNotice(response.message ?? 'Live scan started.', 'info');
-    await loadDashboard();
-  } catch (error) {
-    setNotice(error.message, 'error');
-    elements.runSummary.textContent = error.message;
-    elements.scanButton.disabled = false;
-    elements.scanButton.textContent = 'Run scan';
-  }
-});
+// "Scan all" button in the sidebar Sources section
+if (elements.scanAllBtn) {
+  elements.scanAllBtn.addEventListener('click', () => triggerSourceScan(null));
+}
 
 hydrateUiPreferences();
 

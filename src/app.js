@@ -481,33 +481,57 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
     const state = store.getState();
 
     return config.sources.map((source) => ({
-      ...source,
+      id: source.id,
+      label: source.label,
+      type: source.type,
+      enabled: source.enabled,
       status: describeSourceStatus(source, state.sourceStates[source.id]),
-      state: state.sourceStates[source.id] ?? {}
+      lastSuccessAt: state.sourceStates[source.id]?.lastSuccessAt ?? null,
+      lastCount: state.sourceStates[source.id]?.lastCount ?? null,
+      lastError: state.sourceStates[source.id]?.lastError ?? null,
+      disabledUntil: state.sourceStates[source.id]?.disabledUntil ?? null
     }));
   });
 
-  app.post('/api/run', async (_, reply) => {
+  app.post('/api/run', async (request, reply) => {
     if (scanState.running) {
       reply.code(409);
       return { ok: false, message: 'A scan is already running.' };
     }
 
-    if (!config.sources.some((source) => source.enabled)) {
+    const rawSourceIds = request.body?.sourceIds;
+    const sourceIds = Array.isArray(rawSourceIds) && rawSourceIds.length > 0
+      ? rawSourceIds.map((id) => String(id).trim()).filter(Boolean)
+      : null;
+
+    // Validate that requested source IDs exist
+    if (sourceIds) {
+      const knownIds = new Set(config.sources.map((s) => s.id));
+      const unknown = sourceIds.filter((id) => !knownIds.has(id));
+
+      if (unknown.length) {
+        reply.code(400);
+        return { ok: false, message: `Unknown source IDs: ${unknown.join(', ')}` };
+      }
+    }
+
+    if (!config.sources.some((source) => source.enabled && (!sourceIds || sourceIds.includes(source.id)))) {
       reply.code(400);
       return {
         ok: false,
-        message: 'No sources are enabled. Add or enable a source in config/sources.json.'
+        message: sourceIds
+          ? `None of the requested sources are enabled: ${sourceIds.join(', ')}`
+          : 'No sources are enabled. Add or enable a source in config/sources.json.'
       };
     }
 
-    triggerScan('manual').catch(() => {});
+    triggerScan('manual', { sourceIds }).catch(() => {});
     reply.code(202);
 
     return {
       ok: true,
       started: true,
-      message: 'Live scan started.'
+      message: sourceIds ? `Scanning: ${sourceIds.join(', ')}` : 'Live scan started.'
     };
   });
 

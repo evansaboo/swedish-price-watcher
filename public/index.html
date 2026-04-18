@@ -20,7 +20,7 @@
       </div>
       <div class="topbar-actions">
         <button id="refresh-button" type="button">Refresh</button>
-        <button id="scan-button" type="button" class="btn-primary">Run scan</button>
+        <button id="scan-button" type="button" class="btn-primary">Scan all</button>
       </div>
     </header>
 
@@ -35,6 +35,9 @@
 
         <!-- Icon rail: visible only when sidebar is collapsed on desktop -->
         <div class="sidebar-icon-rail" aria-hidden="true">
+          <button class="rail-btn" data-open-section="section-sources" title="Sources" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          </button>
           <button class="rail-btn" data-open-section="section-filters" title="Filters" type="button">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
             <span id="filter-rail-badge" class="rail-badge hidden" aria-hidden="true"></span>
@@ -60,6 +63,20 @@
 
           <!-- Scrollable sidebar body -->
           <div class="sidebar-scroll">
+
+          <!-- ── SOURCES ─────────────────────────── -->
+            <section class="sidebar-section" id="section-sources">
+              <div class="sidebar-section-header">
+                <div class="sidebar-section-label">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                  <h2>Sources</h2>
+                </div>
+                <button id="scan-all-btn" type="button" class="ghost-btn">Scan all</button>
+              </div>
+              <div id="sources-list" class="sources-list"></div>
+            </section>
+
+            <div class="sidebar-divider"></div>
 
             <!-- ── FILTERS ─────────────────────────── -->
             <section class="sidebar-section" id="section-filters">
