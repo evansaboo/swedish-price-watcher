@@ -246,7 +246,10 @@ export async function collectFromPower({ source, fetcher, sourceState, now, _Api
       proxyConfiguration: { useApifyProxy: true },
       maxRequestsPerCrawl: 1,
     },
-    { timeout: Math.floor((source.actorTimeoutMs ?? 180_000) / 1000) }
+    {
+      timeout: Math.floor((source.actorTimeoutMs ?? 180_000) / 1000),
+      memory: source.actorMemoryMb ?? 2048,
+    }
   );
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems();

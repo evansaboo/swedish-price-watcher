@@ -119,7 +119,10 @@ export async function collectFromProshop({ source, fetcher, sourceState, now, _A
       maxRequestsPerCrawl,
       maxConcurrency: 2,
     },
-    { timeout: Math.floor((source.actorTimeoutMs ?? 600_000) / 1000) }
+    {
+      timeout: Math.floor((source.actorTimeoutMs ?? 600_000) / 1000),
+      memory: source.actorMemoryMb ?? 2048,
+    }
   );
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems({ limit: 9999 });
