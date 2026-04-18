@@ -14,7 +14,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <div class="topbar-heading">
-          <p class="eyebrow">Elgiganten outlet monitor</p>
+          <p class="eyebrow">Swedish outlet monitor</p>
           <h1>Find the best outlet deals faster</h1>
         </div>
       </div>
@@ -39,14 +39,11 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
             <span id="filter-rail-badge" class="rail-badge hidden" aria-hidden="true"></span>
           </button>
-          <button class="rail-btn" data-open-section="section-favorites" title="Favorites" type="button">
+          <button class="rail-btn" data-open-section="section-favorites" title="Favorite categories" type="button">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
           </button>
           <button class="rail-btn" data-open-section="section-scheduler" title="Scheduler" type="button">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </button>
-          <button class="rail-btn" data-open-section="section-overview" title="Overview" type="button">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           </button>
         </div>
 
@@ -55,7 +52,7 @@
           <!-- Sidebar header -->
           <div class="sidebar-header">
             <svg class="sidebar-header-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-            <strong class="sidebar-header-title">Filters &amp; Settings</strong>
+            <strong class="sidebar-header-title">Filters &amp; Controls</strong>
             <button id="sidebar-close" type="button" class="sidebar-collapse-btn" title="Collapse panel" aria-label="Collapse sidebar">
               <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
@@ -64,10 +61,13 @@
           <!-- Scrollable sidebar body -->
           <div class="sidebar-scroll">
 
-            <!-- Filters section -->
+            <!-- ── FILTERS ─────────────────────────── -->
             <section class="sidebar-section" id="section-filters">
               <div class="sidebar-section-header">
-                <h2>Filters</h2>
+                <div class="sidebar-section-label">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                  <h2>Filters</h2>
+                </div>
                 <button id="clear-filters-button" type="button" class="ghost-btn">Clear all</button>
               </div>
               <div class="filters-grid">
@@ -125,10 +125,13 @@
 
             <div class="sidebar-divider"></div>
 
-            <!-- Favorites section -->
+            <!-- ── FAVORITE CATEGORIES ─────────────── -->
             <section class="sidebar-section" id="section-favorites">
               <div class="sidebar-section-header">
-                <h2>Favorite categories</h2>
+                <div class="sidebar-section-label">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                  <h2>Favorite categories</h2>
+                </div>
                 <div class="inline-actions">
                   <span id="favorites-count" class="badge"></span>
                   <button id="toggle-favorites-editor" type="button" class="ghost-btn">Manage</button>
@@ -146,11 +149,14 @@
 
             <div class="sidebar-divider"></div>
 
-            <!-- Scheduler section -->
+            <!-- ── SCHEDULER ──────────────────────── -->
             <section class="sidebar-section" id="section-scheduler">
-              <div class="sidebar-section-header compact">
-                <h2>Scheduler</h2>
-                <span id="scheduler-status" class="muted-text"></span>
+              <div class="sidebar-section-header">
+                <div class="sidebar-section-label">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <h2>Scheduler</h2>
+                </div>
+                <span id="scheduler-status" class="muted-text scheduler-status-pill"></span>
               </div>
               <div class="scheduler-grid">
                 <label class="toggle-item">
@@ -179,26 +185,6 @@
               </div>
             </section>
 
-            <div class="sidebar-divider"></div>
-
-            <!-- Overview / stats section -->
-            <section class="sidebar-section" id="section-overview">
-              <div class="sidebar-section-header">
-                <h2>Overview</h2>
-              </div>
-              <div class="stats-grid" id="stats-grid"></div>
-            </section>
-
-            <div class="sidebar-divider"></div>
-
-            <!-- Last run summary section -->
-            <section class="sidebar-section" id="section-summary">
-              <div class="sidebar-section-header">
-                <h2>Last run</h2>
-              </div>
-              <pre id="run-summary" class="run-summary"></pre>
-            </section>
-
           </div><!-- /.sidebar-scroll -->
         </div><!-- /.sidebar-inner -->
       </aside>
@@ -208,6 +194,19 @@
 
       <!-- ===== MAIN CONTENT ===== -->
       <main class="main-content">
+
+        <!-- Overview bar: stats + last run info -->
+        <section class="overview-bar">
+          <div class="overview-bar-stats" id="stats-grid"></div>
+          <details class="overview-bar-details">
+            <summary class="overview-bar-summary-toggle">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Last run
+            </summary>
+            <pre id="run-summary" class="run-summary"></pre>
+          </details>
+        </section>
+
         <section class="panel listing-panel">
           <div class="listing-header">
             <div class="listing-header-left">

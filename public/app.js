@@ -1113,13 +1113,17 @@ for (const btn of elements.railButtons) {
     const sectionId = btn.getAttribute('data-open-section');
     setSidebarOpen(true);
     if (sectionId) {
-      // Slight delay to let the sidebar animate open before scrolling
+      // Wait for sidebar transition then scroll within the sidebar-scroll container
       setTimeout(() => {
+        const scrollContainer = document.querySelector('.sidebar-scroll');
         const section = document.getElementById(sectionId);
-        if (section) {
-          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (scrollContainer && section) {
+          // Calculate position relative to the scroll container
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const sectionRect = section.getBoundingClientRect();
+          scrollContainer.scrollTop += sectionRect.top - containerRect.top - 8;
         }
-      }, 80);
+      }, 230); // match sidebar transition duration
     }
   });
 }
