@@ -22,6 +22,30 @@ const ALGOLIA_HEADERS = {
   'x-algolia-application-id': 'Z0FL7R8UBH',
 };
 
+/**
+ * Transform a next-media.elkjop.com URL to the direct media.elkjop.com CDN URL.
+ * next-media is a Next.js image optimizer that serves with Content-Disposition: attachment
+ * which prevents Discord from rendering the image in embeds.
+ *
+ * Input:  https://next-media.elkjop.com/image/{blobId}/{articleNo}/{filename}
+ * Output: https://media.elkjop.com/assets/image/{blobId}
+ */
+function resolveImageUrl(raw) {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.hostname === 'next-media.elkjop.com') {
+      // Path: /image/{blobId}/...
+      const parts = url.pathname.split('/').filter(Boolean);
+      const blobId = parts[1]; // index 0 = "image", index 1 = blobId
+      if (blobId) return `https://media.elkjop.com/assets/image/${blobId}`;
+    }
+  } catch {
+    // fall through
+  }
+  return raw;
+}
+
 async function algoliaPost(fetcher, body) {
   return fetcher.fetchJsonApi(ALGOLIA_URL, {
     method: 'POST',
@@ -98,7 +122,7 @@ function mapHit(hit, source, now) {
       : null;
 
   const url = hit.productUrl ?? hit.urlB2C ?? null;
-  const imageUrl = hit.imageUrl ?? null;
+  const imageUrl = resolveImageUrl(hit.imageUrl);
   const category =
     hit.hierarchicalCategories?.lvl2 ??
     hit.hierarchicalCategories?.lvl1 ??
