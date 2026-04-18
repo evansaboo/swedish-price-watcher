@@ -11,28 +11,34 @@ async function pageFunction(context) {
   const { $, request } = context;
   const products = [];
 
-  $('li.site-product-list-item').each((i, el) => {
+  // Correct class: site-productlist-item
+  $('li.site-productlist-item').each((i, el) => {
     const $el = $(el);
-    const name =
-      $el.find('.name a').first().text().trim() ||
-      $el.find('.site-product-link').first().text().trim() ||
-      $el.attr('data-gtm-name') ||
-      '';
-    const href =
-      $el.find('.name a').first().attr('href') ||
-      $el.find('.site-product-link').first().attr('href') ||
-      $el.find('a').first().attr('href') ||
-      '';
+    const linkEl = $el.find('a.site-product-link').first();
+    const href = linkEl.attr('href') || $el.find('a').first().attr('href') || '';
+
+    // Clean name from href path: /Category-Name/Product-Name/12345 → second-to-last segment
+    const segments = href.split('/').filter(Boolean);
+    const nameFromHref = segments.length >= 2
+      ? segments[segments.length - 2].replace(/-+/g, ' ').trim()
+      : '';
+    const name = nameFromHref || (linkEl.attr('title') || '').split(' - ')[0].trim();
+
+    // Product ID: last segment of href (numeric)
+    const productId = segments[segments.length - 1] || '';
+
+    // Category: first path segment (URL-encoded Swedish, keep as-is)
+    const category = segments.length >= 1 ? segments[0].replace(/-+/g, ' ').trim() : '';
+
+    // Price from span.site-currency-lg (main price)
     const priceText = $el.find('span.site-currency-lg').first().text().trim();
-    const originalPriceText = $el.find('span.site-currency-oldprice').first().text().trim();
-    const productId =
-      $el.attr('data-gtm-id') ||
-      (href.match(/\\/produkt\\/(\\d+)/)?.[1]) ||
-      '';
-    const category = $el.attr('data-gtm-category') || '';
+
+    // Old/original price
+    const originalPriceText =
+      $el.find('span.site-currency-oldprice, .site-currency-old, .oldprice').first().text().trim();
 
     if (name && priceText) {
-      products.push({ name, href, priceText, originalPriceText, productId, category });
+      products.push({ name, href, priceText, originalPriceText, productId: productId || name, category });
     }
   });
 

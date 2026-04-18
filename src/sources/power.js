@@ -11,6 +11,7 @@ async function pageFunction(context) {
   const { page } = context;
   const capturedProducts = [];
 
+  // Intercept API responses — set up BEFORE reload so we catch everything
   page.on('response', async (response) => {
     const url = response.url();
     const ct = response.headers()['content-type'] || '';
@@ -18,7 +19,8 @@ async function pageFunction(context) {
       ct.includes('application/json') &&
       !url.includes('analytics') &&
       !url.includes('gtm') &&
-      !url.includes('clarity')
+      !url.includes('clarity') &&
+      !url.includes('cookie')
     ) {
       try {
         const data = await response.json();
@@ -27,6 +29,7 @@ async function pageFunction(context) {
           data.items ||
           data.results ||
           data.productList ||
+          data.hits ||
           null;
         if (Array.isArray(products) && products.length > 0) {
           capturedProducts.push(...products);
@@ -35,18 +38,42 @@ async function pageFunction(context) {
     }
   });
 
+  // Inject consent cookie so the Angular app doesn't show the cookie banner
+  await page.evaluate(() => {
+    const consent = JSON.stringify({
+      consents_approved: ['cookie_cat_necessary', 'cookie_cat_functional', 'cookie_cat_statistic', 'cookie_cat_marketing'],
+      consents_denied: [],
+      user_uid: 'auto',
+      timestamp: new Date().toISOString()
+    });
+    document.cookie = 'CookieInformationConsent=' + encodeURIComponent(consent) + '; path=/; max-age=86400';
+  });
+
+  // Reload so Angular starts fresh with consent already set and we capture all API calls
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 2000));
+
+  // Scroll to trigger lazy loading
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2)).catch(() => {});
+  await new Promise((r) => setTimeout(r, 1000));
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+  await new Promise((r) => setTimeout(r, 1500));
+
   // Wait for Angular to render products
   await page
     .waitForFunction(
       () => {
         const selectors = [
           'app-product-list-item',
+          'app-product-card',
           'power-product-card',
           '[data-test="product-list-item"]',
           '.product-list-item',
           '[class*="product-card"]',
+          '[class*="ProductCard"]',
+          '[class*="product-item"]',
         ];
-        return selectors.some((sel) => document.querySelectorAll(sel).length >= 3);
+        return selectors.some((sel) => document.querySelectorAll(sel).length >= 2);
       },
       { timeout: 30000 }
     )
@@ -61,10 +88,13 @@ async function pageFunction(context) {
   // Fallback: extract from rendered DOM
   return await page.evaluate(() => {
     const items = document.querySelectorAll(
-      'app-product-list-item, power-product-card, [data-test="product-list-item"], .product-list-item, [class*="product-card__"]'
+      'app-product-list-item, app-product-card, power-product-card, ' +
+      '[data-test="product-list-item"], .product-list-item, ' +
+      '[class*="product-card__"], [class*="ProductCard"]'
     );
 
     if (items.length === 0) {
+      // Debug: dump body to diagnose
       return [
         {
           _debug: true,
