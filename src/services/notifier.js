@@ -167,7 +167,8 @@ export class DiscordNotifier {
                 { name: 'Profit', value: formatSek(deal.profitSek), inline: true },
                 { name: 'Score', value: String(deal.score), inline: true },
                 { name: 'Reasons', value: deal.reasons.join(' • ') || 'No detail', inline: false }
-              ]
+              ],
+              image: deal.imageUrl ? { url: deal.imageUrl } : undefined
             }
           ]
         });

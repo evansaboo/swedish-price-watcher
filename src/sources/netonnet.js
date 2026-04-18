@@ -56,7 +56,7 @@ function resolveCategory(canonicalUrl) {
 
 function buildImageUrl(articleNumber, imageId) {
   if (!articleNumber || !imageId) return null;
-  return `${BASE_URL}/GetFile/ProductImagePrimary/(${articleNumber})_${imageId}_200.jpg`;
+  return `${BASE_URL}/GetFile/ProductImagePrimary/(${articleNumber})_${imageId}_largeHD.webp`;
 }
 
 function extractProducts(html) {
