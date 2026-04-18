@@ -149,6 +149,21 @@ button:active { transform: scale(0.98); }
   color: #fff;
 }
 
+.btn-cancel {
+  background: transparent;
+  color: #b91c1c;
+  border-color: #b91c1c;
+  font-weight: 600;
+}
+.btn-cancel:hover:not(:disabled) {
+  background: #b91c1c;
+  color: #fff;
+}
+.btn-cancel:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .btn-accent-sm {
   background: var(--accent);
   color: #fff;

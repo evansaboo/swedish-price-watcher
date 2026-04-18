@@ -405,7 +405,7 @@ function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
   };
 }
 
-export async function buildApp({ config, store, scanState, triggerScan, scheduler }) {
+export async function buildApp({ config, store, scanState, triggerScan, cancelScan, scheduler }) {
   const app = Fastify({ logger: false });
 
   try {
@@ -426,6 +426,7 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
 
     return {
       isRunning: scanState.running,
+      isCancelling: scanState.cancelling,
       lastError: scanState.lastError,
       lastRunStartedAt: state.stats.lastRunStartedAt,
       lastRunCompletedAt: state.stats.lastRunCompletedAt,
@@ -643,6 +644,15 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       started: true,
       message: sourceIds ? `Scanning: ${sourceIds.join(', ')}` : 'Live scan started.'
     };
+  });
+
+  app.post('/api/cancel', async (request, reply) => {
+    if (!scanState.running) {
+      reply.code(409);
+      return { ok: false, message: 'No scan is currently running.' };
+    }
+    const wasCancelled = cancelScan();
+    return { ok: wasCancelled, message: wasCancelled ? 'Scan cancellation requested.' : 'No scan is running.' };
   });
 
   return app;

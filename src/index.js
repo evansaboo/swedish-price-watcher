@@ -50,11 +50,13 @@ const notifier = new DiscordNotifier({
 
 const scanState = {
   running: false,
+  cancelling: false,
   lastError: null,
   startedAt: null,
   currentSourceId: null,
   completedSources: 0,
-  totalSources: 0
+  totalSources: 0,
+  abortController: null
 };
 
 async function triggerScan(trigger, options = {}) {
@@ -81,11 +83,13 @@ async function triggerScan(trigger, options = {}) {
   }
 
   scanState.running = true;
+  scanState.cancelling = false;
   scanState.lastError = null;
   scanState.currentSourceId = null;
   scanState.completedSources = 0;
   scanState.totalSources = sourcesToRun.length;
   scanState.sourceProgress = {};
+  scanState.abortController = new AbortController();
 
   const startedAt = new Date().toISOString();
   scanState.startedAt = startedAt;
@@ -129,6 +133,30 @@ async function triggerScan(trigger, options = {}) {
         }
       })
     );
+
+    // If the scan was cancelled while sources were running, discard results and return early.
+    if (scanState.abortController.signal.aborted) {
+      const completedAt = new Date().toISOString();
+      state.stats.lastRunCompletedAt = completedAt;
+      state.stats.lastRunSummary = {
+        trigger,
+        startedAt,
+        completedAt,
+        cancelled: true,
+        observations: 0,
+        newListings: 0,
+        priceDrops: 0,
+        trackedItems: Object.keys(state.items).length,
+        deals: state.deals?.length ?? 0,
+        amazingDeals: state.deals?.filter((d) => d.amazingDeal).length ?? 0,
+        sourceResults: collectionResults.map((r) => ({
+          sourceId: r.source.id,
+          status: 'cancelled'
+        }))
+      };
+      await store.save();
+      return state.stats.lastRunSummary;
+    }
 
     // Process results sequentially (all state mutations happen after all I/O)
     for (const result of collectionResults) {
@@ -220,12 +248,21 @@ async function triggerScan(trigger, options = {}) {
     throw error;
   } finally {
     scanState.running = false;
+    scanState.cancelling = false;
     scanState.startedAt = null;
     scanState.currentSourceId = null;
     scanState.completedSources = 0;
     scanState.totalSources = 0;
     scanState.sourceProgress = {};
+    scanState.abortController = null;
   }
+}
+
+function cancelScan() {
+  if (!scanState.running) return false;
+  scanState.cancelling = true;
+  scanState.abortController?.abort();
+  return true;
 }
 
 if (runOnce) {
@@ -262,6 +299,7 @@ const app = await buildApp({
   store,
   scanState,
   triggerScan,
+  cancelScan,
   scheduler: {
     getState: () => scheduler.getState(),
     update: updateScheduler

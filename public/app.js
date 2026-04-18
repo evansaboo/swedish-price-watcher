@@ -81,6 +81,7 @@ const elements = {
   productsTable: document.querySelector('#products-table'),
   refreshButton: document.querySelector('#refresh-button'),
   scanButton: document.querySelector('#scan-button'),
+  cancelButton: document.querySelector('#cancel-button'),
   scanProgressBar: document.querySelector('#scan-progress-bar'),
   scanProgressFill: document.querySelector('#scan-progress-fill')
 };
@@ -592,6 +593,11 @@ function syncScanButton(status) {
   if (!status.isRunning) {
     elements.scanButton.disabled = false;
     elements.scanButton.textContent = 'Scan all';
+    if (elements.cancelButton) {
+      elements.cancelButton.classList.add('hidden');
+      elements.cancelButton.disabled = false;
+      elements.cancelButton.textContent = 'Cancel';
+    }
     if (elements.scanProgressBar) elements.scanProgressBar.classList.add('hidden');
     return;
   }
@@ -600,9 +606,21 @@ function syncScanButton(status) {
   const total = Number(progress.totalSources ?? 0);
   const completed = Number(progress.completedSources ?? 0);
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const isCancelling = status.isCancelling;
 
   elements.scanButton.disabled = true;
   elements.scanButton.textContent = total ? `Scanning ${completed}/${total}` : 'Scanning...';
+
+  if (elements.cancelButton) {
+    elements.cancelButton.classList.remove('hidden');
+    if (isCancelling) {
+      elements.cancelButton.disabled = true;
+      elements.cancelButton.textContent = 'Cancelling…';
+    } else {
+      elements.cancelButton.disabled = false;
+      elements.cancelButton.textContent = 'Cancel';
+    }
+  }
 
   if (elements.scanProgressBar) {
     elements.scanProgressBar.classList.remove('hidden');
@@ -1466,6 +1484,18 @@ elements.schedulerWindowEnd.addEventListener('input', () => {
 });
 
 elements.scanButton.addEventListener('click', () => triggerSourceScan(null));
+
+if (elements.cancelButton) {
+  elements.cancelButton.addEventListener('click', async () => {
+    elements.cancelButton.disabled = true;
+    elements.cancelButton.textContent = 'Cancelling…';
+    try {
+      await fetch('/api/cancel', { method: 'POST' });
+    } catch {
+      // ignore — the next poll will reflect the final state
+    }
+  });
+}
 
 // "Scan all" button in the sidebar Sources section
 if (elements.scanAllBtn) {
