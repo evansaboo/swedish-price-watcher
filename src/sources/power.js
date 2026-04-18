@@ -175,13 +175,14 @@ function mapApiProduct(item, source, now) {
 
   return {
     sourceId: source.id,
+    sourceLabel: source.label ?? source.id,
     externalId,
     title: name,
     url: fullUrl,
     priceSek: price,
     referencePriceSek: refPrice,
     marketValueSek: refPrice,
-    imageUrl: item.image ?? item.imageUrl ?? item.img ?? null,
+    imageUrl: item.image ?? item.imageUrl ?? item.img ?? item.imageLink ?? item.thumbnail ?? null,
     category: item.category ?? item.mainCategory ?? 'electronics',
     condition: 'outlet',
     seenAt: now,
@@ -208,6 +209,7 @@ function mapDomProduct(item, source, now) {
 
   return {
     sourceId: source.id,
+    sourceLabel: source.label ?? source.id,
     externalId,
     title: name,
     url: fullUrl,

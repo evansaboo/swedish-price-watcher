@@ -37,8 +37,11 @@ async function pageFunction(context) {
     const originalPriceText =
       $el.find('span.site-currency-oldprice, .site-currency-old, .oldprice').first().text().trim();
 
+    // Product image
+    const imageUrl = $el.find('img.site-product-img, img[class*="product"], img').first().attr('src') || '';
+
     if (name && priceText) {
-      products.push({ name, href, priceText, originalPriceText, productId: productId || name, category });
+      products.push({ name, href, priceText, originalPriceText, productId: productId || name, category, imageUrl });
     }
   });
 
@@ -117,13 +120,14 @@ function mapProshopItem(item, source, now) {
 
   return {
     sourceId: source.id,
+    sourceLabel: source.label ?? source.id,
     externalId,
     title: name,
     url: fullUrl,
     priceSek: price,
     referencePriceSek: originalPrice,
     marketValueSek: originalPrice,
-    imageUrl: null,
+    imageUrl: item.imageUrl || null,
     category: category || 'outlet',
     condition: 'outlet',
     seenAt: now,
