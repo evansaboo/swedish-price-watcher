@@ -101,14 +101,13 @@ function mapProshopItem(item, source, now) {
     externalId,
     title: name,
     url: fullUrl,
-    currentPriceSek: price,
-    comparisonPriceSek: originalPrice,
+    priceSek: price,
     referencePriceSek: originalPrice,
     marketValueSek: originalPrice,
     imageUrl: null,
     category: category || 'outlet',
     condition: 'outlet',
-    scannedAt: now,
+    seenAt: now,
   };
 }
 

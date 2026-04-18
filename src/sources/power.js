@@ -163,14 +163,13 @@ function mapApiProduct(item, source, now) {
     externalId,
     title: name,
     url: fullUrl,
-    currentPriceSek: price,
-    comparisonPriceSek: refPrice,
+    priceSek: price,
     referencePriceSek: refPrice,
     marketValueSek: refPrice,
     imageUrl: item.image ?? item.imageUrl ?? item.img ?? null,
     category: item.category ?? item.mainCategory ?? 'electronics',
     condition: 'outlet',
-    scannedAt: now,
+    seenAt: now,
   };
 }
 
@@ -197,14 +196,13 @@ function mapDomProduct(item, source, now) {
     externalId,
     title: name,
     url: fullUrl,
-    currentPriceSek: price,
-    comparisonPriceSek: refPrice,
+    priceSek: price,
     referencePriceSek: refPrice,
     marketValueSek: refPrice,
     imageUrl: item.imageUrl || null,
     category: 'electronics',
     condition: 'outlet',
-    scannedAt: now,
+    seenAt: now,
   };
 }
 
