@@ -1,4 +1,5 @@
 import { collectFromApifyElgiganten } from './apifyElgiganten.js';
+import { collectFromApifyKomplett } from './apifyKomplett.js';
 import { collectFromHtml } from './html.js';
 import { collectFromKomplettSitemap } from './komplett.js';
 import { collectFromNetonnet } from './netonnet.js';
@@ -7,6 +8,7 @@ import { collectFromWebhallen } from './webhallen.js';
 
 const handlers = {
   'apify-elgiganten': collectFromApifyElgiganten,
+  'apify-komplett': collectFromApifyKomplett,
   'komplett-sitemap': collectFromKomplettSitemap,
   'netonnet-outlet': collectFromNetonnet,
   rss: collectFromRss,

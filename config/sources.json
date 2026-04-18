@@ -68,9 +68,43 @@
     },
     {
       "id": "komplett-outlet-electronics",
-      "type": "komplett-sitemap",
+      "type": "apify-komplett",
       "enabled": true,
       "label": "Komplett B-grade",
+      "category": "electronics",
+      "condition": "outlet",
+      "actorId": "shahidirfan/komplett-products-scraper",
+      "apiTokenEnvVar": "APIFY_TOKEN",
+      "apiTokenEnvVars": [
+        "APIFY_TOKEN_2",
+        "APIFY_TOKEN_3"
+      ],
+      "actorTimeoutMs": 180000,
+      "actorRequestRetries": 3,
+      "actorRetryBaseMs": 1500,
+      "actorRetryMaxMs": 15000,
+      "actorInput": {
+        "startUrl": "https://www.komplett.se/search?q=b-grade&list_view=list",
+        "results_wanted": 200,
+        "max_pages": 10
+      },
+      "includePaths": [
+        "/demovaror/"
+      ],
+      "referenceLookup": true,
+      "referenceLookupMaxPerScan": 40,
+      "referenceLookupConcurrency": 4,
+      "referenceLookupRetryHours": 12,
+      "referenceLookupResultsWanted": 30,
+      "referenceLookupMaxPages": 2,
+      "notificationMode": "favorite-events",
+      "notes": "Scrapes Komplett B-grade/demovaror listings via the shahidirfan/komplett-products-scraper Apify actor. Filters for /demovaror/ URLs and enriches with reference prices via keyword lookup."
+    },
+    {
+      "id": "komplett-outlet-sitemap",
+      "type": "komplett-sitemap",
+      "enabled": false,
+      "label": "Komplett B-grade (sitemap fallback)",
       "category": "electronics",
       "condition": "outlet",
       "sitemapUrl": "https://www.komplett.se/sitemap.products.xml",
@@ -94,9 +128,10 @@
         "tv-ljud-bild",
         "mobil-tablets-klockor"
       ],
-      "maxItems": 10,
+      "maxItems": 30,
       "updatedSinceDays": 180,
-      "notes": "Optional fallback source for Komplett B-grade listings if you want to compare another store later."
+      "referenceLookup": true,
+      "notes": "Fallback: streams sitemap.products.xml and filters for /demovaror/ entries. Enable if the Apify actor is unavailable."
     },
     {
       "id": "approved-rss-feed",
