@@ -69,8 +69,8 @@
     {
       "id": "komplett-outlet-electronics",
       "type": "komplett-sitemap",
-      "enabled": false,
-      "label": "Komplett outlet electronics",
+      "enabled": true,
+      "label": "Komplett B-grade",
       "category": "electronics",
       "condition": "outlet",
       "sitemapUrl": "https://www.komplett.se/sitemap.products.xml",

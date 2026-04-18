@@ -177,6 +177,7 @@ function buildOutletProducts(state) {
 function filterOutletProducts(products, query, favoriteCategorySet, latestRunStartedAt = null) {
   const search = String(query.search ?? '').trim().toLowerCase();
   const category = String(query.category ?? '').trim().toLowerCase();
+  const store = String(query.store ?? '').trim().toLowerCase();
   const favoritesOnly = String(query.favoritesOnly ?? 'false') === 'true';
   const discountedOnly = String(query.discountedOnly ?? 'false') === 'true';
   const referenceOnly = String(query.referenceOnly ?? 'false') === 'true';
@@ -186,6 +187,10 @@ function filterOutletProducts(products, query, favoriteCategorySet, latestRunSta
 
   return products.filter((product) => {
     const productCategoryKey = normalizeCategoryKey(product.category);
+
+    if (store && product.sourceId !== store) {
+      return false;
+    }
 
     if (favoritesOnly && !favoriteCategorySet.has(productCategoryKey)) {
       return false;
@@ -215,7 +220,7 @@ function filterOutletProducts(products, query, favoriteCategorySet, latestRunSta
 
     return (
       (!category || productCategoryKey === category) &&
-      (matchesQuery(product.title, search) || matchesQuery(product.category, search))
+      (matchesQuery(product.title, search) || matchesQuery(product.category, search) || matchesQuery(product.sourceLabel, search))
     );
   });
 }
@@ -416,6 +421,17 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
     const state = store.getState();
     const favoriteCategorySet = getFavoriteCategorySet(state);
     return buildOutletCategoryStats(buildOutletProducts(state), favoriteCategorySet);
+  });
+
+  app.get('/api/outlet-sources', async () => {
+    const state = store.getState();
+    const seen = new Map();
+    for (const item of Object.values(state.items)) {
+      if (!seen.has(item.sourceId)) {
+        seen.set(item.sourceId, item.sourceLabel ?? item.sourceId);
+      }
+    }
+    return [...seen.entries()].map(([id, label]) => ({ id, label }));
   });
 
   app.get('/api/preferences', async () => ({

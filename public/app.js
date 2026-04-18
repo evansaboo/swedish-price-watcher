@@ -7,6 +7,7 @@ const sekFormatter = new Intl.NumberFormat('sv-SE', {
 const state = {
   search: '',
   category: '',
+  store: '',
   favoritesOnly: false,
   discountedOnly: false,
   newOnly: false,
@@ -41,6 +42,7 @@ const elements = {
   statsGrid: document.querySelector('#stats-grid'),
   runSummary: document.querySelector('#run-summary'),
   categoryFilter: document.querySelector('#category-filter'),
+  storeFilter: document.querySelector('#store-filter'),
   searchInput: document.querySelector('#search-input'),
   favoritesOnly: document.querySelector('#favorites-only'),
   discountedOnly: document.querySelector('#discounted-only'),
@@ -136,6 +138,7 @@ function saveUiPreferences() {
   const payload = {
     search: state.search,
     category: state.category,
+    store: state.store,
     favoritesOnly: state.favoritesOnly,
     discountedOnly: state.discountedOnly,
     newOnly: state.newOnly,
@@ -165,6 +168,10 @@ function hydrateUiPreferences() {
 
   if (typeof saved.category === 'string') {
     state.category = saved.category;
+  }
+
+  if (typeof saved.store === 'string') {
+    state.store = saved.store;
   }
 
   if (typeof saved.favoritesOnly === 'boolean') {
@@ -271,6 +278,7 @@ function getActiveFilterCount() {
   let count = 0;
   if (state.search) count++;
   if (state.category) count++;
+  if (state.store) count++;
   if (state.favoritesOnly) count++;
   if (state.discountedOnly) count++;
   if (state.newOnly) count++;
@@ -465,6 +473,10 @@ function buildProductsQueryString() {
     params.set('category', state.category);
   }
 
+  if (state.store) {
+    params.set('store', state.store);
+  }
+
   if (state.favoritesOnly) {
     params.set('favoritesOnly', 'true');
   }
@@ -649,6 +661,22 @@ function renderCategoryFilter(categories) {
   elements.categoryFilter.innerHTML = options;
 }
 
+function renderStoreFilter(sources) {
+  if (!elements.storeFilter || !Array.isArray(sources)) return;
+
+  const current = state.store;
+  const options = ['<option value="">All stores</option>']
+    .concat(
+      sources.map((s) => {
+        const selected = s.id === current ? ' selected' : '';
+        return `<option value="${escapeHtml(s.id)}"${selected}>${escapeHtml(s.label)}</option>`;
+      })
+    )
+    .join('');
+
+  elements.storeFilter.innerHTML = options;
+}
+
 function renderActiveFilters() {
   const activeFilters = [];
   const minDiscount = parsePositiveInteger(state.minDiscountPercent);
@@ -661,6 +689,11 @@ function renderActiveFilters() {
   if (state.category) {
     const selectedCategory = state.categories.find((category) => category.key === state.category);
     activeFilters.push(`Category: ${selectedCategory?.name ?? state.category}`);
+  }
+
+  if (state.store) {
+    const storeLabel = elements.storeFilter?.querySelector(`option[value="${CSS.escape(state.store)}"]`)?.textContent;
+    activeFilters.push(`Store: ${storeLabel ?? state.store}`);
   }
 
   if (state.favoritesOnly) {
@@ -954,6 +987,7 @@ function renderProducts(products) {
       const matchLabel = Number.isFinite(product.initialPriceSek) ? 'Matched new price' : 'Match pending';
       const rowClass = newProduct ? 'new-product-row' : '';
       const newBadge = newProduct ? '<span class="deal-tag new">New</span>' : '';
+      const storeBadge = product.sourceLabel ? `<span class="store-badge">${escapeHtml(product.sourceLabel)}</span>` : '';
 
       return `
         <tr class="${rowClass}">
@@ -963,6 +997,7 @@ function renderProducts(products) {
             </div>
             <div class="meta-row">
               ${newBadge}
+              ${storeBadge}
               <span class="${dealClass}">${escapeHtml(dealLabel)}</span>
               <span class="meta">${escapeHtml(matchLabel)}</span>
             </div>
@@ -1042,6 +1077,7 @@ function renderNotice(status, products) {
 function applyCurrentFilterState() {
   state.search = elements.searchInput.value.trim();
   state.category = elements.categoryFilter.value;
+  state.store = elements.storeFilter?.value ?? '';
   state.favoritesOnly = elements.favoritesOnly.checked;
   state.discountedOnly = elements.discountedOnly.checked;
   state.newOnly = elements.newOnly.checked;
@@ -1055,6 +1091,7 @@ function applyCurrentFilterState() {
 function resetFilters() {
   state.search = '';
   state.category = '';
+  state.store = '';
   state.favoritesOnly = false;
   state.discountedOnly = false;
   state.newOnly = false;
@@ -1064,6 +1101,7 @@ function resetFilters() {
 
   elements.searchInput.value = '';
   elements.categoryFilter.value = '';
+  if (elements.storeFilter) elements.storeFilter.value = '';
   elements.favoritesOnly.checked = false;
   elements.discountedOnly.checked = false;
   elements.newOnly.checked = false;
@@ -1075,11 +1113,12 @@ function resetFilters() {
 }
 
 async function loadDashboard() {
-  const [status, categories, preferences, sources] = await Promise.all([
+  const [status, categories, preferences, sources, outletSources] = await Promise.all([
     fetchJson('/api/status'),
     fetchJson('/api/outlet-categories'),
     fetchJson('/api/preferences'),
-    fetchJson('/api/sources')
+    fetchJson('/api/sources'),
+    fetchJson('/api/outlet-sources')
   ]);
 
   state.latestRunStartedAt = status.lastRunSummary?.startedAt ?? status.lastRunStartedAt ?? null;
@@ -1100,6 +1139,7 @@ async function loadDashboard() {
   renderStats(status, products, categories);
   renderSources(sources, status.isRunning, status.scanProgress?.currentSourceId);
   renderCategoryFilter(categories);
+  renderStoreFilter(outletSources ?? []);
   renderActiveFilters();
   renderScheduler(status.scheduler);
   renderFavoriteChips();
@@ -1150,6 +1190,7 @@ function updateFilters({ debounce = false } = {}) {
 
 elements.searchInput.addEventListener('input', () => updateFilters({ debounce: true }));
 elements.categoryFilter.addEventListener('change', () => updateFilters());
+elements.storeFilter?.addEventListener('change', () => updateFilters());
 elements.favoritesOnly.addEventListener('change', () => updateFilters());
 elements.discountedOnly.addEventListener('change', () => updateFilters());
 elements.newOnly.addEventListener('change', () => updateFilters());
