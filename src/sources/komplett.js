@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { load } from 'cheerio';
+import { ApifyClient } from 'apify-client';
 
 import {
   absoluteUrl,
@@ -456,45 +457,81 @@ function mapKomplettCategoryProduct(product, source, refPriceCache, now) {
  *
  * Much faster than the sitemap approach:
  *  - Each page is ~400 KB and contains 24 products with full price/stock data embedded as JSON.
- *  - No large sitemap download.
- *  - Reference prices (originalProductPrice) are lazily fetched from individual product pages
- *    and cached in sourceState so they're only fetched once per product.
+/**
+ * The pageFunction executed inside Apify's cheerio-scraper actor.
+ * It runs on Apify's infrastructure (bypasses Railway IP block) and extracts
+ * the embedded products JSON array from each Komplett category page HTML.
+ *
+ * Each product in the array is saved as a separate dataset item, so the actor
+ * output is a flat list of all products across all fetched pages.
  */
-export async function collectFromKomplettCategory({ source, fetcher, sourceState, now }) {
-  const maxPages = Number.isFinite(source.maxPages) ? source.maxPages : 5;
+const CHEERIO_PAGE_FUNCTION = /* js */ `
+async function pageFunction(context) {
+  const html = context.$.html();
+  const idx = html.indexOf('"products":[');
+  if (idx === -1) return [];
+  const start = idx + '"products":'.length;
+  let depth = 0, end = start;
+  for (let i = start; i < html.length && i < start + 600000; i++) {
+    if (html[i] === '[') depth++;
+    else if (html[i] === ']') { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  try { return JSON.parse(html.slice(start, end)); } catch { return []; }
+}
+`;
+
+/**
+ * Collect Komplett B-grade products via Apify's cheerio-scraper actor.
+ *
+ * The actor runs on Apify's infrastructure (not Railway), which sidesteps
+ * Komplett's datacenter IP blocks. It uses Apify's rotating proxy internally.
+ * Each category page (24 products/page) is fetched in parallel by the actor;
+ * the products JSON embedded in the page HTML is extracted and returned as
+ * flat dataset items.
+ *
+ * Reference prices are lazily fetched from individual product pages and cached
+ * in sourceState so they are only fetched once per product.
+ */
+export async function collectFromKomplettCategory({ source, fetcher, sourceState, now, _ApifyClient }) {
+  const maxPages = Number.isFinite(source.maxPages) ? source.maxPages : 10;
   const categoryUrl = source.categoryUrl ?? 'https://www.komplett.se/category/10066/demovaror';
-  const refPriceLookupPerScan = Number.isFinite(source.refPriceLookupPerScan) ? source.refPriceLookupPerScan : 15;
+  const refPriceLookupPerScan = Number.isFinite(source.refPriceLookupPerScan) ? source.refPriceLookupPerScan : 20;
+
+  const token = _ApifyClient
+    ? 'stub'
+    : (process.env[source.apiTokenEnvVar ?? 'APIFY_TOKEN']?.trim() ?? process.env.APIFY_TOKEN?.trim() ?? '');
+  if (!token) throw new Error(`No Apify token configured for ${source.label ?? source.id}.`);
 
   const refPriceCache = sourceState.refPriceCache ?? (sourceState.refPriceCache = {});
   const pageStates = sourceState.pageStates ?? (sourceState.pageStates = {});
 
-  // --- Step 1: collect product list from category pages ---
-  const allProducts = [];
-  const seenMaterialNumbers = new Set();
+  const ClientClass = _ApifyClient ?? ApifyClient;
 
-  for (let page = 0; page < maxPages; page++) {
-    const url = page === 0 ? categoryUrl : `${categoryUrl}?page=${page}`;
-    const pageState = pageStates[url] ?? (pageStates[url] = {});
-
-    const result = await fetcher.fetchText(source, pageState, url, {
-      headers: PAGE_HEADERS,
-      skipRobotsCheck: true,
-    });
-
-    const products = extractProductsFromCategoryHtml(result.body ?? '');
-    let hasNew = false;
-
-    for (const p of products) {
-      if (p.materialNumber && !seenMaterialNumbers.has(p.materialNumber)) {
-        seenMaterialNumbers.add(p.materialNumber);
-        allProducts.push(p);
-        hasNew = true;
-      }
-    }
-
-    if (products.length === 0 || !hasNew) break;
+  // --- Step 1: run cheerio-scraper on all category pages ---
+  const startUrls = [];
+  for (let i = 0; i < maxPages; i++) {
+    startUrls.push({ url: i === 0 ? categoryUrl : `${categoryUrl}?page=${i}` });
   }
 
+  const client = new ClientClass({ token });
+  const run = await client.actor('apify/cheerio-scraper').call({
+    startUrls,
+    pageFunction: CHEERIO_PAGE_FUNCTION,
+    proxyConfiguration: { useApifyProxy: true },
+    maxRequestsPerCrawl: maxPages + 2,
+  }, { timeoutSecs: Math.floor((source.actorTimeoutMs ?? 300_000) / 1000) });
+
+  const { items } = await client.dataset(run.defaultDatasetId).listItems();
+
+  // Deduplicate by materialNumber across all pages
+  const productMap = new Map();
+  for (const item of items) {
+    if (item.materialNumber && !productMap.has(item.materialNumber)) {
+      productMap.set(item.materialNumber, item);
+    }
+  }
+
+  const allProducts = [...productMap.values()];
   sourceState.lastDiscoveryCount = allProducts.length;
 
   // --- Step 2: lazily fetch reference prices for unknown products ---
@@ -509,11 +546,10 @@ export async function collectFromKomplettCategory({ source, fetcher, sourceState
       const result = await fetcher.fetchText(source, productPageState, productUrl, {
         headers: PAGE_HEADERS,
         skipRobotsCheck: true,
+        timeoutMs: 25_000,
       });
-
       const refData = result.body ? extractRefPriceFromProductHtml(result.body) : null;
-      refPriceCache[product.materialNumber] = refData ?? { originalProductPrice: null, originalMaterialNumber: null };
-      refPriceCache[product.materialNumber].fetchedAt = now;
+      refPriceCache[product.materialNumber] = { ...(refData ?? {}), fetchedAt: now };
     } catch {
       refPriceCache[product.materialNumber] = { originalProductPrice: null, originalMaterialNumber: null, fetchedAt: now };
     }

@@ -86,12 +86,28 @@ test('collects Komplett outlet items with reference price from embedded JSON', a
 });
 
 // --- komplett-category tests ---
+// The category scraper accepts _ApifyClient for injection in tests.
 
-const categoryHtml = `<!DOCTYPE html><html><head></head><body>
-<script>
-window.__catalog__ = {"products":[{"storeId":"312","materialNumber":"1334755","manufacturerPartNumber":"test","name":"ASUS NUC 15 PRO Slim U7 255H -B-Grade","description":"Mini-PC","sticker":{},"url":"/product/1334755/demovaror/datorutrustning/demo-ovrigt/asus-nuc-15-pro-slim-u7-255h-b-grade","stock":{"availabilityStatus":"Stocked","availabilityQuantity":"1","stockIconColor":"green","availabilityText":"1 st i lager"},"price":{"listPrice":"6 383:-","listPriceNumber":6383,"discountNumber":0},"variantGroups":[],"reviewRating":{},"energyLogo":{},"images":[],"productImages":[{"url":"product-media/b2c/en-us","altText":"","fileName":"1334755.jpg","width":1200,"height":1200}],"productBoxVisibility":{}}]};
-</script>
-</body></html>`;
+import { collectFromKomplettCategory } from '../src/sources/komplett.js';
+
+// Raw product data as returned by the cheerio-scraper actor.
+const actorProduct = {
+  storeId: '312',
+  materialNumber: '1334755',
+  manufacturerPartNumber: 'test',
+  name: 'ASUS NUC 15 PRO Slim U7 255H -B-Grade',
+  description: 'Mini-PC',
+  sticker: {},
+  url: '/product/1334755/demovaror/datorutrustning/demo-ovrigt/asus-nuc-15-pro-slim-u7-255h-b-grade',
+  stock: { availabilityStatus: 'Stocked', availabilityQuantity: '1', stockIconColor: 'green', availabilityText: '1 st i lager' },
+  price: { listPrice: '6 383:-', listPriceNumber: 6383, discountNumber: 0 },
+  variantGroups: [],
+  reviewRating: {},
+  energyLogo: {},
+  images: [],
+  productImages: [{ url: 'product-media/b2c/en-us', altText: '', fileName: '1334755.jpg', width: 1200, height: 1200 }],
+  productBoxVisibility: {},
+};
 
 const categoryProductHtml = `
   <html><body>
@@ -100,41 +116,60 @@ const categoryProductHtml = `
   </body></html>
 `;
 
-test('komplett-category: collects products from category HTML and fetches reference price', async () => {
-  const categoryPageUrl = 'https://www.komplett.se/category/10066/demovaror';
-  const productUrl = 'https://www.komplett.se/product/1334755/demovaror/datorutrustning/demo-ovrigt/asus-nuc-15-pro-slim-u7-255h-b-grade';
-
-  const fetcher = {
-    async fetchText(_source, _state, url) {
-      if (url === categoryPageUrl) return { notModified: false, body: categoryHtml };
-      if (url === productUrl) return { notModified: false, body: categoryProductHtml };
-      return { notModified: false, body: '' };
+/** Build a minimal ApifyClient stub that returns `items` from the actor run. */
+function makeApifyStub(items) {
+  return class StubApifyClient {
+    constructor() {}
+    actor() {
+      return { call: async () => ({ defaultDatasetId: 'stub-dataset' }) };
+    }
+    dataset() {
+      return { listItems: async () => ({ items }) };
     }
   };
+}
 
-  const observations = await collectSource({
+function makeSourceOpts({ sourceState, fetcher, now = '2026-04-18T12:00:00.000Z', _ApifyClient }) {
+  return {
     source: {
       id: 'komplett-outlet-electronics',
       type: 'komplett-category',
       label: 'Komplett B-grade',
       condition: 'outlet',
-      categoryUrl: categoryPageUrl,
+      categoryUrl: 'https://www.komplett.se/category/10066/demovaror',
       maxPages: 1,
       refPriceLookupPerScan: 5,
       shippingEstimateSek: 0,
       feesEstimateSek: 0,
     },
     fetcher,
+    sourceState,
+    now,
+    _ApifyClient,
+  };
+}
+
+test('komplett-category: collects products from actor results and fetches reference price', async () => {
+  const productUrl = 'https://www.komplett.se/product/1334755/demovaror/datorutrustning/demo-ovrigt/asus-nuc-15-pro-slim-u7-255h-b-grade';
+
+  const fetcher = {
+    async fetchText(_source, _state, url) {
+      if (url === productUrl) return { notModified: false, body: categoryProductHtml };
+      return { notModified: false, body: '' };
+    }
+  };
+
+  const observations = await collectFromKomplettCategory(makeSourceOpts({
     sourceState: {},
-    now: '2026-04-18T12:00:00.000Z',
-  });
+    fetcher,
+    _ApifyClient: makeApifyStub([actorProduct]),
+  }));
 
   assert.equal(observations.length, 1);
   assert.equal(observations[0].priceSek, 6383);
   assert.equal(observations[0].title, 'ASUS NUC 15 PRO Slim U7 255H -B-Grade');
   assert.equal(observations[0].externalId, '1334755');
   assert.equal(observations[0].availability, '1 st i lager');
-  // Reference price comes from the product page
   assert.equal(observations[0].marketValueSek, 9390);
   assert.equal(observations[0].referencePriceSek, 9390);
   assert.equal(observations[0].referenceUrl, 'https://www.komplett.se/product/1334700/');
@@ -142,13 +177,12 @@ test('komplett-category: collects products from category HTML and fetches refere
 });
 
 test('komplett-category: uses cached reference price on second scan', async () => {
-  const categoryPageUrl = 'https://www.komplett.se/category/10066/demovaror';
+  const productUrl = 'https://www.komplett.se/product/1334755/demovaror/datorutrustning/demo-ovrigt/asus-nuc-15-pro-slim-u7-255h-b-grade';
   let productPageFetchCount = 0;
 
   const fetcher = {
     async fetchText(_source, _state, url) {
-      if (url === categoryPageUrl) return { notModified: false, body: categoryHtml };
-      if (url.includes('/product/1334755/')) {
+      if (url === productUrl) {
         productPageFetchCount++;
         return { notModified: false, body: categoryProductHtml };
       }
@@ -157,46 +191,15 @@ test('komplett-category: uses cached reference price on second scan', async () =
   };
 
   const sourceState = {};
+  const stub = makeApifyStub([actorProduct]);
 
-  // First scan — should fetch the product page
-  await collectSource({
-    source: {
-      id: 'komplett-outlet-electronics',
-      type: 'komplett-category',
-      label: 'Komplett B-grade',
-      condition: 'outlet',
-      categoryUrl: categoryPageUrl,
-      maxPages: 1,
-      refPriceLookupPerScan: 5,
-      shippingEstimateSek: 0,
-      feesEstimateSek: 0,
-    },
-    fetcher,
-    sourceState,
-    now: '2026-04-18T12:00:00.000Z',
-  });
-
+  await collectFromKomplettCategory(makeSourceOpts({ sourceState, fetcher, _ApifyClient: stub }));
   const fetchesAfterFirstScan = productPageFetchCount;
 
-  // Second scan — reference price already cached, should NOT re-fetch product page
-  await collectSource({
-    source: {
-      id: 'komplett-outlet-electronics',
-      type: 'komplett-category',
-      label: 'Komplett B-grade',
-      condition: 'outlet',
-      categoryUrl: categoryPageUrl,
-      maxPages: 1,
-      refPriceLookupPerScan: 5,
-      shippingEstimateSek: 0,
-      feesEstimateSek: 0,
-    },
-    fetcher,
-    sourceState, // same state — cache is preserved
-    now: '2026-04-18T15:00:00.000Z',
-  });
+  await collectFromKomplettCategory(makeSourceOpts({ sourceState, fetcher, now: '2026-04-18T15:00:00.000Z', _ApifyClient: stub }));
 
   assert.equal(fetchesAfterFirstScan, 1, 'product page fetched exactly once on first scan');
   assert.equal(productPageFetchCount, 1, 'product page not re-fetched on second scan');
 });
+
 
