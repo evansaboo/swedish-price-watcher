@@ -104,130 +104,146 @@ async function triggerScan(trigger, options = {}) {
   }
   await store.save();
 
+  // Aggregate notification summaries from per-source notifications
+  const aggregatedNotif = {
+    sent: 0, skipped: 0, failed: 0, errors: [],
+    amazingDeals: { sent: 0, skipped: 0, failed: 0, errors: [] },
+    newListings: { sent: 0, skipped: 0, failed: 0, messages: 0, errors: [] },
+    favoriteCategoryEvents: { sent: 0, skipped: 0, failed: 0, newListingEvents: 0, priceDropEvents: 0, errors: [] }
+  };
+
+  function mergeNotif(agg, n) {
+    if (!n) return;
+    agg.sent += n.sent ?? 0;
+    agg.skipped += n.skipped ?? 0;
+    agg.failed += n.failed ?? 0;
+    agg.errors.push(...(n.errors ?? []));
+    if (n.messages != null) agg.messages = (agg.messages ?? 0) + n.messages;
+    if (n.newListingEvents != null) agg.newListingEvents = (agg.newListingEvents ?? 0) + n.newListingEvents;
+    if (n.priceDropEvents != null) agg.priceDropEvents = (agg.priceDropEvents ?? 0) + n.priceDropEvents;
+  }
+
   try {
-    // Run all sources concurrently — each source's collection is pure I/O so
-    // parallelism is safe.  Each promise always resolves (never rejects) so we
-    // get a result record for every source regardless of outcome.
-    const collectionResults = await Promise.all(
+    // Each source runs concurrently (I/O phase).  As each one finishes, its results
+    // are immediately processed via a serialized mutex chain — so state mutations,
+    // Discord notifications, and store saves happen one source at a time.
+    // This means the products table and Discord are updated incrementally as each
+    // source completes, without waiting for all sources to finish.
+    let processingChain = Promise.resolve();
+
+    await Promise.all(
       sourcesToRun.map(async (source) => {
         const sourceState = state.sourceStates[source.id] ?? {};
         state.sourceStates[source.id] = sourceState;
         sourceState.lastAttemptAt = startedAt;
 
+        // ── I/O phase: runs concurrently with other sources ─────────────────
+        let collectResult;
         try {
           if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
             scanState.sourceProgress[source.id] = { status: 'cooling-down' };
-            return { source, sourceState, status: 'cooling-down', disabledUntil: sourceState.disabledUntil };
+            collectResult = { status: 'cooling-down', disabledUntil: sourceState.disabledUntil };
+          } else {
+            scanState.sourceProgress[source.id] = { status: 'running' };
+            const collected = await collectSource({ source, fetcher, sourceState, now: startedAt });
+            scanState.sourceProgress[source.id] = { status: 'done', count: collected.length };
+            collectResult = { status: 'ok', collected };
           }
-
-          scanState.sourceProgress[source.id] = { status: 'running' };
-          const collected = await collectSource({ source, fetcher, sourceState, now: startedAt });
-          scanState.sourceProgress[source.id] = { status: 'done', count: collected.length };
-          return { source, sourceState, status: 'ok', collected };
         } catch (error) {
           scanState.sourceProgress[source.id] = { status: 'error', message: error.message };
-          return { source, sourceState, status: 'error', error };
+          collectResult = { status: 'error', error };
         } finally {
-          // Increment as each source finishes so the UI updates incrementally
           scanState.completedSources += 1;
         }
+
+        // ── Processing phase: serialized via mutex chain ─────────────────────
+        // Setting processingChain is synchronous (no await between read + write),
+        // so there is no race when multiple workers reach this line concurrently.
+        processingChain = processingChain.then(async () => {
+          if (scanState.abortController?.signal.aborted) {
+            sourceResults.push({ sourceId: source.id, status: 'cancelled' });
+            return;
+          }
+
+          if (collectResult.status === 'cooling-down') {
+            sourceResults.push({ sourceId: source.id, status: 'cooling-down', disabledUntil: collectResult.disabledUntil });
+            return;
+          }
+
+          if (collectResult.status === 'error') {
+            const { error } = collectResult;
+            sourceState.lastError = error.message;
+            if (error.disableHours) {
+              sourceState.disabledUntil = new Date(Date.now() + error.disableHours * 60 * 60 * 1000).toISOString();
+            }
+            sourceResults.push({ sourceId: source.id, status: 'error', message: error.message, disabledUntil: sourceState.disabledUntil ?? null });
+            await store.save();
+            return;
+          }
+
+          const { collected } = collectResult;
+          observations += collected.length;
+          const mergeResult = mergeObservations(state, collected, config.maxHistoryEntries);
+          newItems.push(...mergeResult.newItems);
+          priceDrops.push(...mergeResult.priceDrops);
+
+          if (collected.length > 0) {
+            const seenKeys = new Set(collected.map((o) => buildListingKey(o.sourceId, o.externalId)));
+            let pruned = 0;
+            for (const key of Object.keys(state.items)) {
+              if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
+                delete state.items[key];
+                pruned += 1;
+              }
+            }
+            if (pruned > 0) console.log(`[${source.id}] Pruned ${pruned} stale item(s).`);
+          }
+
+          sourceState.lastSuccessAt = startedAt;
+          sourceState.lastError = null;
+          sourceState.lastCount = collected.length;
+          delete sourceState.disabledUntil;
+
+          state.deals = computeDeals(state, config.thresholds);
+
+          // Send Discord notifications immediately for this source's results.
+          const sourceNotif = await notifier.notifyScan({
+            deals: state.deals,
+            newItems: mergeResult.newItems,
+            priceDrops: mergeResult.priceDrops,
+            sources: config.sources,
+            state
+          });
+          mergeNotif(aggregatedNotif, sourceNotif);
+          mergeNotif(aggregatedNotif.amazingDeals, sourceNotif.amazingDeals);
+          mergeNotif(aggregatedNotif.newListings, sourceNotif.newListings);
+          mergeNotif(aggregatedNotif.favoriteCategoryEvents, sourceNotif.favoriteCategoryEvents);
+
+          sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
+
+          // Save state so the products API returns fresh data before other sources finish.
+          await store.save();
+        });
+
+        // Wait for this source's turn in the processing queue before resolving.
+        await processingChain;
       })
     );
 
-    // If the scan was cancelled while sources were running, discard results and return early.
-    if (scanState.abortController.signal.aborted) {
-      const completedAt = new Date().toISOString();
-      state.stats.lastRunCompletedAt = completedAt;
-      state.stats.lastRunSummary = {
-        trigger,
-        startedAt,
-        completedAt,
-        cancelled: true,
-        observations: 0,
-        newListings: 0,
-        priceDrops: 0,
-        trackedItems: Object.keys(state.items).length,
-        deals: state.deals?.length ?? 0,
-        amazingDeals: state.deals?.filter((d) => d.amazingDeal).length ?? 0,
-        sourceResults: collectionResults.map((r) => ({
-          sourceId: r.source.id,
-          status: 'cancelled'
-        }))
-      };
-      await store.save();
-      return state.stats.lastRunSummary;
-    }
-
-    // Process results sequentially (all state mutations happen after all I/O)
-    for (const result of collectionResults) {
-      const { source, sourceState } = result;
-
-      if (result.status === 'cooling-down') {
-        sourceResults.push({ sourceId: source.id, status: 'cooling-down', disabledUntil: result.disabledUntil });
-        continue;
-      }
-
-      if (result.status === 'error') {
-        const { error } = result;
-        sourceState.lastError = error.message;
-        if (error.disableHours) {
-          sourceState.disabledUntil = new Date(Date.now() + error.disableHours * 60 * 60 * 1000).toISOString();
-        }
-        sourceResults.push({ sourceId: source.id, status: 'error', message: error.message, disabledUntil: sourceState.disabledUntil ?? null });
-        continue;
-      }
-
-      const { collected } = result;
-      observations += collected.length;
-      const mergeResult = mergeObservations(state, collected, config.maxHistoryEntries);
-      newItems.push(...mergeResult.newItems);
-      priceDrops.push(...mergeResult.priceDrops);
-
-      // Prune stale items: remove items from this source not seen in this scan
-      if (collected.length > 0) {
-        const seenKeys = new Set(collected.map((o) => buildListingKey(o.sourceId, o.externalId)));
-        let pruned = 0;
-        for (const key of Object.keys(state.items)) {
-          if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
-            delete state.items[key];
-            pruned += 1;
-          }
-        }
-        if (pruned > 0) {
-          console.log(`[${source.id}] Pruned ${pruned} stale item(s) no longer listed.`);
-        }
-      }
-      sourceState.lastSuccessAt = startedAt;
-      sourceState.lastError = null;
-      sourceState.lastCount = collected.length;
-      delete sourceState.disabledUntil;
-
-      sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
-    }
-
-    state.deals = computeDeals(state, config.thresholds);
-
-    const notificationSummary = await notifier.notifyScan({
-      deals: state.deals,
-      newItems,
-      priceDrops,
-      sources: config.sources,
-      state
-    });
     const completedAt = new Date().toISOString();
-
     state.stats.lastRunCompletedAt = completedAt;
     state.stats.lastRunSummary = {
       trigger,
       startedAt,
       completedAt,
+      cancelled: scanState.abortController?.signal.aborted ?? false,
       observations,
       newListings: newItems.length,
       priceDrops: priceDrops.length,
       trackedItems: Object.keys(state.items).length,
       deals: state.deals.length,
       amazingDeals: state.deals.filter((deal) => deal.amazingDeal).length,
-      notificationSummary,
+      notificationSummary: aggregatedNotif,
       sourceResults
     };
 

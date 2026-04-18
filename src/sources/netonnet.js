@@ -218,41 +218,47 @@ export async function collectFromNetonnet({ source, sourceState, fetcher, now })
   // The outlet list page omits lowestHistoricalPrice for most items.
   // Fetch individual product pages to resolve missing reference prices,
   // caching results in sourceState so subsequent scans avoid re-fetching.
+  // Batch parallel fetches (5 at a time) to reduce total wall-clock time.
   const refCache = sourceState.referencePriceCache ?? (sourceState.referencePriceCache = {});
   const maxLookups = source.maxReferenceLookups ?? 40;
-  let lookupsDone = 0;
+  const REF_BATCH_SIZE = 5;
+  const REF_BATCH_DELAY_MS = 500; // pause between batches to stay polite
 
+  // Apply cache hits first
   for (const obs of observations) {
-    if (obs.referencePriceSek != null) continue; // already have it from list page
+    if (obs.referencePriceSek != null) continue;
     const articleNo = obs.externalId;
-    if (!articleNo) continue;
-
-    if (refCache[articleNo] != null) {
-      // Use cached value from a previous scan
+    if (articleNo && refCache[articleNo] != null) {
       obs.referencePriceSek = refCache[articleNo];
       obs.marketValueSek = refCache[articleNo];
-      continue;
     }
+  }
 
-    if (lookupsDone >= maxLookups) continue; // cap requests per scan
+  // Collect items that still need a network lookup
+  const toLookup = observations
+    .filter((obs) => obs.referencePriceSek == null && obs.externalId && obs.url)
+    .slice(0, maxLookups);
 
-    try {
-      const result = await fetcher.fetchText(source, {}, obs.url, {
-        headers: PAGE_HEADERS,
-        skipRobotsCheck: true,
-        skipHostDelay: true,
-      });
-      const refPrice = parseReferencePrice(result.body ?? '');
-      if (refPrice != null && refPrice > 0) {
-        refCache[articleNo] = refPrice;
-        obs.referencePriceSek = refPrice;
-        obs.marketValueSek = refPrice;
+  for (let i = 0; i < toLookup.length; i += REF_BATCH_SIZE) {
+    const batch = toLookup.slice(i, i + REF_BATCH_SIZE);
+    await Promise.all(batch.map(async (obs) => {
+      try {
+        const result = await fetcher.fetchText(source, {}, obs.url, {
+          headers: PAGE_HEADERS,
+          skipRobotsCheck: true,
+          skipHostDelay: true,
+        });
+        const refPrice = parseReferencePrice(result.body ?? '');
+        if (refPrice != null && refPrice > 0) {
+          refCache[obs.externalId] = refPrice;
+          obs.referencePriceSek = refPrice;
+          obs.marketValueSek = refPrice;
+        }
+      } catch {
+        // Non-fatal — missing reference price is fine
       }
-    } catch {
-      // Non-fatal — missing reference price is fine
-    }
-    lookupsDone++;
-    await sleep(REF_DELAY_MS);
+    }));
+    if (i + REF_BATCH_SIZE < toLookup.length) await sleep(REF_BATCH_DELAY_MS);
   }
 
   return observations;

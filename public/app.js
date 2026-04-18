@@ -89,6 +89,7 @@ const elements = {
 let scanPollTimer = null;
 let filterApplyTimer = null;
 let latestProducts = [];
+let lastCompletedSources = 0;
 
 function formatSek(value) {
   return Number.isFinite(value) ? sekFormatter.format(Math.round(value)) : 'n/a';
@@ -1339,10 +1340,17 @@ async function pollScanStatus() {
   elements.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
 
   if (status.isRunning) {
+    // Refresh the products table whenever a source finishes (completedSources ticks up)
+    const currentCompleted = status.scanProgress?.completedSources ?? 0;
+    if (currentCompleted > lastCompletedSources) {
+      lastCompletedSources = currentCompleted;
+      loadDashboard().catch(() => {});
+    }
     scheduleScanPoll();
     return;
   }
 
+  lastCompletedSources = 0;
   await loadDashboard();
 }
 
