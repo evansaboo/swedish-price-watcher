@@ -73,7 +73,8 @@ const elements = {
   schedulerWindowStart: document.querySelector('#scheduler-window-start'),
   schedulerWindowEnd: document.querySelector('#scheduler-window-end'),
   saveSchedulerButton: document.querySelector('#save-scheduler-button'),
-  schedulerStatus: document.querySelector('#scheduler-status'),
+  schedulerNextRun: document.querySelector('#scheduler-next-run'),
+  scannerToggles: document.querySelector('#scanner-toggles'),
   productsCount: document.querySelector('#products-count'),
   productsTable: document.querySelector('#products-table'),
   refreshButton: document.querySelector('#refresh-button'),
@@ -617,7 +618,49 @@ function renderSources(sources, isScanning, currentSourceId) {
   }
 }
 
-async function triggerSourceScan(sourceIds = null) {
+function renderScannerToggles(sources) {
+  if (!elements.scannerToggles || !sources?.length) return;
+
+  elements.scannerToggles.innerHTML = sources
+    .map((source) => {
+      const checked = source.enabled ? 'checked' : '';
+      return `
+        <label class="scanner-toggle-item" title="${escapeHtml(source.label)}">
+          <input type="checkbox" class="scanner-toggle-cb" data-source-id="${escapeHtml(source.id)}" ${checked} />
+          <span class="scanner-toggle-label">
+            <span class="scanner-toggle-name">${escapeHtml(source.label)}</span>
+            <span class="scanner-toggle-meta">${source.lastCount != null ? source.lastCount + ' items' : source.enabled ? 'No data yet' : 'Disabled'}</span>
+          </span>
+        </label>
+      `;
+    })
+    .join('');
+
+  for (const cb of elements.scannerToggles.querySelectorAll('.scanner-toggle-cb')) {
+    cb.addEventListener('change', async () => {
+      const sourceId = cb.getAttribute('data-source-id');
+      const enabled = cb.checked;
+      cb.disabled = true;
+      try {
+        await fetch(`/api/sources/${encodeURIComponent(sourceId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        });
+        const sources = await fetchJson('/api/sources');
+        renderSources(sources, false, null);
+        renderScannerToggles(sources);
+      } catch (err) {
+        cb.checked = !enabled;
+        console.error('Failed to toggle source', err);
+      } finally {
+        cb.disabled = false;
+      }
+    });
+  }
+}
+
+
   try {
     const body = sourceIds ? { sourceIds } : {};
     const response = await fetch('/api/run', {
@@ -733,24 +776,31 @@ function renderActiveFilters() {
 }
 
 function renderSchedulerStatus() {
+  if (!elements.schedulerNextRun) return;
+
   if (
     elements.schedulerEnabled.disabled ||
-    elements.schedulerInterval.disabled ||
-    elements.schedulerWindowEnabled.disabled ||
-    elements.schedulerWindowStart.disabled ||
-    elements.schedulerWindowEnd.disabled
+    elements.schedulerInterval.disabled
   ) {
-    elements.schedulerStatus.textContent = 'Unavailable';
+    elements.schedulerNextRun.innerHTML = '<span class="scheduler-next-run-unavailable">Scheduler unavailable</span>';
     return;
   }
 
-  const nextRunAt = state.schedulerNextRunAt ? formatDate(state.schedulerNextRunAt) : 'n/a';
-  const scheduleStatus = state.schedulerEnabled ? `Next run: ${nextRunAt}` : 'Paused';
-  const windowStatus = state.schedulerWindowEnabled
-    ? `${state.schedulerWindowStart}-${state.schedulerWindowEnd} Sweden (${state.schedulerIsInActiveWindow ? 'inside window' : 'outside window'})`
-    : 'All day (Sweden time)';
-  const baseStatus = `${scheduleStatus} · ${windowStatus}`;
-  elements.schedulerStatus.textContent = state.schedulerFormDirty ? `${baseStatus} · Unsaved changes` : baseStatus;
+  if (!state.schedulerEnabled) {
+    elements.schedulerNextRun.innerHTML = '<span class="scheduler-next-run-paused">⏸ Paused</span>';
+    return;
+  }
+
+  const nextRunAt = state.schedulerNextRunAt ? formatDate(state.schedulerNextRunAt) : 'Not scheduled';
+  const windowStr = state.schedulerWindowEnabled
+    ? `${state.schedulerWindowStart}–${state.schedulerWindowEnd} (${state.schedulerIsInActiveWindow ? '✅ in window' : '⏳ outside window'})`
+    : 'All day';
+  const dirtyBadge = state.schedulerFormDirty ? ' <span class="scheduler-dirty-badge">Unsaved</span>' : '';
+
+  elements.schedulerNextRun.innerHTML =
+    `<span class="scheduler-next-run-label">Next scan</span>` +
+    `<span class="scheduler-next-run-time">${nextRunAt}${dirtyBadge}</span>` +
+    `<span class="scheduler-next-run-window">${windowStr}</span>`;
 }
 
 function syncSchedulerDirtyState() {
@@ -1138,6 +1188,7 @@ async function loadDashboard() {
   syncScanButton(status);
   renderStats(status, products, categories);
   renderSources(sources, status.isRunning, status.scanProgress?.currentSourceId);
+  renderScannerToggles(sources);
   renderCategoryFilter(categories);
   renderStoreFilter(outletSources ?? []);
   renderActiveFilters();

@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 
-import { firstFinite } from './lib/utils.js';
+import { firstFinite, isSourceEnabled } from './lib/utils.js';
 import { buildProductSummaries } from './services/dealEngine.js';
 
 const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -122,6 +122,9 @@ function describeSourceStatus(source, sourceState = {}) {
 
   return 'idle';
 }
+
+// Returns effective enabled state — runtime store override takes precedence over config file
+// (defined in src/lib/utils.js and imported above)
 
 function buildOutletProducts(state) {
   return Object.values(state.items)
@@ -387,7 +390,7 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
         trackedItems: Object.keys(state.items).length,
         deals: state.deals.length,
         amazingDeals: state.deals.filter((deal) => deal.amazingDeal).length,
-        enabledSources: config.sources.filter((source) => source.enabled).length,
+        enabledSources: config.sources.filter((source) => isSourceEnabled(source, state)).length,
         healthySources: sourceStatuses.filter((status) => status === 'healthy').length,
         blockedSources: sourceStatuses.filter((status) => status === 'error' || status === 'cooling-down').length,
         outletItems: state.deals.filter((deal) => deal.condition === 'outlet').length,
@@ -500,13 +503,43 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       id: source.id,
       label: source.label,
       type: source.type,
-      enabled: source.enabled,
-      status: describeSourceStatus(source, state.sourceStates[source.id]),
+      enabled: isSourceEnabled(source, state),
+      status: describeSourceStatus({ ...source, enabled: isSourceEnabled(source, state) }, state.sourceStates[source.id]),
       lastSuccessAt: state.sourceStates[source.id]?.lastSuccessAt ?? null,
       lastCount: state.sourceStates[source.id]?.lastCount ?? null,
       lastError: state.sourceStates[source.id]?.lastError ?? null,
       disabledUntil: state.sourceStates[source.id]?.disabledUntil ?? null
     }));
+  });
+
+  app.patch('/api/sources/:id', async (request, reply) => {
+    const sourceId = request.params.id;
+    const source = config.sources.find((s) => s.id === sourceId);
+
+    if (!source) {
+      reply.code(404);
+      return { message: `Source not found: ${sourceId}` };
+    }
+
+    if (typeof request.body?.enabled !== 'boolean') {
+      reply.code(400);
+      return { message: 'Provide { enabled: true|false }' };
+    }
+
+    const state = store.getState();
+    state.preferences = state.preferences ?? {};
+    state.preferences.sourceOverrides = state.preferences.sourceOverrides ?? {};
+    state.preferences.sourceOverrides[sourceId] = request.body.enabled;
+
+    if (typeof store.save === 'function') {
+      await store.save();
+    }
+
+    return {
+      id: sourceId,
+      label: source.label,
+      enabled: request.body.enabled
+    };
   });
 
   app.post('/api/run', async (request, reply) => {
@@ -531,7 +564,7 @@ export async function buildApp({ config, store, scanState, triggerScan, schedule
       }
     }
 
-    if (!config.sources.some((source) => source.enabled && (!sourceIds || sourceIds.includes(source.id)))) {
+    if (!config.sources.some((source) => isSourceEnabled(source, store.getState()) && (!sourceIds || sourceIds.includes(source.id)))) {
       reply.code(400);
       return {
         ok: false,

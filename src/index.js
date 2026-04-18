@@ -2,6 +2,7 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PoliteFetcher } from './lib/fetcher.js';
 import { ApifyStore, JsonStore, reconcileStateWithSources } from './lib/store.js';
+import { isSourceEnabled } from './lib/utils.js';
 import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
@@ -67,7 +68,10 @@ async function triggerScan(trigger, options = {}) {
     : null;
 
   const sourcesToRun = config.sources.filter(
-    (entry) => entry.enabled && (!requestedSourceIds || requestedSourceIds.has(entry.id))
+    (entry) => {
+      const effectiveEnabled = isSourceEnabled(entry, store.getState());
+      return effectiveEnabled && (!requestedSourceIds || requestedSourceIds.has(entry.id));
+    }
   );
 
   if (!sourcesToRun.length) {

@@ -36,6 +36,11 @@ function normalizeState(rawState = {}) {
   state.preferences.favoriteCategories = Array.isArray(state.preferences.favoriteCategories)
     ? state.preferences.favoriteCategories.map((category) => String(category).trim()).filter(Boolean)
     : [];
+  // sourceOverrides: { [sourceId]: { enabled: boolean } }
+  const rawOverrides = rawState.preferences?.sourceOverrides;
+  state.preferences.sourceOverrides = (rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides))
+    ? rawOverrides
+    : {};
   if (Object.prototype.hasOwnProperty.call(rawState.preferences ?? {}, 'scheduler')) {
     const schedulerEnabled = state.preferences.scheduler?.enabled;
     const schedulerIntervalMinutes = Number.parseInt(String(state.preferences.scheduler?.intervalMinutes ?? ''), 10);

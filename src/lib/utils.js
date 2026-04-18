@@ -130,3 +130,12 @@ export function parseIsoDate(value) {
   const parsed = Date.parse(value ?? '');
   return Number.isNaN(parsed) ? null : parsed;
 }
+
+// Returns effective enabled state — runtime store override takes precedence over config file
+export function isSourceEnabled(source, storeState) {
+  const overrides = storeState?.preferences?.sourceOverrides ?? {};
+  if (Object.prototype.hasOwnProperty.call(overrides, source.id)) {
+    return Boolean(overrides[source.id]);
+  }
+  return source.enabled;
+}
