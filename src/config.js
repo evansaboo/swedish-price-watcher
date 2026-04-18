@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-sitemap', 'apify-elgiganten', 'apify-komplett', 'webhallen-api', 'netonnet-outlet']);
+const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-category', 'komplett-sitemap', 'apify-elgiganten', 'apify-komplett', 'webhallen-api', 'netonnet-outlet']);
 const supportedNotificationModes = new Set(['amazing-deals', 'new-listings', 'favorite-events', 'none']);
 const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 
@@ -64,6 +64,9 @@ function sanitizeSource(rawSource) {
     matchReferenceExcludePaths: asStringArray(source.matchReferenceExcludePaths),
     categoryRoots: asStringArray(source.categoryRoots),
     maxItems: source.maxItems == null ? null : Number(source.maxItems),
+    maxPages: source.maxPages == null ? null : Number(source.maxPages),
+    categoryUrl: source.categoryUrl ?? null,
+    refPriceLookupPerScan: source.refPriceLookupPerScan == null ? null : Number(source.refPriceLookupPerScan),
     updatedSinceDays: source.updatedSinceDays == null ? null : Number(source.updatedSinceDays),
     notificationMode: normalizeNotificationMode(source.notificationMode),
     notificationBatchSize: parsePositiveInt(source.notificationBatchSize, 5),

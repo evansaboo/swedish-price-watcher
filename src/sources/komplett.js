@@ -357,6 +357,172 @@ function findReferenceCandidate(outletEntry, referenceIndex) {
   return fallbackMatch;
 }
 
+/**
+ * Extract the embedded `products` JSON array from a Komplett category page HTML.
+ * Komplett inlines the full product list (with prices, stock, images) as a JS
+ * variable — no separate API call needed.
+ */
+function extractProductsFromCategoryHtml(html) {
+  const idx = html.indexOf('"products":[');
+  if (idx === -1) return [];
+
+  const start = idx + '"products":'.length;
+  let depth = 0;
+  let end = start;
+
+  for (let i = start; i < html.length && i < start + 600_000; i++) {
+    if (html[i] === '[') depth++;
+    else if (html[i] === ']') {
+      depth--;
+      if (depth === 0) { end = i + 1; break; }
+    }
+  }
+
+  try {
+    return JSON.parse(html.slice(start, end));
+  } catch {
+    return [];
+  }
+}
+
+function extractRefPriceFromProductHtml(html) {
+  const attr =
+    html.match(/komplett-demo-condition-info[^>]+data='([^']+)'/i)?.[1] ??
+    html.match(/komplett-demo-condition-info[^>]+data="([^"]+)"/i)?.[1];
+
+  if (!attr) return null;
+
+  try {
+    const data = JSON.parse(attr.replace(/&#xA0;/g, ' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+    return {
+      originalProductPrice:
+        typeof data.originalProductPrice === 'number' && data.originalProductPrice > 0
+          ? Math.round(data.originalProductPrice)
+          : null,
+      originalMaterialNumber: data.originalMaterialNumber ? String(data.originalMaterialNumber).trim() : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mapKomplettCategoryProduct(product, source, refPriceCache, now) {
+  const url = `https://www.komplett.se${product.url}`;
+  const priceSek =
+    typeof product.price?.listPriceNumber === 'number' ? Math.round(product.price.listPriceNumber) : null;
+
+  if (!priceSek || !product.name) return null;
+
+  const cached = refPriceCache[product.materialNumber];
+  const originalProductPrice = cached?.originalProductPrice ?? null;
+  const originalMaterialNumber = cached?.originalMaterialNumber ?? null;
+
+  const imageFile = product.productImages?.[0];
+  const imageUrl = imageFile ? `https://www.komplett.se/${imageFile.url}/${imageFile.fileName}` : null;
+
+  const cleanIdentity = normalizeProductIdentity(product.name.replace(/\b-?\s*b-?grade\b/gi, ''));
+
+  return {
+    sourceId: source.id,
+    sourceLabel: source.label ?? source.id,
+    sourceType: source.type,
+    externalId: product.materialNumber,
+    productKey: cleanIdentity,
+    title: product.name.trim(),
+    url,
+    category: guessCategoryFromUrl(url),
+    condition: 'outlet',
+    priceSek,
+    marketValueSek: originalProductPrice ?? source.marketValueSek,
+    referencePriceSek: originalProductPrice ?? source.referencePriceSek,
+    referenceUrl: originalMaterialNumber ? `https://www.komplett.se/product/${originalMaterialNumber}/` : null,
+    referenceTitle: null,
+    referenceSourceLabel: originalProductPrice != null ? (source.label ?? source.id) : null,
+    referenceMatchType: originalProductPrice != null ? 'listing-reference' : null,
+    articleNumber: product.materialNumber,
+    resaleEstimateSek: source.resaleEstimateSek,
+    shippingEstimateSek: source.shippingEstimateSek,
+    feesEstimateSek: source.feesEstimateSek,
+    availability: product.stock?.availabilityText ?? product.stock?.availabilityStatus ?? 'unknown',
+    description: product.description ?? null,
+    imageUrl,
+    notes: source.notes ?? null,
+    seenAt: now,
+  };
+}
+
+/**
+ * Collect Komplett B-grade products by paging through the demovaror category HTML.
+ *
+ * Much faster than the sitemap approach:
+ *  - Each page is ~400 KB and contains 24 products with full price/stock data embedded as JSON.
+ *  - No large sitemap download.
+ *  - Reference prices (originalProductPrice) are lazily fetched from individual product pages
+ *    and cached in sourceState so they're only fetched once per product.
+ */
+export async function collectFromKomplettCategory({ source, fetcher, sourceState, now }) {
+  const maxPages = Number.isFinite(source.maxPages) ? source.maxPages : 5;
+  const categoryUrl = source.categoryUrl ?? 'https://www.komplett.se/category/10066/demovaror';
+  const refPriceLookupPerScan = Number.isFinite(source.refPriceLookupPerScan) ? source.refPriceLookupPerScan : 15;
+
+  const refPriceCache = sourceState.refPriceCache ?? (sourceState.refPriceCache = {});
+  const pageStates = sourceState.pageStates ?? (sourceState.pageStates = {});
+
+  // --- Step 1: collect product list from category pages ---
+  const allProducts = [];
+  const seenMaterialNumbers = new Set();
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = page === 0 ? categoryUrl : `${categoryUrl}?page=${page}`;
+    const pageState = pageStates[url] ?? (pageStates[url] = {});
+
+    const result = await fetcher.fetchText(source, pageState, url, {
+      headers: PAGE_HEADERS,
+      skipRobotsCheck: true,
+    });
+
+    const products = extractProductsFromCategoryHtml(result.body ?? '');
+    let hasNew = false;
+
+    for (const p of products) {
+      if (p.materialNumber && !seenMaterialNumbers.has(p.materialNumber)) {
+        seenMaterialNumbers.add(p.materialNumber);
+        allProducts.push(p);
+        hasNew = true;
+      }
+    }
+
+    if (products.length === 0 || !hasNew) break;
+  }
+
+  sourceState.lastDiscoveryCount = allProducts.length;
+
+  // --- Step 2: lazily fetch reference prices for unknown products ---
+  const needsRefPrice = allProducts.filter((p) => !refPriceCache[p.materialNumber]);
+  const toFetch = needsRefPrice.slice(0, refPriceLookupPerScan);
+
+  for (const product of toFetch) {
+    const productUrl = `https://www.komplett.se${product.url}`;
+    const productPageState = pageStates[productUrl] ?? (pageStates[productUrl] = {});
+
+    try {
+      const result = await fetcher.fetchText(source, productPageState, productUrl, {
+        headers: PAGE_HEADERS,
+        skipRobotsCheck: true,
+      });
+
+      const refData = result.body ? extractRefPriceFromProductHtml(result.body) : null;
+      refPriceCache[product.materialNumber] = refData ?? { originalProductPrice: null, originalMaterialNumber: null };
+      refPriceCache[product.materialNumber].fetchedAt = now;
+    } catch {
+      refPriceCache[product.materialNumber] = { originalProductPrice: null, originalMaterialNumber: null, fetchedAt: now };
+    }
+  }
+
+  // --- Step 3: build observations ---
+  return allProducts.map((p) => mapKomplettCategoryProduct(p, source, refPriceCache, now)).filter(Boolean);
+}
+
 export async function collectFromKomplettSitemap({ source, fetcher, sourceState, now }) {
   const maxItems = Number.isFinite(source.maxItems) ? source.maxItems : 50;
 

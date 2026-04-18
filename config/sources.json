@@ -68,51 +68,15 @@
     },
     {
       "id": "komplett-outlet-electronics",
-      "type": "komplett-sitemap",
+      "type": "komplett-category",
       "enabled": true,
       "label": "Komplett B-grade",
       "category": "electronics",
       "condition": "outlet",
-      "sitemapUrl": "https://www.komplett.se/sitemap.products.xml",
-      "includePaths": [
-        "/demovaror/"
-      ],
-      "maxItems": 30,
-      "updatedSinceDays": 180,
-      "notes": "Streams sitemap.products.xml, stops at 3 MB (aborts early after finding enough /demovaror/ entries). Reference prices come directly from each product page via the embedded originalProductPrice field."
-    },
-    {
-      "id": "komplett-outlet-apify",
-      "type": "apify-komplett",
-      "enabled": false,
-      "label": "Komplett B-grade (Apify – .no only)",
-      "category": "electronics",
-      "condition": "outlet",
-      "actorId": "shahidirfan/komplett-products-scraper",
-      "apiTokenEnvVar": "APIFY_TOKEN",
-      "apiTokenEnvVars": [
-        "APIFY_TOKEN_2",
-        "APIFY_TOKEN_3"
-      ],
-      "actorTimeoutMs": 180000,
-      "actorRequestRetries": 3,
-      "actorRetryBaseMs": 1500,
-      "actorRetryMaxMs": 15000,
-      "actorInput": {
-        "startUrl": "https://www.komplett.se/search?q=b-grade&list_view=list",
-        "results_wanted": 200,
-        "max_pages": 10
-      },
-      "includePaths": [
-        "/demovaror/"
-      ],
-      "referenceLookup": true,
-      "referenceLookupMaxPerScan": 40,
-      "referenceLookupConcurrency": 4,
-      "referenceLookupRetryHours": 12,
-      "referenceLookupResultsWanted": 30,
-      "referenceLookupMaxPages": 2,
-      "notes": "NOTE: The shahidirfan/komplett-products-scraper actor only supports komplett.no, not komplett.se. Disabled until a .se-compatible actor is found."
+      "categoryUrl": "https://www.komplett.se/category/10066/demovaror",
+      "maxPages": 10,
+      "refPriceLookupPerScan": 20,
+      "notes": "Pages through the Komplett demovaror category HTML (24 products/page, ~10 pages = ~240 products). Prices are embedded as JSON — no sitemap needed. Reference prices are lazily fetched from individual product pages and cached."
     },
     {
       "id": "approved-rss-feed",
