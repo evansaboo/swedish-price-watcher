@@ -99,12 +99,11 @@
       "id": "power-deals",
       "type": "power-deals",
       "enabled": true,
-      "label": "Power Erbjudanden",
+      "label": "Power Outlet",
       "category": "electronics",
       "condition": "outlet",
-      "apiTokenEnvVar": "APIFY_TOKEN",
-      "actorTimeoutMs": 480000,
-      "notes": "Uses Apify playwright-scraper to render Power.se's Angular SPA deals page. Injects consent cookie, reloads, then scrolls repeatedly to load all products via infinite scroll (up to 40 rounds). Deduplicates by product code."
+      "maxProducts": 5000,
+      "notes": "Direct REST API: /api/v2/productlists?s=5&o=true&cd=false. No Apify needed. Returns outlet/returned products with full price, image, and outletReason. Paginates with from= offset until isLastPage=true. ~10k products total."
     },
     {
       "id": "approved-rss-feed",
