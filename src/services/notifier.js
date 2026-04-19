@@ -92,16 +92,11 @@ export class DiscordNotifier {
         .map((source) => source.id)
     );
     const newListingSources = enabledSources.filter((source) => source.notificationMode === 'new-listings');
-    const favoriteEventSourceIds = new Set(
-      enabledSources
-        .filter((source) => source.notificationMode === 'favorite-events')
-        .map((source) => source.id)
-    );
     const favoriteCategoryEvents = await this.notifyFavoriteCategoryEvents({
       newItems,
       priceDrops,
       favoriteCategories,
-      allowedSourceIds: favoriteEventSourceIds,
+      allowedSourceIds: null, // all enabled sources can trigger favorite category events
       state
     });
     const amazingDealsSummary = await this.notifyAmazingDeals(deals, state, amazingDealSourceIds);
@@ -299,8 +294,7 @@ export class DiscordNotifier {
       .map((item) => ({
         item,
         discount: getDiscountSummary(item)
-      }))
-      .filter(({ discount }) => Number.isFinite(discount.discountSek) && discount.discountSek > 0);
+      }));
     const favoritePriceDrops = priceDrops.filter(
       (event) => sourceAllowed(event.sourceId) && favoriteCategorySet.has(normalizeCategoryKey(event.category))
     );
@@ -333,7 +327,7 @@ export class DiscordNotifier {
       try {
         await this.#postWebhook({
           username: 'Price Watcher',
-          content: `Favorite category update: new discounted listing in ${item.category}`,
+          content: `Favorite category: new listing in ${item.category}`,
           embeds: [
             {
               title: item.title,

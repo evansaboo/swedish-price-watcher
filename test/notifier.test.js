@@ -167,14 +167,16 @@ test('sends favorite-category alerts for new discounted items and price drops', 
       state
     });
 
-    assert.equal(summary.favoriteCategoryEvents.sent, 2);
-    assert.equal(summary.favoriteCategoryEvents.newListingEvents, 1);
+    assert.equal(summary.favoriteCategoryEvents.sent, 3); // 2 new listings + 1 price drop
+    assert.equal(summary.favoriteCategoryEvents.newListingEvents, 2); // both items included (with or without discount)
     assert.equal(summary.favoriteCategoryEvents.priceDropEvents, 1);
     assert.equal(summary.newListings.sent, 0);
-    assert.equal(payloads.length, 2);
-    assert.match(payloads[0].content, /favorite category update/i);
-    assert.match(payloads[1].content, /price drop/i);
+    assert.equal(payloads.length, 3);
+    assert.match(payloads[0].content, /favorite category/i);
+    assert.match(payloads[1].content, /favorite category/i);
+    assert.match(payloads[2].content, /price drop/i);
     assert.ok(state.notifications['elgiganten-outlet-latest:1000400:favorite-new:2790']);
+    assert.ok(state.notifications['elgiganten-outlet-latest:1000402:favorite-new:1790']);
     assert.ok(state.notifications['elgiganten-outlet-latest:1000401:favorite-drop:2490:2290']);
   } finally {
     globalThis.fetch = originalFetch;
