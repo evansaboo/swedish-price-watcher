@@ -107,10 +107,12 @@
       "id": "proshop-outlet",
       "type": "proshop-outlet",
       "enabled": true,
-      "label": "ProShop Outlet + Demo",
+      "label": "ProShop Outlet",
       "category": "electronics",
       "condition": "outlet",
-      "notes": "Uses Playwright (local Chromium) to solve Cloudflare JS challenge once, then scrapes /Outlet and /Demo pages via plain HTTP with the cleared cookie. No Apify needed."
+      "notes": "Uses Apify playwright-scraper actor with residential proxy to bypass Cloudflare Bot Management.",
+      "actorTimeoutMs": 480000,
+      "maxPages": 25
     },
     {
       "id": "power-deals",

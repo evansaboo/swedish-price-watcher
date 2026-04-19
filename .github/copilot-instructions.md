@@ -20,7 +20,7 @@
 | `netonnet-outlet` | `netonnet-outlet` | Direct Next.js RSC HTML | Batched parallel ref lookups (5 at a time) |
 | `webhallen-fyndware` | `webhallen-api` | Webhallen internal API | Images use `fyndwareOf.id` parent to avoid SVG placeholders |
 | `komplett-outlet-electronics` | `komplett-category` | `apify/cheerio-scraper` | Apify proxy bypasses Railway IP block |
-| `proshop-outlet` | `proshop-outlet` | `rebrowser-playwright` + residential proxy | CDP-level CF bypass; residential proxy via `PROSHOP_PROXY_URL` or `APIFY_TOKEN` |
+| `proshop-outlet` | `proshop-outlet` | `apify/playwright-scraper` | Apify residential proxy bypasses Cloudflare Bot Management; local rebrowser approach failed |
 | `power-deals` | `power-deals` | `apify/playwright-scraper` | Angular SPA; cookie injection + reload to capture API |
 
 ## Runtime and Deployment
@@ -82,7 +82,7 @@ const { items } = await client.dataset(run.defaultDatasetId).listItems();
 
 ## Scraping and Reliability Guidelines
 - Use Apify-backed collection instead of direct high-risk scraping from protected storefront pages.
-- ProShop uses `rebrowser-playwright` (CDP-level Cloudflare bypass) + residential proxy.
+- ProShop uses `apify/playwright-scraper` actor with `RESIDENTIAL` proxy group — local rebrowser-playwright failed because CF's JS fingerprinting blocked context init scripts before stealth patches fired.
 - Webhallen images: always use `product.fyndwareOf?.id ?? product.id` for image URL to avoid SVG placeholders.
 - Keep request behavior polite and robust:
   - retries for transient upstream failures (`502`/`5xx`/timeouts),
@@ -98,11 +98,9 @@ const { items } = await client.dataset(run.defaultDatasetId).listItems();
 - Category names are the leaf of the hierarchy path (e.g. `"Gaming > Datorkomponenter > Grafikkort (GPU)"` → `"Grafikkort (GPU)"`).
 
 ## Browser / Playwright Setup (Docker)
-- **Two Chromium installs are required** in the Docker image:
-  - `playwright-core install chromium` → chromium-1217 (for playwright 1.59.x used by Apify and other scrapers)
-  - `node node_modules/rebrowser-playwright/cli.js install chromium` → chromium-1169 (for rebrowser-playwright 1.52.x used by ProShop)
-- The `postinstall` npm script handles both: `"playwright-core install chromium && node node_modules/rebrowser-playwright/cli.js install chromium"`
-- **Do NOT use** `playwright install chromium` — rebrowser-playwright hijacks the `playwright` bin alias, so this installs the wrong version.
+- Only one Chromium install is needed: `playwright-core install chromium` → chromium-1217 (for playwright 1.59.x used by Apify and other scrapers).
+- The `postinstall` npm script: `"playwright-core install chromium"`
+- **Do NOT use** `playwright install chromium` — if `rebrowser-playwright` is installed it hijacks the `playwright` bin alias.
 - Dockerfile uses `node:20-bookworm-slim` + `apt-get` for all Chromium system dependencies (avoids Nix store path issues on Railway).
 
 ## Scan Architecture
