@@ -62,9 +62,11 @@ function parsePriceSek(priceObj) {
 }
 
 function parseImageUrl(product) {
-  // Webhallen uses cdn image IDs: https://www.webhallen.com/images/product/{id}/
-  if (!product.id) return null;
-  return `${BASE_URL}/images/product/${product.id}/`;
+  // Fyndware products use the parent product's image (the fyndware item itself often has an SVG placeholder).
+  // fyndwareOf.id is the original product ID whose /images/product/{id}/ returns a JPEG.
+  const imageId = product.fyndwareOf?.id ?? product.id;
+  if (!imageId) return null;
+  return `${BASE_URL}/images/product/${imageId}/`;
 }
 
 function mapProduct(product, source, now) {

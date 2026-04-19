@@ -1,5 +1,9 @@
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js';
+
+// Stealth plugin patches many browser fingerprinting surfaces that CF Bot Management checks.
+chromium.use(StealthPlugin());
 
 const BASE_URL = 'https://www.proshop.se';
 const PAGE_SIZE = 30;
@@ -17,8 +21,9 @@ const BROWSER_ARGS = [
   '--disable-blink-features=AutomationControlled',
 ];
 
-// Block images and media to speed up page loads without breaking JS.
-const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media']);
+// Don't block images — we need src/data-src attributes for product image URLs.
+// Only block media (video/audio) to save bandwidth.
+const BLOCKED_RESOURCE_TYPES = new Set(['media']);
 
 function mapProshopItem(item, source, now) {
   const { name, href, priceText, origPriceText, productId, category, imageUrl } = item;
@@ -75,7 +80,10 @@ async function scrapeCategory(page, path, source, now, seen) {
     }).catch(() => null);
 
     if (!found) {
-      console.log(`[proshop] ${path} page ${pageNum}: no products — stopping`);
+      // Log page title to diagnose CF challenge vs real 404
+      const title = await page.title().catch(() => '(error)');
+      const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 200)).catch(() => '');
+      console.warn(`[proshop] ${path} page ${pageNum}: waitForSelector timed out. title="${title}" body="${bodySnippet}"`);
       break;
     }
 
@@ -91,9 +99,16 @@ async function scrapeCategory(page, path, source, now, seen) {
         const category = segments.length >= 1 ? segments[0].replace(/-+/g, ' ').trim() : '';
         const priceText = el.querySelector('span.site-currency-lg')?.textContent?.trim() || '';
         const origPriceText = el.querySelector('span.site-currency-oldprice, .site-currency-old, .oldprice')?.textContent?.trim() || '';
-        const imageUrl = el.querySelector('img')?.getAttribute('src') || '';
+        const imgEl = el.querySelector('img');
+        const imageUrl =
+          imgEl?.getAttribute('data-src') ||
+          imgEl?.getAttribute('data-lazy-src') ||
+          imgEl?.getAttribute('src') || '';
+        const imageUrlFull = imageUrl && !imageUrl.startsWith('http') && !imageUrl.startsWith('data:')
+          ? 'https://www.proshop.se' + (imageUrl.startsWith('/') ? '' : '/') + imageUrl
+          : imageUrl || '';
         if (!name || !priceText) return null;
-        return { name, href, priceText, origPriceText, productId: productId || name, category, imageUrl };
+        return { name, href, priceText, origPriceText, productId: productId || name, category, imageUrl: imageUrlFull };
       }).filter(Boolean);
     });
 
