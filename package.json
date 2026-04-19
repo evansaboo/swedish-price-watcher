@@ -8,7 +8,7 @@
     "dev": "node --watch src/index.js",
     "scan": "node src/index.js --run-once",
     "test": "node --test",
-    "postinstall": "playwright install chromium && rebrowser-playwright install chromium"
+    "postinstall": "playwright-core install chromium && node node_modules/rebrowser-playwright/cli.js install chromium"
   },
   "keywords": [],
   "author": "",
