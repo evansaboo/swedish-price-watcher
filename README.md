@@ -6,7 +6,7 @@ A production outlet price tracker for Swedish electronics stores. Runs on Railwa
 
 | Store | What it tracks | Method |
 |-------|---------------|--------|
-| **Elgiganten** | Outlet products | Apify custom actor + keyword queries |
+| **Elgiganten** | Outlet products | Direct Algolia API (brand-split pagination) |
 | **NetOnNet** | Outlet/clearance | Direct Next.js HTML scraping |
 | **Webhallen** | Fyndvara (outlet) | Webhallen internal API |
 | **Komplett** | B-grade / demovaror | `apify/cheerio-scraper` (Cloudflare bypass) |
@@ -95,6 +95,41 @@ Notification modes per source (set in `config/sources.json`):
 | `amazing-deals` | Items above the amazing-deal threshold |
 | `new-listings` | Every first-seen listing |
 | `none` | Silent |
+
+## Post-change testing checklist
+
+After any code change, verify the following work end-to-end — each test assumes at least one completed scan run:
+
+### Categories & favorites
+- [ ] **Category filter** — open the dashboard, the "All categories" dropdown must show named categories per source (e.g. "Grafikkort (GPU)", "Mobiltelefon" from Elgiganten; not just "Outlet" or "electronics")
+- [ ] **Elgiganten categories** — run a scan and confirm Elgiganten products have specific categories, not "Outlet" for all
+- [ ] **Favorite categories** — open Favourites editor, mark 1-2 categories; "Favourites only" filter must hide products outside those categories
+- [ ] **Category favorites persist** — reload the page; favorites must still be checked
+
+### New listings
+- [ ] **New badge** — products first seen in the latest scan show a "New" badge in the table
+- [ ] **New filter** — "New products only" toggle must narrow the list to freshly discovered items; toggling off restores the full list
+
+### Images
+- [ ] **Elgiganten** — each product card shows a non-broken product image (media.elkjop.com JPEG)
+- [ ] **Webhallen** — images load (not an SVG placeholder); URL must come from `fyndwareOf` parent product ID
+- [ ] **ProShop** — images visible (check `data-src` / `data-lazy-src` extraction)
+- [ ] **NetOnNet, Power, Komplett** — spot-check 3-5 cards each for working images
+- [ ] **Discord embeds** — amazing-deals notifications include product images (not broken or SVG)
+
+### Store filter & per-source counts
+- [ ] **Store dropdown** — lists all active sources; selecting "Elgiganten Outlet" shows only Elgiganten products
+- [ ] **Per-source scan results** — after running "Scan all", sidebar shows a count > 0 for each source once it finishes (Elgiganten, Webhallen, NetOnNet, Komplett, Power); ProShop should appear but may be 0 if Cloudflare blocks it
+
+### Notifications (requires `DISCORD_WEBHOOK_URL`)
+- [ ] **Amazing-deals notification** — trigger a scan; confirm Discord receives an embed with title, price, image, and store badge
+- [ ] **New-listings notification** — for a source in `new-listings` mode, first-seen products must post to Discord
+- [ ] **Retry on 429** — deliberately hit the webhook rapidly; confirm no notification is silently lost (check scan summary `notificationSummary.errors`)
+
+### Scheduler
+- [ ] **Enable/disable** — toggle scheduler on/off in sidebar; status pill updates without page reload
+- [ ] **Interval update** — change interval to 5 minutes, save; `/api/scheduler` must return updated `intervalMinutes`
+- [ ] **Active window** — set a window that excludes the current time; scheduler must skip automatic runs
 
 ## Adding a new source
 

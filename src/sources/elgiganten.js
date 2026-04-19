@@ -104,7 +104,7 @@ async function fetchBrandProducts(fetcher, brand) {
   return hits;
 }
 
-function mapHit(hit, source, now) {
+function mapHit(hit, source, now, cgmCategoryMap = {}) {
   const externalId = String(hit.objectID ?? hit.articleNumber ?? '').trim();
   const title = String(hit.title ?? hit.name ?? '').trim();
   if (!externalId || !title) return null;
@@ -123,11 +123,7 @@ function mapHit(hit, source, now) {
 
   const url = hit.productUrl ?? hit.urlB2C ?? null;
   const imageUrl = resolveImageUrl(hit.imageUrl);
-  const category =
-    hit.hierarchicalCategories?.lvl2 ??
-    hit.hierarchicalCategories?.lvl1 ??
-    hit.hierarchicalCategories?.lvl0 ??
-    'electronics';
+  const category = resolveCategory(hit, cgmCategoryMap);
 
   const conditionLabel = hit.bItem?.bGradeTitle ?? hit.bItem?.bGrade ?? 'Outlet';
   const grade = hit.bItem?.bGrade ?? null;
@@ -159,6 +155,74 @@ function mapHit(hit, source, now) {
 }
 
 /**
+ * Build a cgm (category group ID) → human-readable category name mapping by querying
+ * the non-outlet Algolia index. Each cgm maps to a product category like "Grafikkort (GPU)".
+ * Results are cached in sourceState to avoid redundant API calls across scans.
+ */
+async function buildCategoryMap(fetcher, cgmIds, sourceState) {
+  if (!sourceState.categoryByGroupId || typeof sourceState.categoryByGroupId !== 'object') {
+    sourceState.categoryByGroupId = {};
+  }
+  const cache = sourceState.categoryByGroupId;
+
+  // Only look up cgm values we haven't seen before
+  const missing = cgmIds.filter((id) => id && !(id in cache));
+  if (missing.length === 0) return cache;
+
+  // Batch into multi-requests of up to 20 per Algolia call
+  const BATCH = 20;
+  for (let i = 0; i < missing.length; i += BATCH) {
+    const chunk = missing.slice(i, i + BATCH);
+    const requests = chunk.map((cgm) => ({
+      indexName: INDEX,
+      filters: `cgm:${cgm} AND NOT ${OUTLET_FILTER}`,
+      hitsPerPage: 1,
+      page: 0,
+      attributesToRetrieve: ['hierarchicalCategories', 'cgm'],
+    }));
+    try {
+      const payload = await algoliaPost(fetcher, { requests });
+      for (let j = 0; j < chunk.length; j++) {
+        const hit = payload?.results?.[j]?.hits?.[0];
+        const cat =
+          hit?.hierarchicalCategories?.lvl3 ??
+          hit?.hierarchicalCategories?.lvl2 ??
+          hit?.hierarchicalCategories?.lvl1 ??
+          null;
+        // Store even null entries so we don't retry on future scans
+        cache[chunk[j]] = cat;
+      }
+    } catch {
+      // Non-fatal — leave missing entries unresolved
+    }
+    if (i + BATCH < missing.length) await sleep(PAGE_DELAY_MS);
+  }
+
+  return cache;
+}
+
+/**
+ * Resolve a human-readable category from a cgm lookup map.
+ * Falls back progressively to the deepest lvl available in the outlet hit.
+ */
+function resolveCategory(hit, cgmCategoryMap) {
+  const cgm = hit.cgm != null ? String(hit.cgm) : null;
+  if (cgm && cgmCategoryMap[cgm]) {
+    // Strip leading path prefix (e.g. "Gaming > Datorkomponenter > Grafikkort (GPU)" → "Grafikkort (GPU)")
+    const full = cgmCategoryMap[cgm];
+    const parts = full.split('>').map((p) => p.trim()).filter(Boolean);
+    return parts.at(-1) ?? full;
+  }
+  // Outlet hits only have lvl1 = 'Outlet', so this is almost always 'Outlet'
+  return (
+    hit.hierarchicalCategories?.lvl2 ??
+    hit.hierarchicalCategories?.lvl1 ??
+    hit.hierarchicalCategories?.lvl0 ??
+    'electronics'
+  );
+}
+
+/**
  * Collect Elgiganten outlet products via the Algolia search API.
  *
  * Algolia enforces a paginationLimitedTo of 1500 results per query, so a single
@@ -166,11 +230,14 @@ function mapHit(hit, source, now) {
  * by splitting on brand: fetch all ~607 brand names first, then query each brand
  * independently (max ~867 products/brand, well under 1500). Results are deduplicated
  * by externalId before returning.
+ *
+ * After collection, cgm codes are resolved to real category names (e.g. "Grafikkort (GPU)")
+ * by querying the non-outlet index. The mapping is cached in sourceState across scans.
  */
 export async function collectFromElgiganten({ source, sourceState, fetcher, now }) {
   const maxProducts = source.maxProducts ?? 15000;
   const seen = new Set();
-  const observations = [];
+  const rawHits = [];
 
   // Step 1: discover all brands
   let brands;
@@ -183,19 +250,28 @@ export async function collectFromElgiganten({ source, sourceState, fetcher, now 
   const brandList = [...brands.keys()];
 
   // Step 2: fetch products per brand in small parallel batches
-  for (let i = 0; i < brandList.length && observations.length < maxProducts; i += BRAND_QUERY_CONCURRENCY) {
+  for (let i = 0; i < brandList.length && rawHits.length < maxProducts; i += BRAND_QUERY_CONCURRENCY) {
     const batch = brandList.slice(i, i + BRAND_QUERY_CONCURRENCY);
     const results = await Promise.all(batch.map((brand) => fetchBrandProducts(fetcher, brand)));
 
     for (const hits of results) {
       for (const hit of hits) {
-        const obs = mapHit(hit, source, now);
-        if (!obs || seen.has(obs.externalId)) continue;
-        seen.add(obs.externalId);
-        observations.push(obs);
+        const id = String(hit.objectID ?? hit.articleNumber ?? '').trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        rawHits.push(hit);
       }
     }
   }
+
+  // Step 3: resolve cgm → category name for all unique cgm values
+  const cgmIds = [...new Set(rawHits.map((h) => h.cgm != null ? String(h.cgm) : null).filter(Boolean))];
+  const cgmCategoryMap = await buildCategoryMap(fetcher, cgmIds, sourceState);
+
+  // Step 4: map hits to observations using resolved categories
+  const observations = rawHits
+    .map((hit) => mapHit(hit, source, now, cgmCategoryMap))
+    .filter(Boolean);
 
   sourceState.lastDiscoveryCount = observations.length;
   return observations;
