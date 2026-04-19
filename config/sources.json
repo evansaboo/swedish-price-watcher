@@ -110,9 +110,11 @@
       "label": "ProShop Outlet",
       "category": "electronics",
       "condition": "outlet",
-      "notes": "Uses Apify playwright-scraper actor with residential proxy to bypass Cloudflare Bot Management.",
-      "actorTimeoutMs": 480000,
-      "maxPages": 25
+      "notes": "Uses Scrapfly API (asp=true) to bypass Cloudflare Bot Management. Requires SCRAPFLY_API_KEY env var.",
+      "maxPages": 20,
+      "apiTokenEnvVar": "SCRAPFLY_API_KEY",
+      "renderJs": true,
+      "pageDelayMs": 1000
     },
     {
       "id": "power-deals",

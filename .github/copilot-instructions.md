@@ -20,7 +20,7 @@
 | `netonnet-outlet` | `netonnet-outlet` | Direct Next.js RSC HTML | Batched parallel ref lookups (5 at a time) |
 | `webhallen-fyndware` | `webhallen-api` | Webhallen internal API | Images use `fyndwareOf.id` parent to avoid SVG placeholders |
 | `komplett-outlet-electronics` | `komplett-category` | `apify/cheerio-scraper` | Apify proxy bypasses Railway IP block |
-| `proshop-outlet` | `proshop-outlet` | `apify/playwright-scraper` | Apify residential proxy bypasses Cloudflare Bot Management; local rebrowser approach failed |
+| `proshop-outlet` | `proshop-outlet` | Scrapfly API (`asp=true`) | CF Bot Management blocks all browser approaches; Scrapfly bypasses at infrastructure level. Requires `SCRAPFLY_API_KEY`. |
 | `power-deals` | `power-deals` | `apify/playwright-scraper` | Angular SPA; cookie injection + reload to capture API |
 
 ## Runtime and Deployment
@@ -82,7 +82,7 @@ const { items } = await client.dataset(run.defaultDatasetId).listItems();
 
 ## Scraping and Reliability Guidelines
 - Use Apify-backed collection instead of direct high-risk scraping from protected storefront pages.
-- ProShop uses `apify/playwright-scraper` actor with `RESIDENTIAL` proxy group — local rebrowser-playwright failed because CF's JS fingerprinting blocked context init scripts before stealth patches fired.
+- ProShop uses Scrapfly API with `asp=true` + `render_js=true` + `country=se` to bypass CF Bot Management. All browser approaches (rebrowser-playwright, Apify playwright-scraper + RESIDENTIAL proxy) fail with ERR_TUNNEL_CONNECTION_FAILED or 60s timeouts. Requires `SCRAPFLY_API_KEY` env var (sign up at scrapfly.io, free tier 1000 credits/month). ~10 credits per page.
 - Webhallen images: always use `product.fyndwareOf?.id ?? product.id` for image URL to avoid SVG placeholders.
 - Keep request behavior polite and robust:
   - retries for transient upstream failures (`502`/`5xx`/timeouts),
