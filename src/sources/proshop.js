@@ -66,12 +66,8 @@ function parseProshopPage(html, source, now, seen) {
     const origPriceText =
       $(el).find('span.site-currency-oldprice, .site-currency-old, .oldprice, .site-currency-before').first().text().trim();
 
-    const imgEl = $(el).find('img').first();
-    let imageUrl =
-      imgEl.attr('data-src') || imgEl.attr('data-lazy-src') || imgEl.attr('src') || '';
-    if (imageUrl && !imageUrl.startsWith('http') && !imageUrl.startsWith('data:')) {
-      imageUrl = 'https://www.proshop.se' + (imageUrl.startsWith('/') ? '' : '/') + imageUrl;
-    }
+    // ProShop images are behind Cloudflare and return 403 to external requests.
+    // Setting imageUrl=null avoids broken images in the dashboard and Discord.
 
     if (!name || !priceText) return;
     const price = parseSekValue(priceText);
@@ -92,7 +88,7 @@ function parseProshopPage(html, source, now, seen) {
       priceSek: price,
       referencePriceSek: parseSekValue(origPriceText) || null,
       marketValueSek: parseSekValue(origPriceText) || null,
-      imageUrl: imageUrl || null,
+      imageUrl: null,
       category: category || 'outlet',
       condition: 'outlet',
       conditionLabel: 'Outlet',
