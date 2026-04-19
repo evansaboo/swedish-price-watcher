@@ -110,12 +110,12 @@
       "label": "ProShop Outlet",
       "category": "electronics",
       "condition": "outlet",
-      "notes": "Uses Scrapfly API (asp=true, render_js=true). URL: /Outlet?pn=N, /Demoprodukter?pn=N. ~11 credits/page. 15+15 pages default = ~330 credits/scan. Outlet has 39 pages, Demo has 60. Upgrade to Scrapfly Starter (9/mo, 100k credits) for full depth.",
-      "apiTokenEnvVar": "SCRAPFLY_API_KEY",
+      "notes": "Uses ScraperAPI (render=true, 5 credits/page). Free tier: 5000 credits/month at scraperapi.com = ~1000 pages free = ~10 full scans/month. Falls back to Scrapfly if SCRAPFLY_API_KEY is set instead. URL: /Outlet?pn=N, /Demoprodukter?pn=N. Outlet has 39 pages (~975 items), Demo has 60 pages (~1500 items).",
+      "apiTokenEnvVar": "SCRAPERAPI_KEY",
       "renderJs": true,
-      "pageDelayMs": 1000,
-      "maxOutletPages": 15,
-      "maxDemoPages": 15
+      "pageDelayMs": 1500,
+      "maxOutletPages": 40,
+      "maxDemoPages": 65
     },
     {
       "id": "power-deals",

@@ -2,23 +2,38 @@ import { load } from 'cheerio';
 import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js';
 
 /**
- * ProShop Outlet + Demo scraper via Scrapfly API.
+ * ProShop Outlet + Demo scraper.
  *
- * ProShop is behind Cloudflare Bot Management (cType: 'managed'). All browser-
- * based approaches (rebrowser-playwright, Apify playwright-scraper + residential
- * proxy) fail because CF fingerprints the browser context and returns
- * ERR_TUNNEL_CONNECTION_FAILED or 60s navigation timeouts.
+ * ProShop is behind Cloudflare Bot Management (cType: 'managed'). All direct
+ * browser approaches fail. Two managed-scraping options are supported:
  *
- * Scrapfly's Anti Scraping Protection (asp=true) bypasses CF at the infrastructure
- * level without running a browser on our side. Set SCRAPFLY_API_KEY in Railway.
+ * Option A — ScraperAPI (recommended, free tier):
+ *   Sign up free at scraperapi.com → 5000 credits/month.
+ *   render=true costs 5 credits/page → ~1000 pages free/month (~10 full scans).
+ *   Set SCRAPERAPI_KEY env var in Railway.
  *
- * Sign up: https://scrapfly.io (free tier: 1000 credits/month)
- * asp + render_js = ~10 credits per page
+ * Option B — Scrapfly (fallback, if SCRAPFLY_API_KEY is set):
+ *   asp + render_js = ~10 credits per page. Free tier: 1000 credits/month.
+ *   Sign up at scrapfly.io.
+ *
+ * URL format (discovered empirically):
+ *   Page 1: /Outlet            Page N: /Outlet?pn=N
+ *   Demo:   /Demoprodukter     Demo N: /Demoprodukter?pn=N
+ *   Outlet: ~39 pages, Demo: ~60 pages (25 items/page; pagesize param ignored).
  */
 
 const BASE_URL = 'https://www.proshop.se';
-const PAGE_SIZE = 48;
-const SCRAPFLY_API = 'https://api.scrapfly.io/scrape';
+
+function buildScraperApiUrl(targetUrl, apiKey, premium) {
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    url: targetUrl,
+    render: 'true',
+    country_code: 'se',
+  });
+  if (premium) params.set('premium', 'true');
+  return `http://api.scraperapi.com?${params}`;
+}
 
 function buildScrapflyUrl(targetUrl, apiKey, renderJs) {
   const params = new URLSearchParams({
@@ -28,7 +43,7 @@ function buildScrapflyUrl(targetUrl, apiKey, renderJs) {
     country: 'se',
   });
   if (renderJs) params.set('render_js', 'true');
-  return `${SCRAPFLY_API}?${params}`;
+  return `https://api.scrapfly.io/scrape?${params}`;
 }
 
 function parseProshopPage(html, source, now, seen) {
@@ -89,40 +104,60 @@ function parseProshopPage(html, source, now, seen) {
   return observations;
 }
 
-async function scrapePage(url, apiKey, renderJs) {
-  const apiUrl = buildScrapflyUrl(url, apiKey, renderJs);
-  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(60_000) });
+async function scrapeViaScraperApi(url, apiKey, premium) {
+  const apiUrl = buildScraperApiUrl(url, apiKey, premium);
+  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(120_000) });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`ScraperAPI HTTP ${response.status}: ${body.slice(0, 200)}`);
+  }
+  // ScraperAPI returns the scraped HTML directly
+  return response.text();
+}
 
+async function scrapeViaScrapfly(url, apiKey, renderJs) {
+  const apiUrl = buildScrapflyUrl(url, apiKey, renderJs);
+  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(90_000) });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     throw new Error(`Scrapfly HTTP ${response.status}: ${body.slice(0, 200)}`);
   }
-
   const data = await response.json();
   const result = data.result ?? data;
-
   if (result.status === 'ERROR' || (result.error && result.error !== null)) {
     const reason = result.error?.description ?? result.error ?? 'unknown error';
     throw new Error(`Scrapfly error: ${reason}`);
   }
-
   return result.content ?? '';
 }
 
 export async function collectFromProshop({ source, sourceState, now }) {
-  const apiKey =
-    process.env[source.apiTokenEnvVar ?? 'SCRAPFLY_API_KEY']?.trim() ??
-    process.env.SCRAPFLY_API_KEY?.trim() ??
+  // Prefer ScraperAPI (free: 5000 credits/month, 5 credits/page with render=true).
+  // Fall back to Scrapfly if only that key is configured.
+  const scraperApiKey =
+    (source.apiTokenEnvVar === 'SCRAPERAPI_KEY' ? process.env.SCRAPERAPI_KEY : null)?.trim() ||
+    process.env.SCRAPERAPI_KEY?.trim() ||
     '';
-  if (!apiKey) {
-    throw new Error(`No Scrapfly API key configured for ${source.label ?? source.id}. Set SCRAPFLY_API_KEY env var. Sign up at https://scrapfly.io`);
+  const scrapflyKey =
+    (source.apiTokenEnvVar === 'SCRAPFLY_API_KEY' ? process.env.SCRAPFLY_API_KEY : null)?.trim() ||
+    process.env.SCRAPFLY_API_KEY?.trim() ||
+    '';
+
+  const useScraperApi = Boolean(scraperApiKey);
+  const useScrapfly = !useScraperApi && Boolean(scrapflyKey);
+
+  if (!useScraperApi && !useScrapfly) {
+    throw new Error(
+      `No scraping API key for ${source.label ?? source.id}. ` +
+        `Set SCRAPERAPI_KEY (free at scraperapi.com, 5000 credits/month) ` +
+        `or SCRAPFLY_API_KEY (free at scrapfly.io, 1000 credits/month).`
+    );
   }
 
+  const pageDelayMs = source.pageDelayMs ?? 1500;
+  const premium = source.premiumProxy === true;
   const renderJs = source.renderJs !== false;
-  const pageDelayMs = source.pageDelayMs ?? 1000;
 
-  // Outlet: up to 39 pages. Demo: up to 60 pages (25 items/page, no pagesize param).
-  // URL format: page 1 = /Section, page N = /Section?pn=N
   const sections = [
     { path: '/Outlet', maxPages: source.maxOutletPages ?? 40 },
     { path: '/Demoprodukter', maxPages: source.maxDemoPages ?? 65 },
@@ -133,13 +168,14 @@ export async function collectFromProshop({ source, sourceState, now }) {
 
   for (const { path, maxPages } of sections) {
     for (let page = 1; page <= maxPages; page++) {
-      const url = page === 1
-        ? `${BASE_URL}${path}`
-        : `${BASE_URL}${path}?pn=${page}`;
+      const url =
+        page === 1 ? `${BASE_URL}${path}` : `${BASE_URL}${path}?pn=${page}`;
 
       let html;
       try {
-        html = await scrapePage(url, apiKey, renderJs);
+        html = useScraperApi
+          ? await scrapeViaScraperApi(url, scraperApiKey, premium)
+          : await scrapeViaScrapfly(url, scrapflyKey, renderJs);
       } catch (err) {
         console.warn(`[proshop] ${path} page ${page} failed: ${err.message}`);
         break;
