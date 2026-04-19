@@ -110,11 +110,12 @@
       "label": "ProShop Outlet",
       "category": "electronics",
       "condition": "outlet",
-      "notes": "Uses Scrapfly API (asp=true) to bypass Cloudflare Bot Management. Requires SCRAPFLY_API_KEY env var.",
-      "maxPages": 20,
+      "notes": "Uses Scrapfly API (asp=true, render_js=true). URL: /Outlet?pn=N, /Demoprodukter?pn=N. ~11 credits/page. 15+15 pages default = ~330 credits/scan. Outlet has 39 pages, Demo has 60. Upgrade to Scrapfly Starter (9/mo, 100k credits) for full depth.",
       "apiTokenEnvVar": "SCRAPFLY_API_KEY",
       "renderJs": true,
-      "pageDelayMs": 1000
+      "pageDelayMs": 1000,
+      "maxOutletPages": 15,
+      "maxDemoPages": 15
     },
     {
       "id": "power-deals",

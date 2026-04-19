@@ -118,28 +118,36 @@ export async function collectFromProshop({ source, sourceState, now }) {
     throw new Error(`No Scrapfly API key configured for ${source.label ?? source.id}. Set SCRAPFLY_API_KEY env var. Sign up at https://scrapfly.io`);
   }
 
-  const maxPages = source.maxPages ?? 20;
-  const renderJs = source.renderJs !== false; // true by default; set false to save credits once confirmed working
+  const renderJs = source.renderJs !== false;
   const pageDelayMs = source.pageDelayMs ?? 1000;
+
+  // Outlet: up to 39 pages. Demo: up to 60 pages (25 items/page, no pagesize param).
+  // URL format: page 1 = /Section, page N = /Section?pn=N
+  const sections = [
+    { path: '/Outlet', maxPages: source.maxOutletPages ?? 40 },
+    { path: '/Demoprodukter', maxPages: source.maxDemoPages ?? 65 },
+  ];
 
   const seen = new Set();
   const observations = [];
 
-  for (const section of ['/Outlet', '/Demo']) {
+  for (const { path, maxPages } of sections) {
     for (let page = 1; page <= maxPages; page++) {
-      const url = `${BASE_URL}${section}?sortby=0&pagesize=${PAGE_SIZE}&page=${page}`;
+      const url = page === 1
+        ? `${BASE_URL}${path}`
+        : `${BASE_URL}${path}?pn=${page}`;
 
       let html;
       try {
         html = await scrapePage(url, apiKey, renderJs);
       } catch (err) {
-        console.warn(`[proshop] ${section} page ${page} failed: ${err.message}`);
+        console.warn(`[proshop] ${path} page ${page} failed: ${err.message}`);
         break;
       }
 
       const pageObservations = parseProshopPage(html, source, now, seen);
       observations.push(...pageObservations);
-      console.log(`[proshop] ${section} page ${page}: ${pageObservations.length} products`);
+      console.log(`[proshop] ${path} page ${page}: ${pageObservations.length} products`);
 
       if (pageObservations.length === 0) break;
 
