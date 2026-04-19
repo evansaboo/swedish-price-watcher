@@ -1597,10 +1597,6 @@ function renderCategoryList() {
   }
 }
 
-function escapeHtml(str) {
-  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 async function openNotifModal() {
   try {
     const res = await fetch('/api/notification-settings');
