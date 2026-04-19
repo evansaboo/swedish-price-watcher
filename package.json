@@ -8,7 +8,7 @@
     "dev": "node --watch src/index.js",
     "scan": "node src/index.js --run-once",
     "test": "node --test",
-    "postinstall": "playwright install chromium"
+    "postinstall": "playwright install chromium && rebrowser-playwright install chromium"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +24,7 @@
     "playwright": "^1.59.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "rebrowser-playwright": "^1.52.0",
     "robots-parser": "^3.0.1",
     "undici": "^8.1.0"
   }

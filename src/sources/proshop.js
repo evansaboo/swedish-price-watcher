@@ -1,9 +1,8 @@
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { chromium } from 'rebrowser-playwright';
 import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js';
 
-// Stealth plugin patches many browser fingerprinting surfaces that CF Bot Management checks.
-chromium.use(StealthPlugin());
+// rebrowser-playwright patches CDP-level detection signals (Runtime.enable, contextId leaks)
+// that playwright-extra stealth cannot fix — these are CF Bot Management's #1 detection vectors.
 
 const BASE_URL = 'https://www.proshop.se';
 const PAGE_SIZE = 30;
@@ -173,13 +172,37 @@ export async function collectFromProshop({ source, sourceState, now }) {
     browser = await chromium.launch(launchOptions);
     const ctx = await browser.newContext({
       userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 800 },
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      viewport: { width: 1366, height: 768 },
       locale: 'sv-SE',
       timezoneId: 'Europe/Stockholm',
+      extraHTTPHeaders: {
+        'accept-language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
+        'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+      },
     });
+    // JS-level stealth: patch navigator, plugins, languages, permissions to match real Chrome
     await ctx.addInitScript(() => {
+      // Hide webdriver
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      // Mimic real Chrome plugins
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [{ name: 'Chrome PDF Plugin' }, { name: 'Chrome PDF Viewer' }, { name: 'Native Client' }],
+      });
+      Object.defineProperty(navigator, 'languages', { get: () => ['sv-SE', 'sv', 'en-US', 'en'] });
+      // Pass permissions query (CF checks this)
+      const origQuery = window.navigator.permissions?.query;
+      if (origQuery) {
+        window.navigator.permissions.query = (parameters) =>
+          parameters.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : origQuery(parameters);
+      }
+      // Hide headless Chrome tells
+      delete window.chrome;
+      window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {}, app: {} };
     });
 
     const page = await ctx.newPage();
