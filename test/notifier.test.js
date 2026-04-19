@@ -262,6 +262,121 @@ test('retries Discord webhook after 429 and still delivers notification', async 
   }
 });
 
+test('notifyKeywordMatches sends alert when new item title matches an enabled keyword', async () => {
+  const payloads = [];
+  const urls = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url, init) => {
+    urls.push(url);
+    payloads.push(JSON.parse(init.body));
+    return { ok: true, status: 204, statusText: 'No Content' };
+  };
+
+  try {
+    const state = createDefaultState();
+    const notifier = new DiscordNotifier({ webhookUrl: 'https://discord.example/main', cooldownHours: 24 });
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [
+        {
+          listingKey: 'webhallen:9001',
+          sourceId: 'webhallen-fyndware',
+          sourceLabel: 'Webhallen',
+          title: 'NVIDIA RTX 5070 Ti outlet',
+          url: 'https://webhallen.com/product/9001',
+          category: 'Grafikkort',
+          condition: 'outlet',
+          latestPriceSek: 7999,
+          referencePriceSek: 10999,
+          firstSeenAt: '2026-04-19T12:00:00.000Z',
+          imageUrl: null
+        },
+        {
+          listingKey: 'webhallen:9002',
+          sourceId: 'webhallen-fyndware',
+          sourceLabel: 'Webhallen',
+          title: 'Sony WH-1000XM5 outlet',
+          url: 'https://webhallen.com/product/9002',
+          category: 'Horlurar',
+          condition: 'outlet',
+          latestPriceSek: 2990,
+          firstSeenAt: '2026-04-19T12:01:00.000Z',
+          imageUrl: null
+        }
+      ],
+      sources: [{ id: 'webhallen-fyndware', label: 'Webhallen', enabled: true }],
+      state,
+      notificationSettings: {
+        keywordWebhook: 'https://discord.example/keywords',
+        keywords: [
+          { id: 'kw1', keyword: 'RTX 5070', enabled: true },
+          { id: 'kw2', keyword: 'Xbox', enabled: true },   // no match
+          { id: 'kw3', keyword: 'Sony', enabled: false }   // disabled, should not fire
+        ],
+        categoryWebhooks: []
+      }
+    });
+
+    assert.equal(summary.keywordMatches.sent, 1, 'One keyword match sent');
+    assert.equal(summary.keywordMatches.skipped, 0);
+    assert.equal(summary.keywordMatches.failed, 0);
+
+    // Keyword webhook URL used for the match
+    assert.ok(urls.some((u) => u === 'https://discord.example/keywords'), 'Posted to keyword webhook');
+    const kwPayload = payloads.find((p) => /keyword alert/i.test(p.content));
+    assert.ok(kwPayload, 'Keyword alert payload found');
+    assert.match(kwPayload.content, /RTX 5070/i);
+    assert.ok(state.notifications['webhallen:9001:keyword:rtx 5070'], 'Notification key stored');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('notifyAmazingDeals routes to category webhook when pattern matches', async () => {
+  const postUrls = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url, _init) => {
+    postUrls.push(url);
+    return { ok: true, status: 204, statusText: 'No Content' };
+  };
+
+  try {
+    const state = createDefaultState();
+    const notifier = new DiscordNotifier({ webhookUrl: 'https://discord.example/main', cooldownHours: 24 });
+
+    await notifier.notifyAmazingDeals(
+      [
+        {
+          listingKey: 'elgiganten:gpu1',
+          sourceId: 'elgiganten-outlet',
+          title: 'RTX 4080 Outlet',
+          category: 'Grafikkort (GPU)',
+          condition: 'outlet',
+          currentPriceSek: 5999,
+          comparisonPriceSek: 9999,
+          discountPercent: 40,
+          profitSek: 3000,
+          score: 95,
+          reasons: ['big-discount'],
+          amazingDeal: true,
+          imageUrl: null,
+          url: 'https://elgiganten.se/...'
+        }
+      ],
+      state,
+      null, // allowedSourceIds
+      [{ id: 'cw1', pattern: 'grafikkort', label: 'GPU', webhook: 'https://discord.example/gpu-channel' }]
+    );
+
+    assert.ok(postUrls.includes('https://discord.example/gpu-channel'), 'Routed to GPU category webhook');
+    assert.ok(!postUrls.includes('https://discord.example/main'), 'Did not post to main webhook');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Discord 429 does not fail whole notification summary', async () => {
   const originalFetch = globalThis.fetch;
 

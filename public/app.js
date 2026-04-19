@@ -1516,3 +1516,167 @@ loadDashboard().catch((error) => {
   setNotice(error.message, 'error');
   elements.runSummary.textContent = error.message;
 });
+
+// ─────────────────────────────────────────────────────────
+// NOTIFICATION SETTINGS MODAL
+// ─────────────────────────────────────────────────────────
+
+const notifModal = {
+  overlay: document.querySelector('#notif-settings-modal'),
+  closeBtn: document.querySelector('#notif-modal-close'),
+  tabs: [...document.querySelectorAll('.modal-tab')],
+  tabContents: { keywords: document.querySelector('#tab-keywords'), categories: document.querySelector('#tab-categories') },
+  keywordWebhookInput: document.querySelector('#keyword-webhook-input'),
+  newKeywordInput: document.querySelector('#new-keyword-input'),
+  addKeywordBtn: document.querySelector('#add-keyword-btn'),
+  keywordsList: document.querySelector('#keywords-list'),
+  addCategoryBtn: document.querySelector('#add-category-btn'),
+  categoriesList: document.querySelector('#categories-list'),
+  saveBtn: document.querySelector('#save-notif-settings-btn'),
+  saveStatus: document.querySelector('#notif-save-status'),
+  openBtn: document.querySelector('#notif-settings-btn')
+};
+
+// In-memory settings state (loaded from API when modal opens)
+let notifSettings = { keywordWebhook: '', keywords: [], categoryWebhooks: [] };
+
+function renderKeywordsList() {
+  notifModal.keywordsList.innerHTML = '';
+  if (!notifSettings.keywords.length) {
+    notifModal.keywordsList.innerHTML = '<li class="modal-empty">No keywords yet. Add one above.</li>';
+    return;
+  }
+  for (const kw of notifSettings.keywords) {
+    const li = document.createElement('li');
+    li.className = 'modal-item';
+    li.dataset.id = kw.id;
+    li.innerHTML = `
+      <label class="modal-item-toggle">
+        <input type="checkbox" class="kw-enabled" ${kw.enabled ? 'checked' : ''} />
+        <span class="modal-item-label">${escapeHtml(kw.keyword)}</span>
+      </label>
+      <button type="button" class="modal-item-remove" aria-label="Remove ${escapeHtml(kw.keyword)}">✕</button>
+    `;
+    li.querySelector('.kw-enabled').addEventListener('change', (e) => {
+      kw.enabled = e.target.checked;
+    });
+    li.querySelector('.modal-item-remove').addEventListener('click', () => {
+      notifSettings.keywords = notifSettings.keywords.filter((k) => k.id !== kw.id);
+      renderKeywordsList();
+    });
+    notifModal.keywordsList.appendChild(li);
+  }
+}
+
+function renderCategoryList() {
+  notifModal.categoriesList.innerHTML = '';
+  if (!notifSettings.categoryWebhooks.length) {
+    notifModal.categoriesList.innerHTML = '<li class="modal-empty">No category mappings yet. Click "+ Add mapping" to create one.</li>';
+    return;
+  }
+  for (const cw of notifSettings.categoryWebhooks) {
+    const li = document.createElement('li');
+    li.className = 'modal-item modal-item-category';
+    li.dataset.id = cw.id;
+    li.innerHTML = `
+      <div class="modal-category-fields">
+        <input type="text" class="modal-input modal-input-sm cw-pattern" placeholder="Category pattern (e.g. grafikkort)" value="${escapeHtml(cw.pattern)}" />
+        <input type="text" class="modal-input modal-input-sm cw-label" placeholder="Label (e.g. GPU)" value="${escapeHtml(cw.label)}" />
+        <input type="url" class="modal-input cw-webhook" placeholder="Discord webhook URL" value="${escapeHtml(cw.webhook)}" />
+      </div>
+      <button type="button" class="modal-item-remove" aria-label="Remove mapping">✕</button>
+    `;
+    li.querySelector('.cw-pattern').addEventListener('input', (e) => { cw.pattern = e.target.value; });
+    li.querySelector('.cw-label').addEventListener('input', (e) => { cw.label = e.target.value; });
+    li.querySelector('.cw-webhook').addEventListener('input', (e) => { cw.webhook = e.target.value; });
+    li.querySelector('.modal-item-remove').addEventListener('click', () => {
+      notifSettings.categoryWebhooks = notifSettings.categoryWebhooks.filter((c) => c.id !== cw.id);
+      renderCategoryList();
+    });
+    notifModal.categoriesList.appendChild(li);
+  }
+}
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function openNotifModal() {
+  try {
+    const res = await fetch('/api/notification-settings');
+    if (res.ok) notifSettings = await res.json();
+  } catch {/* use in-memory defaults */}
+  notifModal.keywordWebhookInput.value = notifSettings.keywordWebhook ?? '';
+  renderKeywordsList();
+  renderCategoryList();
+  notifModal.overlay.classList.remove('hidden');
+  notifModal.saveStatus.textContent = '';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeNotifModal() {
+  notifModal.overlay.classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+// Tab switching
+notifModal.tabs.forEach((tab) => {
+  tab.addEventListener('click', () => {
+    notifModal.tabs.forEach((t) => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+    tab.classList.add('active');
+    tab.setAttribute('aria-selected', 'true');
+    Object.values(notifModal.tabContents).forEach((el) => el.classList.add('hidden'));
+    notifModal.tabContents[tab.dataset.tab]?.classList.remove('hidden');
+  });
+});
+
+// Add keyword
+notifModal.addKeywordBtn.addEventListener('click', () => {
+  const kw = notifModal.newKeywordInput.value.trim();
+  if (!kw) return;
+  const isDupe = notifSettings.keywords.some((k) => k.keyword.toLowerCase() === kw.toLowerCase());
+  if (isDupe) { notifModal.newKeywordInput.classList.add('input-error'); return; }
+  notifModal.newKeywordInput.classList.remove('input-error');
+  notifSettings.keywords.push({ id: `kw-${Date.now()}`, keyword: kw, enabled: true });
+  notifModal.newKeywordInput.value = '';
+  renderKeywordsList();
+});
+notifModal.newKeywordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') notifModal.addKeywordBtn.click(); });
+
+// Add category mapping
+notifModal.addCategoryBtn.addEventListener('click', () => {
+  notifSettings.categoryWebhooks.push({ id: `cw-${Date.now()}`, pattern: '', label: '', webhook: '' });
+  renderCategoryList();
+  // Scroll to bottom of list
+  notifModal.categoriesList.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
+
+// Save settings
+notifModal.saveBtn.addEventListener('click', async () => {
+  notifSettings.keywordWebhook = notifModal.keywordWebhookInput.value.trim();
+  notifModal.saveBtn.disabled = true;
+  notifModal.saveStatus.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/notification-settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(notifSettings)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    notifSettings = await res.json();
+    renderKeywordsList();
+    renderCategoryList();
+    notifModal.saveStatus.textContent = '✓ Saved';
+    setTimeout(() => { notifModal.saveStatus.textContent = ''; }, 2500);
+  } catch (err) {
+    notifModal.saveStatus.textContent = `Error: ${err.message}`;
+  } finally {
+    notifModal.saveBtn.disabled = false;
+  }
+});
+
+// Open / close
+notifModal.openBtn.addEventListener('click', openNotifModal);
+notifModal.closeBtn.addEventListener('click', closeNotifModal);
+notifModal.overlay.addEventListener('click', (e) => { if (e.target === notifModal.overlay) closeNotifModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !notifModal.overlay.classList.contains('hidden')) closeNotifModal(); });

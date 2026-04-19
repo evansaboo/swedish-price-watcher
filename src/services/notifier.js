@@ -73,6 +73,22 @@ function parseRetryDelayMs(response) {
   return null;
 }
 
+/**
+ * Returns the first matching category webhook URL from the configured mappings,
+ * or null if no pattern matches the given category string.
+ * Pattern matching is bidirectional case-insensitive substring.
+ */
+function resolveCategoryWebhook(category, categoryWebhooks) {
+  if (!category || !Array.isArray(categoryWebhooks) || !categoryWebhooks.length) return null;
+  const cat = String(category).toLowerCase();
+  for (const { pattern, webhook } of categoryWebhooks) {
+    if (!pattern || !webhook) continue;
+    const pat = String(pattern).toLowerCase();
+    if (cat.includes(pat) || pat.includes(cat)) return webhook;
+  }
+  return null;
+}
+
 export class DiscordNotifier {
   constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000 }) {
     this.webhookUrl = webhookUrl;
@@ -82,7 +98,7 @@ export class DiscordNotifier {
     this.webhookRetryCapMs = Math.max(this.webhookRetryBaseMs, Number(webhookRetryCapMs) || this.webhookRetryBaseMs);
   }
 
-  async notifyScan({ deals, newItems, priceDrops = [], sources, state }) {
+  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings }) {
     const enabledSources = sources.filter((source) => source.enabled);
     const sourceMap = new Map(enabledSources.map((source) => [source.id, source]));
     const favoriteCategories = state.preferences?.favoriteCategories ?? [];
@@ -92,33 +108,45 @@ export class DiscordNotifier {
         .map((source) => source.id)
     );
     const newListingSources = enabledSources.filter((source) => source.notificationMode === 'new-listings');
+
+    const settings = notificationSettings ?? {};
+    const categoryWebhooks = Array.isArray(settings.categoryWebhooks) ? settings.categoryWebhooks : [];
+
     const favoriteCategoryEvents = await this.notifyFavoriteCategoryEvents({
       newItems,
       priceDrops,
       favoriteCategories,
-      allowedSourceIds: null, // all enabled sources can trigger favorite category events
+      allowedSourceIds: null,
+      categoryWebhooks,
       state
     });
-    const amazingDealsSummary = await this.notifyAmazingDeals(deals, state, amazingDealSourceIds);
+    const amazingDealsSummary = await this.notifyAmazingDeals(deals, state, amazingDealSourceIds, categoryWebhooks);
     const newListingsSummary = await this.notifyNewListings(newItems, state, newListingSources, sourceMap);
+
+    const keywords = Array.isArray(settings.keywords) ? settings.keywords.filter((k) => k.enabled) : [];
+    const keywordWebhook = typeof settings.keywordWebhook === 'string' ? settings.keywordWebhook.trim() : '';
+    const keywordSummary = await this.notifyKeywordMatches({ newItems, state, keywordWebhook, keywords });
+
     const errors = [
       ...(amazingDealsSummary.errors ?? []),
       ...(newListingsSummary.errors ?? []),
-      ...(favoriteCategoryEvents.errors ?? [])
+      ...(favoriteCategoryEvents.errors ?? []),
+      ...(keywordSummary.errors ?? [])
     ].slice(0, 10);
 
     return {
-      sent: amazingDealsSummary.sent + newListingsSummary.sent + favoriteCategoryEvents.sent,
-      skipped: amazingDealsSummary.skipped + newListingsSummary.skipped + favoriteCategoryEvents.skipped,
-      failed: (amazingDealsSummary.failed ?? 0) + (newListingsSummary.failed ?? 0) + (favoriteCategoryEvents.failed ?? 0),
+      sent: amazingDealsSummary.sent + newListingsSummary.sent + favoriteCategoryEvents.sent + keywordSummary.sent,
+      skipped: amazingDealsSummary.skipped + newListingsSummary.skipped + favoriteCategoryEvents.skipped + keywordSummary.skipped,
+      failed: (amazingDealsSummary.failed ?? 0) + (newListingsSummary.failed ?? 0) + (favoriteCategoryEvents.failed ?? 0) + (keywordSummary.failed ?? 0),
       errors,
       amazingDeals: amazingDealsSummary,
       newListings: newListingsSummary,
-      favoriteCategoryEvents
+      favoriteCategoryEvents,
+      keywordMatches: keywordSummary
     };
   }
 
-  async notifyAmazingDeals(deals, state, allowedSourceIds = null) {
+  async notifyAmazingDeals(deals, state, allowedSourceIds = null, categoryWebhooks = []) {
     const amazingDeals = deals.filter((deal) => deal.amazingDeal && (!allowedSourceIds || allowedSourceIds.has(deal.sourceId)));
 
     if (!this.webhookUrl) {
@@ -160,6 +188,7 @@ export class DiscordNotifier {
       }
 
       try {
+        const targetWebhook = resolveCategoryWebhook(deal.category, categoryWebhooks) ?? this.webhookUrl;
         await this.#postWebhook({
           username: 'Price Watcher',
           content: `Amazing deal: ${deal.title}`,
@@ -179,7 +208,7 @@ export class DiscordNotifier {
               image: deal.imageUrl ? { url: deal.imageUrl } : undefined
             }
           ]
-        });
+        }, targetWebhook);
       } catch (error) {
         failed += 1;
         this.#recordError(errors, error);
@@ -274,7 +303,7 @@ export class DiscordNotifier {
     return { sent, skipped, failed, messages, errors };
   }
 
-  async notifyFavoriteCategoryEvents({ newItems, priceDrops, favoriteCategories, allowedSourceIds, state }) {
+  async notifyFavoriteCategoryEvents({ newItems, priceDrops, favoriteCategories, allowedSourceIds, categoryWebhooks = [], state }) {
     const favoriteCategorySet = asFavoriteCategorySet(favoriteCategories);
     const allowedSources = allowedSourceIds instanceof Set ? allowedSourceIds : null;
     const sourceAllowed = (sourceId) => !allowedSources || allowedSources.has(sourceId);
@@ -325,6 +354,7 @@ export class DiscordNotifier {
       }
 
       try {
+        const targetWebhook = resolveCategoryWebhook(item.category, categoryWebhooks) ?? this.webhookUrl;
         await this.#postWebhook({
           username: 'Price Watcher',
           content: `Favorite category: new listing in ${item.category}`,
@@ -342,7 +372,7 @@ export class DiscordNotifier {
               image: item.imageUrl ? { url: item.imageUrl } : undefined
             }
           ]
-        });
+        }, targetWebhook);
       } catch (error) {
         failed += 1;
         this.#recordError(errors, error);
@@ -363,6 +393,7 @@ export class DiscordNotifier {
       }
 
       try {
+        const targetWebhook = resolveCategoryWebhook(event.category, categoryWebhooks) ?? this.webhookUrl;
         await this.#postWebhook({
           username: 'Price Watcher',
           content: `Favorite category update: price drop in ${event.category}`,
@@ -379,7 +410,7 @@ export class DiscordNotifier {
               ]
             }
           ]
-        });
+        }, targetWebhook);
       } catch (error) {
         failed += 1;
         this.#recordError(errors, error);
@@ -401,6 +432,67 @@ export class DiscordNotifier {
     };
   }
 
+  async notifyKeywordMatches({ newItems, state, keywordWebhook, keywords }) {
+    if (!keywordWebhook || !keywords.length) {
+      return { sent: 0, skipped: 0, failed: 0, errors: [], reason: 'no-keyword-webhook-or-keywords' };
+    }
+
+    let sent = 0;
+    let skipped = 0;
+    let failed = 0;
+    const errors = [];
+    const now = Date.now();
+
+    for (const { keyword, id } of keywords) {
+      const kw = keyword.toLowerCase();
+      const matches = newItems.filter((item) => String(item.title ?? '').toLowerCase().includes(kw));
+
+      for (const item of matches) {
+        const notificationKey = `${item.listingKey}:keyword:${kw}`;
+        const previousSentAt = state.notifications[notificationKey];
+
+        if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
+          skipped += 1;
+          continue;
+        }
+
+        const discount = getDiscountSummary(item);
+
+        try {
+          await this.#postWebhook({
+            username: 'Price Watcher',
+            content: `🔍 Keyword alert: **${keyword}**`,
+            embeds: [
+              {
+                title: item.title,
+                url: item.url,
+                description: `${item.sourceLabel} • ${item.category}`,
+                color: 0x5865f2,
+                fields: [
+                  { name: 'Keyword', value: keyword, inline: true },
+                  { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
+                  { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
+                  { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true },
+                  { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
+                ],
+                image: item.imageUrl ? { url: item.imageUrl } : undefined
+              }
+            ]
+          }, keywordWebhook);
+        } catch (error) {
+          failed += 1;
+          this.#recordError(errors, error);
+          continue;
+        }
+
+        state.notifications[notificationKey] = new Date(now).toISOString();
+        sent += 1;
+      }
+    }
+
+    return { sent, skipped, failed, errors };
+  }
+
   #recordError(errors, error) {
     if (!Array.isArray(errors) || errors.length >= 5) {
       return;
@@ -420,9 +512,9 @@ export class DiscordNotifier {
     return Math.min(this.webhookRetryCapMs, exponentialDelay);
   }
 
-  async #postWebhook(payload) {
+  async #postWebhook(payload, webhookUrl = this.webhookUrl) {
     for (let attempt = 0; attempt <= this.webhookMaxRetries; attempt += 1) {
-      const response = await fetch(this.webhookUrl, {
+      const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: {
           'content-type': 'application/json'

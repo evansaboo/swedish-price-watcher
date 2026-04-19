@@ -511,6 +511,54 @@ export async function buildApp({ config, store, scanState, triggerScan, cancelSc
     };
   });
 
+  app.get('/api/notification-settings', async () => {
+    const settings = store.getState().preferences?.notificationSettings ?? {};
+    return {
+      keywordWebhook: settings.keywordWebhook ?? '',
+      keywords: Array.isArray(settings.keywords) ? settings.keywords : [],
+      categoryWebhooks: Array.isArray(settings.categoryWebhooks) ? settings.categoryWebhooks : []
+    };
+  });
+
+  app.put('/api/notification-settings', async (request, reply) => {
+    const body = request.body ?? {};
+    const state = store.getState();
+
+    const keywordWebhook = typeof body.keywordWebhook === 'string' ? body.keywordWebhook.trim() : '';
+
+    const keywords = Array.isArray(body.keywords)
+      ? body.keywords
+          .filter((k) => k && typeof k.keyword === 'string' && k.keyword.trim())
+          .map((k) => ({
+            id: typeof k.id === 'string' && k.id ? k.id : `kw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            keyword: k.keyword.trim(),
+            enabled: k.enabled !== false
+          }))
+      : [];
+
+    const categoryWebhooks = Array.isArray(body.categoryWebhooks)
+      ? body.categoryWebhooks
+          .filter((c) => c && typeof c.pattern === 'string' && c.pattern.trim() && typeof c.webhook === 'string' && c.webhook.trim())
+          .map((c) => ({
+            id: typeof c.id === 'string' && c.id ? c.id : `cw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            pattern: c.pattern.trim(),
+            label: typeof c.label === 'string' ? c.label.trim() : c.pattern.trim(),
+            webhook: c.webhook.trim()
+          }))
+      : [];
+
+    state.preferences = {
+      ...(state.preferences ?? {}),
+      notificationSettings: { keywordWebhook, keywords, categoryWebhooks }
+    };
+
+    if (typeof store.save === 'function') {
+      await store.save();
+    }
+
+    return { keywordWebhook, keywords, categoryWebhooks };
+  });
+
   app.get('/api/scheduler', async (_, reply) => {
     if (!scheduler?.getState) {
       reply.code(404);

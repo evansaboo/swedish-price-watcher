@@ -20,10 +20,61 @@
       </div>
       <div class="topbar-actions">
         <button id="refresh-button" type="button">Refresh</button>
+        <button id="notif-settings-btn" type="button" class="btn-icon" title="Notification settings" aria-label="Notification settings">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        </button>
         <button id="scan-button" type="button" class="btn-primary">Scan all</button>
         <button id="cancel-button" type="button" class="btn-cancel hidden">Cancel</button>
       </div>
     </header>
+
+    <!-- ===== NOTIFICATION SETTINGS MODAL ===== -->
+    <div id="notif-settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notif-modal-title">
+      <div class="modal-panel">
+        <div class="modal-header">
+          <h2 id="notif-modal-title">Notification Settings</h2>
+          <button id="notif-modal-close" type="button" class="modal-close-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-tabs" role="tablist">
+          <button type="button" class="modal-tab active" data-tab="keywords" role="tab" aria-selected="true">🔍 Keyword Alerts</button>
+          <button type="button" class="modal-tab" data-tab="categories" role="tab" aria-selected="false">📢 Category Channels</button>
+        </div>
+
+        <!-- Keywords tab -->
+        <div id="tab-keywords" class="modal-tab-content">
+          <p class="modal-hint">Get notified when new listings match a keyword (e.g. "RTX 5070"). Alerts go to a dedicated Discord channel.</p>
+          <label class="field-label modal-field">
+            Keyword alerts webhook URL
+            <input id="keyword-webhook-input" type="url" placeholder="https://discord.com/api/webhooks/…" class="modal-input" />
+          </label>
+          <div class="modal-list-header">
+            <span class="modal-list-title">Keywords</span>
+            <div class="modal-add-row">
+              <input id="new-keyword-input" type="text" placeholder="e.g. RTX 5070" class="modal-input modal-input-sm" />
+              <button id="add-keyword-btn" type="button" class="btn-accent-sm">Add</button>
+            </div>
+          </div>
+          <ul id="keywords-list" class="modal-item-list"></ul>
+        </div>
+
+        <!-- Category channels tab -->
+        <div id="tab-categories" class="modal-tab-content hidden">
+          <p class="modal-hint">Route Discord alerts for specific product categories to dedicated channels. Pattern is matched case-insensitively against the product category name.</p>
+          <div class="modal-list-header">
+            <span class="modal-list-title">Category → Channel mappings</span>
+            <button id="add-category-btn" type="button" class="btn-accent-sm">+ Add mapping</button>
+          </div>
+          <ul id="categories-list" class="modal-item-list"></ul>
+        </div>
+
+        <div class="modal-footer">
+          <span id="notif-save-status" class="modal-save-status"></span>
+          <button id="save-notif-settings-btn" type="button" class="btn-primary">Save settings</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ===== NOTICE BANNER ===== -->
     <div id="notice-banner" class="notice hidden" role="status" aria-live="polite"></div>

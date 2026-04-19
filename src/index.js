@@ -111,7 +111,8 @@ async function triggerScan(trigger, options = {}) {
     sent: 0, skipped: 0, failed: 0, errors: [],
     amazingDeals: { sent: 0, skipped: 0, failed: 0, errors: [] },
     newListings: { sent: 0, skipped: 0, failed: 0, messages: 0, errors: [] },
-    favoriteCategoryEvents: { sent: 0, skipped: 0, failed: 0, newListingEvents: 0, priceDropEvents: 0, errors: [] }
+    favoriteCategoryEvents: { sent: 0, skipped: 0, failed: 0, newListingEvents: 0, priceDropEvents: 0, errors: [] },
+    keywordMatches: { sent: 0, skipped: 0, failed: 0, errors: [] }
   };
 
   function mergeNotif(agg, n) {
@@ -221,12 +222,14 @@ async function triggerScan(trigger, options = {}) {
             newItems: mergeResult.newItems,
             priceDrops: mergeResult.priceDrops,
             sources: config.sources,
-            state
+            state,
+            notificationSettings: state.preferences?.notificationSettings
           });
           mergeNotif(aggregatedNotif, sourceNotif);
           mergeNotif(aggregatedNotif.amazingDeals, sourceNotif.amazingDeals);
           mergeNotif(aggregatedNotif.newListings, sourceNotif.newListings);
           mergeNotif(aggregatedNotif.favoriteCategoryEvents, sourceNotif.favoriteCategoryEvents);
+          mergeNotif(aggregatedNotif.keywordMatches, sourceNotif.keywordMatches);
         });
 
         // Wait for this source's turn in the processing queue before resolving.

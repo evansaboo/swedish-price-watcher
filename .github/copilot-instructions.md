@@ -124,7 +124,8 @@ const { items } = await client.dataset(run.defaultDatasetId).listItems();
 - Update docs/config examples when behavior or setup changes.
 - Do not reintroduce Vercel-specific runtime paths/config.
 - When adding a source type, always update BOTH `src/sources/index.js` AND `src/config.js` supportedSourceTypes.
+- **When adding a new feature, implement it end-to-end** (backend API + frontend UI + tests + Discord/notification wiring) so it is fully working before marking complete. Ask clarifying questions if scope is ambiguous.
 
 ## Workflow Rule (Required)
 - **After every completed code change, always commit and push to `main`.**
-- Use Railway CLI to verify production health after deploying fixes.
+- **After deploying, verify the feature works in production** using `railway logs --tail 50` and/or a live curl/scan to confirm expected behavior in the Railway pod.
