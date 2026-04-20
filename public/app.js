@@ -65,6 +65,8 @@ const elements = {
   activeFilters: document.querySelector('#active-filters'),
   sourcesList: document.querySelector('#sources-list'),
   scanAllBtn: document.querySelector('#scan-all-btn'),
+  sourcesAllOnBtn: document.querySelector('#sources-all-on-btn'),
+  sourcesAllOffBtn: document.querySelector('#sources-all-off-btn'),
   favoritesEditor: document.querySelector('#favorites-editor'),
   favoritesEditorWrap: document.querySelector('#favorites-editor-wrap'),
   favoritesSearchInput: document.querySelector('#favorites-search-input'),
@@ -83,7 +85,7 @@ const elements = {
   schedulerSaveStatus: null,
   schedulerNextRun: document.querySelector('#scheduler-next-run'),
   modalSchedulerStatus: document.querySelector('#modal-scheduler-status'),
-  scannerToggles: document.querySelector('#scanner-toggles'),
+  scannerToggles: null,
   productsCount: document.querySelector('#products-count'),
   productsTable: document.querySelector('#products-table'),
   refreshButton: document.querySelector('#refresh-button'),
@@ -692,7 +694,7 @@ function renderSources(sources, isScanning, sourceProgress) {
   if (!elements.sourcesList || !sources?.length) return;
 
   elements.sourcesList.innerHTML = sources
-    .filter((source) => source.enabled) // only show config-enabled sources
+    .filter((source) => source.enabled)
     .map((source) => {
       const sp = isScanning ? (sourceProgress?.[source.id] ?? { status: 'queued' }) : null;
       let statusLabel, statusExtra;
@@ -712,51 +714,34 @@ function renderSources(sources, isScanning, sourceProgress) {
       const errorLine = !sp && source.lastError
         ? `<span class="source-error-meta">${escapeHtml(source.lastError)}</span>`
         : (sp?.status === 'error' && sp.message ? `<span class="source-error-meta">${escapeHtml(sp.message)}</span>` : '');
+      const autoChecked = source.schedulerEnabled ? 'checked' : '';
+      const autoTitle = source.schedulerEnabled ? 'Auto-scan enabled — click to disable' : 'Auto-scan disabled — click to enable';
 
       return `
-        <div class="source-row">
+        <div class="source-row${source.schedulerEnabled ? '' : ' source-auto-off'}">
           <div class="source-info">
             <span class="source-name">${escapeHtml(source.label)}</span>
             <span class="source-meta">${escapeHtml(lastScanLine)}</span>
             ${errorLine}
           </div>
           <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}${escapeHtml(statusExtra)}</span>
+          <label class="source-auto-toggle" title="${autoTitle}">
+            <input type="checkbox" class="source-scheduler-cb" data-source-id="${escapeHtml(source.id)}" ${autoChecked} />
+            <span class="source-auto-knob"></span>
+          </label>
           <button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>
         </div>
       `;
     })
     .join('');
 
-  // Wire up per-source scan buttons
-  for (const btn of elements.sourcesList.querySelectorAll('[data-source-id]')) {
-    btn.addEventListener('click', () => {
-      const sourceId = btn.getAttribute('data-source-id');
-      triggerSourceScan([sourceId]);
-    });
+  // Per-source scan buttons
+  for (const btn of elements.sourcesList.querySelectorAll('.source-scan-btn')) {
+    btn.addEventListener('click', () => triggerSourceScan([btn.getAttribute('data-source-id')]));
   }
-}
 
-function renderScannerToggles(sources) {
-  if (!elements.scannerToggles || !sources?.length) return;
-
-  // Only show sources that are enabled in config — scheduler controls which of those auto-run
-  elements.scannerToggles.innerHTML = sources
-    .filter((source) => source.enabled)
-    .map((source) => {
-      const checked = source.schedulerEnabled ? 'checked' : '';
-      return `
-        <label class="scanner-toggle-item" title="${escapeHtml(source.label)}">
-          <input type="checkbox" class="scanner-toggle-cb" data-source-id="${escapeHtml(source.id)}" ${checked} />
-          <span class="scanner-toggle-label">
-            <span class="scanner-toggle-name">${escapeHtml(source.label)}</span>
-            <span class="scanner-toggle-meta">${source.lastCount != null ? source.lastCount + ' items' : 'No data yet'}</span>
-          </span>
-        </label>
-      `;
-    })
-    .join('');
-
-  for (const cb of elements.scannerToggles.querySelectorAll('.scanner-toggle-cb')) {
+  // Auto-scan toggles
+  for (const cb of elements.sourcesList.querySelectorAll('.source-scheduler-cb')) {
     cb.addEventListener('change', async () => {
       const sourceId = cb.getAttribute('data-source-id');
       const enabled = cb.checked;
@@ -769,7 +754,6 @@ function renderScannerToggles(sources) {
         });
         const sources = await fetchJson('/api/sources');
         renderSources(sources, false);
-        renderScannerToggles(sources);
       } catch (err) {
         cb.checked = !enabled;
         console.error('Failed to toggle source', err);
@@ -1370,7 +1354,6 @@ async function loadDashboard() {
   syncScanButton(status);
   renderStats(status, response, categories);
   renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
-  renderScannerToggles(sources);
   renderCategoryFilter(categories);
   renderStoreFilter(outletSources ?? []);
   renderActiveFilters();
@@ -1554,6 +1537,23 @@ if (elements.cancelButton) {
 // "Scan all" button in the sidebar Sources section
 if (elements.scanAllBtn) {
   elements.scanAllBtn.addEventListener('click', () => triggerSourceScan(null));
+
+async function bulkToggleSources(enabled) {
+  const sources = await fetchJson('/api/sources');
+  const targets = sources.filter((s) => s.enabled && s.schedulerEnabled !== enabled);
+  await Promise.all(targets.map((s) =>
+    fetch(`/api/sources/${encodeURIComponent(s.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    })
+  ));
+  const updated = await fetchJson('/api/sources');
+  renderSources(updated, false);
+}
+
+elements.sourcesAllOnBtn?.addEventListener('click', () => bulkToggleSources(true));
+elements.sourcesAllOffBtn?.addEventListener('click', () => bulkToggleSources(false));
 }
 
 loadDashboard().catch((error) => {
