@@ -43,6 +43,7 @@
         <div class="modal-tabs" role="tablist">
           <button type="button" class="modal-tab active" data-tab="keywords" role="tab" aria-selected="true">🔍 Keyword Alerts</button>
           <button type="button" class="modal-tab" data-tab="categories" role="tab" aria-selected="false">📢 Category Channels</button>
+          <button type="button" class="modal-tab" data-tab="filters" role="tab" aria-selected="false">🔔 Notifications</button>
           <button type="button" class="modal-tab" data-tab="scheduler" role="tab" aria-selected="false">⏰ Scheduler</button>
         </div>
 
@@ -73,10 +74,20 @@
           <ul id="categories-list" class="modal-item-list"></ul>
         </div>
 
-        <!-- Scheduler tab (moved from sidebar) -->
+        <!-- Notification type filters tab -->
+        <div id="tab-filters" class="modal-tab-content hidden">
+          <p class="modal-hint">Choose which notification types are sent. These apply to all scans (manual and scheduled).</p>
+          <div class="toggle-group toggle-group-stacked">
+            <label class="toggle-item"><input id="notify-type-favorites" type="checkbox" /> <span>Favorites — alert when a favourited product drops in price</span></label>
+            <label class="toggle-item"><input id="notify-type-keywords" type="checkbox" /> <span>Keywords — alert when a new listing matches a keyword</span></label>
+            <label class="toggle-item"><input id="notify-type-categories" type="checkbox" /> <span>Category channels — route alerts to per-category webhooks</span></label>
+          </div>
+        </div>
+
+        <!-- Scheduler tab -->
         <div id="tab-scheduler" class="modal-tab-content hidden">
           <div id="modal-scheduler-status" class="modal-scheduler-status"></div>
-          <p class="modal-hint">Configure automatic scans and which notifications the scheduler will trigger.</p>
+          <p class="modal-hint">Configure automatic scans on a recurring interval.</p>
           <div class="scheduler-grid">
             <label class="toggle-item">
               <input id="scheduler-enabled" type="checkbox" />
@@ -105,12 +116,7 @@
               </label>
             </div>
 
-            <div class="modal-hint">Notifications triggered by the scheduler:</div>
-            <div class="toggle-group">
-              <label class="toggle-item"><input id="scheduler-notify-favorites" type="checkbox" /> <span>Favorites</span></label>
-              <label class="toggle-item"><input id="scheduler-notify-keywords" type="checkbox" /> <span>Keywords</span></label>
-              <label class="toggle-item"><input id="scheduler-notify-categories" type="checkbox" /> <span>Category channels</span></label>
-            </div>
+
           </div>
         </div>
 

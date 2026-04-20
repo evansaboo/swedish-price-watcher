@@ -76,9 +76,9 @@ const elements = {
   schedulerWindowEnabled: document.querySelector('#scheduler-window-enabled'),
   schedulerWindowStart: document.querySelector('#scheduler-window-start'),
   schedulerWindowEnd: document.querySelector('#scheduler-window-end'),
-  schedulerNotifyFavorites: document.querySelector('#scheduler-notify-favorites'),
-  schedulerNotifyKeywords: document.querySelector('#scheduler-notify-keywords'),
-  schedulerNotifyCategories: document.querySelector('#scheduler-notify-categories'),
+  notifyTypeFavorites: document.querySelector('#notify-type-favorites'),
+  notifyTypeKeywords: document.querySelector('#notify-type-keywords'),
+  notifyTypeCategories: document.querySelector('#notify-type-categories'),
   saveSchedulerButton: null,
   schedulerSaveStatus: null,
   schedulerNextRun: document.querySelector('#scheduler-next-run'),
@@ -1665,9 +1665,9 @@ async function openNotifModal() {
 
   // Populate scheduler-specific notification type checkboxes from saved notification settings
   const schedTypes = notifSettings.schedulerNotificationTypes ?? { favorites: true, keywords: true, categories: true };
-  if (elements.schedulerNotifyFavorites) elements.schedulerNotifyFavorites.checked = Boolean(schedTypes.favorites);
-  if (elements.schedulerNotifyKeywords) elements.schedulerNotifyKeywords.checked = Boolean(schedTypes.keywords);
-  if (elements.schedulerNotifyCategories) elements.schedulerNotifyCategories.checked = Boolean(schedTypes.categories);
+  if (elements.notifyTypeFavorites) elements.notifyTypeFavorites.checked = Boolean(schedTypes.favorites);
+  if (elements.notifyTypeKeywords) elements.notifyTypeKeywords.checked = Boolean(schedTypes.keywords);
+  if (elements.notifyTypeCategories) elements.notifyTypeCategories.checked = Boolean(schedTypes.categories);
 
   notifModal.overlay.classList.remove('hidden');
   notifModal.saveStatus.textContent = '';
@@ -1718,9 +1718,9 @@ notifModal.saveBtn.addEventListener('click', async () => {
 
   // include scheduler-driven notification choices
   notifSettings.schedulerNotificationTypes = {
-    favorites: Boolean(elements.schedulerNotifyFavorites?.checked),
-    keywords: Boolean(elements.schedulerNotifyKeywords?.checked),
-    categories: Boolean(elements.schedulerNotifyCategories?.checked)
+    favorites: Boolean(elements.notifyTypeFavorites?.checked),
+    keywords: Boolean(elements.notifyTypeKeywords?.checked),
+    categories: Boolean(elements.notifyTypeCategories?.checked)
   };
 
   notifModal.saveBtn.disabled = true;
