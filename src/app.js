@@ -228,6 +228,7 @@ function filterOutletProducts(products, query, favoriteCategorySet, latestRunSta
   const referenceOnly = String(query.referenceOnly ?? 'false') === 'true';
   const newOnly = String(query.newOnly ?? 'false') === 'true';
   const minDiscountPercent = Number.parseInt(String(query.minDiscountPercent ?? ''), 10);
+  const minPriceSek = Number.parseInt(String(query.minPriceSek ?? query.minPrice ?? ''), 10);
   const maxPriceSek = Number.parseInt(String(query.maxPriceSek ?? query.maxPrice ?? ''), 10);
 
   return products.filter((product) => {
@@ -257,6 +258,10 @@ function filterOutletProducts(products, query, favoriteCategorySet, latestRunSta
       if (!(Number.isFinite(product.discountPercent) && product.discountPercent >= minDiscountPercent)) {
         return false;
       }
+    }
+
+    if (Number.isFinite(minPriceSek) && minPriceSek > 0 && product.currentPriceSek < minPriceSek) {
+      return false;
     }
 
     if (Number.isFinite(maxPriceSek) && maxPriceSek > 0 && product.currentPriceSek > maxPriceSek) {

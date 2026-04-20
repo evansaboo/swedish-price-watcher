@@ -109,7 +109,8 @@ async function triggerScan(trigger, options = {}) {
   // Aggregate notification summaries from per-source notifications
   const aggregatedNotif = {
     sent: 0, skipped: 0, failed: 0, errors: [],
-    amazingDeals: { sent: 0, skipped: 0, failed: 0, errors: [] },
+    // amazingDeals removed: not used anymore
+
     newListings: { sent: 0, skipped: 0, failed: 0, messages: 0, errors: [] },
     favoriteCategoryEvents: { sent: 0, skipped: 0, failed: 0, newListingEvents: 0, priceDropEvents: 0, errors: [] },
     keywordMatches: { sent: 0, skipped: 0, failed: 0, errors: [] }
@@ -226,7 +227,7 @@ async function triggerScan(trigger, options = {}) {
             notificationSettings: state.preferences?.notificationSettings
           });
           mergeNotif(aggregatedNotif, sourceNotif);
-          mergeNotif(aggregatedNotif.amazingDeals, sourceNotif.amazingDeals);
+          // amazingDeals removed: no-op
           mergeNotif(aggregatedNotif.newListings, sourceNotif.newListings);
           mergeNotif(aggregatedNotif.favoriteCategoryEvents, sourceNotif.favoriteCategoryEvents);
           mergeNotif(aggregatedNotif.keywordMatches, sourceNotif.keywordMatches);
@@ -249,7 +250,7 @@ async function triggerScan(trigger, options = {}) {
       priceDrops: priceDrops.length,
       trackedItems: Object.keys(state.items).length,
       deals: state.deals.length,
-      amazingDeals: state.deals.filter((deal) => deal.amazingDeal).length,
+      // amazingDeals summary removed
       notificationSummary: aggregatedNotif,
       sourceResults
     };

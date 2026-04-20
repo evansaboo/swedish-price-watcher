@@ -65,6 +65,7 @@ test('batches new listing notifications for Discord', async () => {
           notificationBatchSize: 5
         }
       ],
+      notificationSettings: { enableGlobalNewListings: true },
       state
     });
 
@@ -249,6 +250,7 @@ test('retries Discord webhook after 429 and still delivers notification', async 
           notificationMode: 'new-listings'
         }
       ],
+      notificationSettings: { enableGlobalNewListings: true },
       state
     });
 
@@ -382,6 +384,7 @@ test('Discord 429 does not fail whole notification summary', async () => {
           notificationMode: 'new-listings'
         }
       ],
+      notificationSettings: { enableGlobalNewListings: true },
       state
     });
 

@@ -13,6 +13,7 @@ const state = {
   newOnly: false,
   referenceOnly: false,
   minDiscountPercent: '',
+  minPriceSek: '',
   maxPriceSek: '',
   favoriteCategories: [],
   categories: [],
@@ -51,6 +52,7 @@ const elements = {
   newOnly: document.querySelector('#new-only'),
   referenceOnly: document.querySelector('#reference-only'),
   minDiscountFilter: document.querySelector('#min-discount-filter'),
+  minPriceFilter: document.querySelector('#min-price-filter'),
   maxPriceFilter: document.querySelector('#max-price-filter'),
   clearFiltersButton: document.querySelector('#clear-filters-button'),
   filterPresetButtons: [...document.querySelectorAll('[data-filter-preset]')],
@@ -167,6 +169,7 @@ function saveUiPreferences() {
     newOnly: state.newOnly,
     referenceOnly: state.referenceOnly,
     minDiscountPercent: state.minDiscountPercent,
+    minPriceSek: state.minPriceSek,
     maxPriceSek: state.maxPriceSek,
     favoritesEditorOpen: state.favoritesEditorOpen,
     favoritesSearch: state.favoritesSearch,
@@ -217,6 +220,10 @@ function hydrateUiPreferences() {
     state.minDiscountPercent = saved.minDiscountPercent;
   }
 
+  if (typeof saved.minPriceSek === 'string') {
+    state.minPriceSek = saved.minPriceSek;
+  }
+
   if (typeof saved.maxPriceSek === 'string') {
     state.maxPriceSek = saved.maxPriceSek;
   }
@@ -250,6 +257,7 @@ function hydrateUiPreferences() {
   elements.newOnly.checked = state.newOnly;
   elements.referenceOnly.checked = state.referenceOnly;
   elements.minDiscountFilter.value = state.minDiscountPercent;
+  elements.minPriceFilter.value = state.minPriceSek;
   elements.maxPriceFilter.value = state.maxPriceSek;
   elements.favoritesSearchInput.value = state.favoritesSearch;
   renderFilterPresetButtons();
@@ -307,6 +315,7 @@ function getActiveFilterCount() {
   if (state.newOnly) count++;
   if (state.referenceOnly) count++;
   if (state.minDiscountPercent) count++;
+  if (state.minPriceSek) count++;
   if (state.maxPriceSek) count++;
   return count;
 }
@@ -487,6 +496,7 @@ async function fetchJson(url, options) {
 function buildProductsQueryString() {
   const params = new URLSearchParams();
   const minDiscountPercent = parsePositiveInteger(state.minDiscountPercent);
+  const minPriceSek = parsePositiveInteger(state.minPriceSek);
   const maxPriceSek = parsePositiveInteger(state.maxPriceSek);
 
   if (state.search) {
@@ -521,6 +531,10 @@ function buildProductsQueryString() {
     params.set('minDiscountPercent', String(minDiscountPercent));
   }
 
+  if (minPriceSek) {
+    params.set('minPriceSek', String(minPriceSek));
+  }
+
   if (maxPriceSek) {
     params.set('maxPriceSek', String(maxPriceSek));
   }
@@ -532,6 +546,7 @@ function buildProductsQueryString() {
 function buildOutletProductsQuery() {
   const params = new URLSearchParams();
   const minDiscountPercent = parsePositiveInteger(state.minDiscountPercent);
+  const minPriceSek = parsePositiveInteger(state.minPriceSek);
   const maxPriceSek = parsePositiveInteger(state.maxPriceSek);
 
   if (state.search) params.set('search', state.search);
@@ -542,6 +557,7 @@ function buildOutletProductsQuery() {
   if (state.newOnly) params.set('newOnly', 'true');
   if (state.referenceOnly) params.set('referenceOnly', 'true');
   if (minDiscountPercent) params.set('minDiscountPercent', String(minDiscountPercent));
+  if (minPriceSek) params.set('minPriceSek', String(minPriceSek));
   if (maxPriceSek) params.set('maxPriceSek', String(maxPriceSek));
 
   params.set('sortBy', state.sortBy);
@@ -808,6 +824,7 @@ function renderStoreFilter(sources) {
 function renderActiveFilters() {
   const activeFilters = [];
   const minDiscount = parsePositiveInteger(state.minDiscountPercent);
+  const minPrice = parsePositiveInteger(state.minPriceSek);
   const maxPrice = parsePositiveInteger(state.maxPriceSek);
 
   if (state.search) {
@@ -842,6 +859,10 @@ function renderActiveFilters() {
 
   if (minDiscount) {
     activeFilters.push(`Min discount: ${minDiscount}%`);
+  }
+
+  if (minPrice) {
+    activeFilters.push(`Min price: ${formatSek(minPrice)}`);
   }
 
   if (maxPrice) {
@@ -1272,6 +1293,7 @@ function applyCurrentFilterState() {
   state.newOnly = elements.newOnly.checked;
   state.referenceOnly = elements.referenceOnly.checked;
   state.minDiscountPercent = elements.minDiscountFilter.value.trim();
+  state.minPriceSek = elements.minPriceFilter?.value.trim() ?? '';
   state.maxPriceSek = elements.maxPriceFilter.value.trim();
   saveUiPreferences();
   renderFilterPresetButtons();
@@ -1286,6 +1308,7 @@ function resetFilters() {
   state.newOnly = false;
   state.referenceOnly = false;
   state.minDiscountPercent = '';
+  state.minPriceSek = '';
   state.maxPriceSek = '';
 
   elements.searchInput.value = '';
@@ -1296,6 +1319,7 @@ function resetFilters() {
   elements.newOnly.checked = false;
   elements.referenceOnly.checked = false;
   elements.minDiscountFilter.value = '';
+  elements.minPriceFilter.value = '';
   elements.maxPriceFilter.value = '';
   saveUiPreferences();
   renderFilterPresetButtons();
@@ -1394,6 +1418,7 @@ elements.discountedOnly.addEventListener('change', () => updateFilters());
 elements.newOnly.addEventListener('change', () => updateFilters());
 elements.referenceOnly.addEventListener('change', () => updateFilters());
 elements.minDiscountFilter.addEventListener('input', () => updateFilters({ debounce: true }));
+elements.minPriceFilter.addEventListener('input', () => updateFilters({ debounce: true }));
 elements.maxPriceFilter.addEventListener('input', () => updateFilters({ debounce: true }));
 elements.sidebarToggle.addEventListener('click', () => {
   setSidebarOpen(!state.sidebarOpen);

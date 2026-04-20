@@ -99,18 +99,22 @@ export class DiscordNotifier {
   }
 
   async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings }) {
+    // By default global "new-listings" posts are disabled. Enable via notificationSettings.enableGlobalNewListings = true
     const enabledSources = sources.filter((source) => source.enabled);
     const sourceMap = new Map(enabledSources.map((source) => [source.id, source]));
     const favoriteCategories = state.preferences?.favoriteCategories ?? [];
-    const amazingDealSourceIds = new Set(
-      enabledSources
-        .filter((source) => (source.notificationMode ?? 'amazing-deals') === 'amazing-deals')
-        .map((source) => source.id)
-    );
-    const newListingSources = enabledSources.filter((source) => source.notificationMode === 'new-listings');
 
     const settings = notificationSettings ?? {};
     const categoryWebhooks = Array.isArray(settings.categoryWebhooks) ? settings.categoryWebhooks : [];
+
+    // Conditionally send global new-listings if explicitly enabled in settings.
+    const enableGlobalNewListings = Boolean(settings.enableGlobalNewListings);
+    let newListingsSummary = { sent: 0, skipped: newItems.length, failed: 0, errors: [] };
+
+    if (enableGlobalNewListings) {
+      const newListingSources = enabledSources.filter((source) => source.notificationMode === 'new-listings');
+      newListingsSummary = await this.notifyNewListings(newItems, state, newListingSources, sourceMap);
+    }
 
     const favoriteCategoryEvents = await this.notifyFavoriteCategoryEvents({
       newItems,
@@ -120,107 +124,29 @@ export class DiscordNotifier {
       categoryWebhooks,
       state
     });
-    const amazingDealsSummary = await this.notifyAmazingDeals(deals, state, amazingDealSourceIds, categoryWebhooks);
-    const newListingsSummary = await this.notifyNewListings(newItems, state, newListingSources, sourceMap);
 
     const keywords = Array.isArray(settings.keywords) ? settings.keywords.filter((k) => k.enabled) : [];
     const keywordWebhook = typeof settings.keywordWebhook === 'string' ? settings.keywordWebhook.trim() : '';
     const keywordSummary = await this.notifyKeywordMatches({ newItems, state, keywordWebhook, keywords });
 
     const errors = [
-      ...(amazingDealsSummary.errors ?? []),
       ...(newListingsSummary.errors ?? []),
       ...(favoriteCategoryEvents.errors ?? []),
       ...(keywordSummary.errors ?? [])
     ].slice(0, 10);
 
     return {
-      sent: amazingDealsSummary.sent + newListingsSummary.sent + favoriteCategoryEvents.sent + keywordSummary.sent,
-      skipped: amazingDealsSummary.skipped + newListingsSummary.skipped + favoriteCategoryEvents.skipped + keywordSummary.skipped,
-      failed: (amazingDealsSummary.failed ?? 0) + (newListingsSummary.failed ?? 0) + (favoriteCategoryEvents.failed ?? 0) + (keywordSummary.failed ?? 0),
+      sent: (newListingsSummary.sent ?? 0) + (favoriteCategoryEvents.sent ?? 0) + (keywordSummary.sent ?? 0),
+      skipped: (newListingsSummary.skipped ?? 0) + (favoriteCategoryEvents.skipped ?? 0) + (keywordSummary.skipped ?? 0),
+      failed: (newListingsSummary.failed ?? 0) + (favoriteCategoryEvents.failed ?? 0) + (keywordSummary.failed ?? 0),
       errors,
-      amazingDeals: amazingDealsSummary,
       newListings: newListingsSummary,
       favoriteCategoryEvents,
       keywordMatches: keywordSummary
     };
   }
 
-  async notifyAmazingDeals(deals, state, allowedSourceIds = null, categoryWebhooks = []) {
-    const amazingDeals = deals.filter((deal) => deal.amazingDeal && (!allowedSourceIds || allowedSourceIds.has(deal.sourceId)));
 
-    if (!this.webhookUrl) {
-      return {
-        sent: 0,
-        skipped: amazingDeals.length,
-        failed: 0,
-        errors: [],
-        reason: 'discord-webhook-not-configured'
-      };
-    }
-
-    // Cap per-scan notifications to avoid flooding Discord on first runs.
-    // Group by sourceId so each store gets up to MAX_PER_SOURCE deals per scan.
-    const MAX_PER_SOURCE = 25;
-    const sentPerSource = new Map();
-    const cappedDeals = [];
-    for (const deal of amazingDeals) {
-      const count = sentPerSource.get(deal.sourceId) ?? 0;
-      if (count < MAX_PER_SOURCE) {
-        cappedDeals.push(deal);
-        sentPerSource.set(deal.sourceId, count + 1);
-      }
-    }
-
-    const now = Date.now();
-    let sent = 0;
-    let skipped = amazingDeals.length - cappedDeals.length; // capped ones count as skipped
-    let failed = 0;
-    const errors = [];
-
-    for (const deal of cappedDeals) {
-      const notificationKey = `${deal.listingKey}:${deal.currentPriceSek}`;
-      const previousSentAt = state.notifications[notificationKey];
-
-      if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
-        skipped += 1;
-        continue;
-      }
-
-      try {
-        const targetWebhook = resolveCategoryWebhook(deal.category, categoryWebhooks) ?? this.webhookUrl;
-        await this.#postWebhook({
-          username: 'Price Watcher',
-          content: `Amazing deal: ${deal.title}`,
-          embeds: [
-            {
-              title: deal.title,
-              url: deal.url,
-              description: `${deal.sourceLabel} • ${deal.category} • ${deal.condition}`,
-              fields: [
-                { name: 'Current', value: formatSek(deal.currentPriceSek), inline: true },
-                { name: 'Initial', value: formatSek(deal.comparisonPriceSek), inline: true },
-                { name: 'Discount %', value: formatPercent(deal.discountPercent), inline: true },
-                { name: 'Profit', value: formatSek(deal.profitSek), inline: true },
-                { name: 'Score', value: String(deal.score), inline: true },
-                { name: 'Reasons', value: deal.reasons.join(' • ') || 'No detail', inline: false }
-              ],
-              image: deal.imageUrl ? { url: deal.imageUrl } : undefined
-            }
-          ]
-        }, targetWebhook);
-      } catch (error) {
-        failed += 1;
-        this.#recordError(errors, error);
-        continue;
-      }
-
-      state.notifications[notificationKey] = new Date(now).toISOString();
-      sent += 1;
-    }
-
-    return { sent, skipped, failed, errors };
-  }
 
   async notifyNewListings(newItems, state, sources, sourceMap = new Map()) {
     const items = newItems.filter((item) => sources.some((source) => source.id === item.sourceId));
