@@ -511,7 +511,8 @@ export async function buildApp({ config, store, scanState, triggerScan, cancelSc
     return {
       keywordWebhook: settings.keywordWebhook ?? '',
       keywords: Array.isArray(settings.keywords) ? settings.keywords : [],
-      categoryWebhooks: Array.isArray(settings.categoryWebhooks) ? settings.categoryWebhooks : []
+      categoryWebhooks: Array.isArray(settings.categoryWebhooks) ? settings.categoryWebhooks : [],
+      schedulerNotificationTypes: settings.schedulerNotificationTypes ?? null
     };
   });
 
@@ -542,16 +543,30 @@ export async function buildApp({ config, store, scanState, triggerScan, cancelSc
           }))
       : [];
 
+    let schedulerNotificationTypes;
+    if (body.schedulerNotificationTypes && typeof body.schedulerNotificationTypes === 'object' && !Array.isArray(body.schedulerNotificationTypes)) {
+      schedulerNotificationTypes = {
+        favorites: Boolean(body.schedulerNotificationTypes.favorites),
+        keywords: Boolean(body.schedulerNotificationTypes.keywords),
+        categories: Boolean(body.schedulerNotificationTypes.categories)
+      };
+    }
+
     state.preferences = {
       ...(state.preferences ?? {}),
-      notificationSettings: { keywordWebhook, keywords, categoryWebhooks }
+      notificationSettings: {
+        keywordWebhook,
+        keywords,
+        categoryWebhooks,
+        ...(schedulerNotificationTypes !== undefined ? { schedulerNotificationTypes } : {})
+      }
     };
 
     if (typeof store.save === 'function') {
       await store.save();
     }
 
-    return { keywordWebhook, keywords, categoryWebhooks };
+    return { keywordWebhook, keywords, categoryWebhooks, schedulerNotificationTypes };
   });
 
   app.get('/api/scheduler', async (_, reply) => {

@@ -106,28 +106,36 @@ export class DiscordNotifier {
 
     const settings = notificationSettings ?? {};
     const categoryWebhooks = Array.isArray(settings.categoryWebhooks) ? settings.categoryWebhooks : [];
+    const schedulerFilter = settings.schedulerNotificationTypes ?? null;
+    const favoritesAllowed = !schedulerFilter || schedulerFilter.favorites !== false;
+    const keywordsAllowed = !schedulerFilter || schedulerFilter.keywords !== false;
+    const categoriesAllowed = !schedulerFilter || schedulerFilter.categories !== false;
 
-    // Conditionally send global new-listings if explicitly enabled in settings.
+    // Conditionally send global new-listings if explicitly enabled in settings and allowed by scheduler
     const enableGlobalNewListings = Boolean(settings.enableGlobalNewListings);
-    let newListingsSummary = { sent: 0, skipped: newItems.length, failed: 0, errors: [] };
+    let newListingsSummary = { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'disabled-by-config' };
 
-    if (enableGlobalNewListings) {
+    if (enableGlobalNewListings && categoriesAllowed) {
       const newListingSources = enabledSources.filter((source) => source.notificationMode === 'new-listings');
       newListingsSummary = await this.notifyNewListings(newItems, state, newListingSources, sourceMap);
+    } else if (enableGlobalNewListings && !categoriesAllowed) {
+      newListingsSummary = { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'skipped-by-scheduler' };
     }
 
-    const favoriteCategoryEvents = await this.notifyFavoriteCategoryEvents({
-      newItems,
-      priceDrops,
-      favoriteCategories,
-      allowedSourceIds: null,
-      categoryWebhooks,
-      state
-    });
+    const favoriteCategoryEvents = favoritesAllowed
+      ? await this.notifyFavoriteCategoryEvents({
+          newItems,
+          priceDrops,
+          favoriteCategories,
+          allowedSourceIds: null,
+          categoryWebhooks,
+          state
+        })
+      : { sent: 0, skipped: newItems.length + priceDrops.length, failed: 0, errors: [], reason: 'skipped-by-scheduler' };
 
     const keywords = Array.isArray(settings.keywords) ? settings.keywords.filter((k) => k.enabled) : [];
     const keywordWebhook = typeof settings.keywordWebhook === 'string' ? settings.keywordWebhook.trim() : '';
-    const keywordSummary = await this.notifyKeywordMatches({ newItems, state, keywordWebhook, keywords });
+    const keywordSummary = keywordsAllowed ? await this.notifyKeywordMatches({ newItems, state, keywordWebhook, keywords }) : { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'skipped-by-scheduler' };
 
     const errors = [
       ...(newListingsSummary.errors ?? []),

@@ -76,6 +76,9 @@ const elements = {
   schedulerWindowEnabled: document.querySelector('#scheduler-window-enabled'),
   schedulerWindowStart: document.querySelector('#scheduler-window-start'),
   schedulerWindowEnd: document.querySelector('#scheduler-window-end'),
+  schedulerNotifyFavorites: document.querySelector('#scheduler-notify-favorites'),
+  schedulerNotifyKeywords: document.querySelector('#scheduler-notify-keywords'),
+  schedulerNotifyCategories: document.querySelector('#scheduler-notify-categories'),
   saveSchedulerButton: document.querySelector('#save-scheduler-button'),
   schedulerNextRun: document.querySelector('#scheduler-next-run'),
   scannerToggles: document.querySelector('#scanner-toggles'),
@@ -1567,7 +1570,7 @@ const notifModal = {
   overlay: document.querySelector('#notif-settings-modal'),
   closeBtn: document.querySelector('#notif-modal-close'),
   tabs: [...document.querySelectorAll('.modal-tab')],
-  tabContents: { keywords: document.querySelector('#tab-keywords'), categories: document.querySelector('#tab-categories') },
+  tabContents: { keywords: document.querySelector('#tab-keywords'), categories: document.querySelector('#tab-categories'), scheduler: document.querySelector('#tab-scheduler') },
   keywordWebhookInput: document.querySelector('#keyword-webhook-input'),
   newKeywordInput: document.querySelector('#new-keyword-input'),
   addKeywordBtn: document.querySelector('#add-keyword-btn'),
@@ -1644,9 +1647,29 @@ async function openNotifModal() {
     const res = await fetch('/api/notification-settings');
     if (res.ok) notifSettings = await res.json();
   } catch {/* use in-memory defaults */}
+
+  // populate keyword/category fields
   notifModal.keywordWebhookInput.value = notifSettings.keywordWebhook ?? '';
   renderKeywordsList();
   renderCategoryList();
+
+  // Populate scheduler fields from scheduler endpoint
+  try {
+    const schedRes = await fetch('/api/scheduler');
+    if (schedRes.ok) {
+      const sched = await schedRes.json();
+      renderScheduler(sched);
+    }
+  } catch (err) {
+    // ignore scheduler fetch failures
+  }
+
+  // Populate scheduler-specific notification type checkboxes from saved notification settings
+  const schedTypes = notifSettings.schedulerNotificationTypes ?? { favorites: true, keywords: true, categories: true };
+  if (elements.schedulerNotifyFavorites) elements.schedulerNotifyFavorites.checked = Boolean(schedTypes.favorites);
+  if (elements.schedulerNotifyKeywords) elements.schedulerNotifyKeywords.checked = Boolean(schedTypes.keywords);
+  if (elements.schedulerNotifyCategories) elements.schedulerNotifyCategories.checked = Boolean(schedTypes.categories);
+
   notifModal.overlay.classList.remove('hidden');
   notifModal.saveStatus.textContent = '';
   document.body.style.overflow = 'hidden';
@@ -1691,7 +1714,16 @@ notifModal.addCategoryBtn.addEventListener('click', () => {
 
 // Save settings
 notifModal.saveBtn.addEventListener('click', async () => {
+  // gather notification settings
   notifSettings.keywordWebhook = notifModal.keywordWebhookInput.value.trim();
+
+  // include scheduler-driven notification choices
+  notifSettings.schedulerNotificationTypes = {
+    favorites: Boolean(elements.schedulerNotifyFavorites?.checked),
+    keywords: Boolean(elements.schedulerNotifyKeywords?.checked),
+    categories: Boolean(elements.schedulerNotifyCategories?.checked)
+  };
+
   notifModal.saveBtn.disabled = true;
   notifModal.saveStatus.textContent = 'Saving…';
   try {
@@ -1704,6 +1736,14 @@ notifModal.saveBtn.addEventListener('click', async () => {
     notifSettings = await res.json();
     renderKeywordsList();
     renderCategoryList();
+
+    // Persist scheduler settings as well
+    try {
+      await saveSchedulerSettings();
+    } catch (err) {
+      console.warn('[scheduler-save]', err.message);
+    }
+
     notifModal.saveStatus.textContent = '✓ Saved';
     setTimeout(() => { notifModal.saveStatus.textContent = ''; }, 2500);
   } catch (err) {

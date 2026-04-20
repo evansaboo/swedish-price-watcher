@@ -218,16 +218,20 @@ async function triggerScan(trigger, options = {}) {
           sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
 
           // Send Discord notifications after state is persisted.
+          const notifPref = state.preferences?.notificationSettings ?? {};
+          const effectiveNotificationSettings = { ...notifPref };
+          if (trigger !== 'scheduled' && effectiveNotificationSettings && effectiveNotificationSettings.schedulerNotificationTypes) {
+            delete effectiveNotificationSettings.schedulerNotificationTypes;
+          }
           const sourceNotif = await notifier.notifyScan({
             deals: state.deals,
             newItems: mergeResult.newItems,
             priceDrops: mergeResult.priceDrops,
             sources: config.sources,
             state,
-            notificationSettings: state.preferences?.notificationSettings
+            notificationSettings: effectiveNotificationSettings
           });
           mergeNotif(aggregatedNotif, sourceNotif);
-          // amazingDeals removed: no-op
           mergeNotif(aggregatedNotif.newListings, sourceNotif.newListings);
           mergeNotif(aggregatedNotif.favoriteCategoryEvents, sourceNotif.favoriteCategoryEvents);
           mergeNotif(aggregatedNotif.keywordMatches, sourceNotif.keywordMatches);

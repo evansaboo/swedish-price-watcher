@@ -42,6 +42,7 @@
         <div class="modal-tabs" role="tablist">
           <button type="button" class="modal-tab active" data-tab="keywords" role="tab" aria-selected="true">🔍 Keyword Alerts</button>
           <button type="button" class="modal-tab" data-tab="categories" role="tab" aria-selected="false">📢 Category Channels</button>
+          <button type="button" class="modal-tab" data-tab="scheduler" role="tab" aria-selected="false">⏰ Scheduler</button>
         </div>
 
         <!-- Keywords tab -->
@@ -69,6 +70,48 @@
             <button id="add-category-btn" type="button" class="btn-accent-sm">+ Add mapping</button>
           </div>
           <ul id="categories-list" class="modal-item-list"></ul>
+        </div>
+
+        <!-- Scheduler tab (moved from sidebar) -->
+        <div id="tab-scheduler" class="modal-tab-content hidden">
+          <p class="modal-hint">Configure automatic scans and which notifications the scheduler will trigger.</p>
+          <div class="scheduler-grid">
+            <label class="toggle-item">
+              <input id="scheduler-enabled" type="checkbox" />
+              <span>Auto-scan enabled</span>
+            </label>
+
+            <label class="field-label">
+              Interval (minutes)
+              <input id="scheduler-interval" type="number" min="1" step="1" />
+            </label>
+
+            <label class="toggle-item">
+              <input id="scheduler-window-enabled" type="checkbox" />
+              <span>Active hours only</span>
+            </label>
+
+            <div class="field-row">
+              <label class="field-label">
+                Start (Sweden)
+                <input id="scheduler-window-start" type="time" />
+              </label>
+
+              <label class="field-label">
+                End (Sweden)
+                <input id="scheduler-window-end" type="time" />
+              </label>
+            </div>
+
+            <div class="modal-hint">Notifications triggered by the scheduler:</div>
+            <div class="toggle-group">
+              <label class="toggle-item"><input id="scheduler-notify-favorites" type="checkbox" /> <span>Favorites</span></label>
+              <label class="toggle-item"><input id="scheduler-notify-keywords" type="checkbox" /> <span>Keywords</span></label>
+              <label class="toggle-item"><input id="scheduler-notify-categories" type="checkbox" /> <span>Category channels</span></label>
+            </div>
+
+            <button id="save-scheduler-button" type="button" class="btn-accent-sm">Save scheduler</button>
+          </div>
         </div>
 
         <div class="modal-footer">
@@ -238,41 +281,7 @@
 
             <div class="sidebar-divider"></div>
 
-            <!-- ── SCHEDULER ──────────────────────── -->
-            <section class="sidebar-section" id="section-scheduler">
-              <div class="sidebar-section-header">
-                <div class="sidebar-section-label">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  <h2>Scheduler</h2>
-                </div>
-              </div>
-              <div id="scheduler-next-run" class="scheduler-next-run"></div>
-              <div class="scheduler-grid">
-                <label class="toggle-item">
-                  <input id="scheduler-enabled" type="checkbox" />
-                  <span>Auto-scan enabled</span>
-                </label>
-                <label class="field-label">
-                  Interval (minutes)
-                  <input id="scheduler-interval" type="number" min="1" step="1" />
-                </label>
-                <label class="toggle-item">
-                  <input id="scheduler-window-enabled" type="checkbox" />
-                  <span>Active hours only</span>
-                </label>
-                <div class="field-row">
-                  <label class="field-label">
-                    Start (Sweden)
-                    <input id="scheduler-window-start" type="time" />
-                  </label>
-                  <label class="field-label">
-                    End (Sweden)
-                    <input id="scheduler-window-end" type="time" />
-                  </label>
-                </div>
-                <button id="save-scheduler-button" type="button" class="btn-accent-sm">Save scheduler</button>
-              </div>
-            </section>
+            <!-- Scheduler moved to Notification settings modal -->
 
             <div class="sidebar-divider"></div>
 
