@@ -126,6 +126,20 @@ function formatRelativeTime(value) {
   return new Date(value).toLocaleDateString('sv-SE', { month: 'short', day: 'numeric' });
 }
 
+function formatCountdown(value) {
+  if (!value) return null;
+  const ms = new Date(value).getTime() - Date.now();
+  if (ms <= 0) return 'now';
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return 'in < 1 min';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d`;
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -898,7 +912,9 @@ function renderSchedulerStatus() {
   } else if (!state.schedulerEnabled) {
     html = '<span class="scheduler-next-run-paused">⏸ Paused</span>';
   } else {
-    const nextRunAt = state.schedulerNextRunAt ? formatRelativeTime(state.schedulerNextRunAt) + ' (' + formatDate(state.schedulerNextRunAt) + ')' : 'Not scheduled';
+    const nextRunAt = state.schedulerNextRunAt
+      ? `${formatCountdown(state.schedulerNextRunAt)} (${formatDate(state.schedulerNextRunAt)})`
+      : 'Not scheduled';
     const windowStr = state.schedulerWindowEnabled
       ? `${state.schedulerWindowStart}–${state.schedulerWindowEnd} (${state.schedulerIsInActiveWindow ? '✅ in window' : '⏳ outside window'})`
       : 'All day';
