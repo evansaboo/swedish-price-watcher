@@ -79,8 +79,8 @@ const elements = {
   schedulerNotifyFavorites: document.querySelector('#scheduler-notify-favorites'),
   schedulerNotifyKeywords: document.querySelector('#scheduler-notify-keywords'),
   schedulerNotifyCategories: document.querySelector('#scheduler-notify-categories'),
-  saveSchedulerButton: document.querySelector('#save-scheduler-button'),
-  schedulerSaveStatus: document.querySelector('#scheduler-save-status'),
+  saveSchedulerButton: null,
+  schedulerSaveStatus: null,
   schedulerNextRun: document.querySelector('#scheduler-next-run'),
   modalSchedulerStatus: document.querySelector('#modal-scheduler-status'),
   scannerToggles: document.querySelector('#scanner-toggles'),
@@ -961,7 +961,6 @@ function renderScheduler(scheduler, options = {}) {
     elements.schedulerWindowEnabled.disabled = true;
     elements.schedulerWindowStart.disabled = true;
     elements.schedulerWindowEnd.disabled = true;
-    elements.saveSchedulerButton.disabled = true;
     state.schedulerFormDirty = false;
     renderSchedulerStatus();
     return;
@@ -997,8 +996,6 @@ function renderScheduler(scheduler, options = {}) {
   } else {
     syncSchedulerDirtyState();
   }
-
-  elements.saveSchedulerButton.disabled = false;
 
   renderSchedulerStatus();
 }
@@ -1513,26 +1510,6 @@ elements.refreshButton.addEventListener('click', () => {
     setNotice(error.message, 'error');
     elements.runSummary.textContent = error.message;
   });
-});
-
-elements.saveSchedulerButton.addEventListener('click', async () => {
-  elements.saveSchedulerButton.disabled = true;
-  if (elements.schedulerSaveStatus) elements.schedulerSaveStatus.textContent = 'Saving…';
-
-  try {
-    await saveSchedulerSettings();
-    if (elements.schedulerSaveStatus) {
-      elements.schedulerSaveStatus.textContent = '✓ Saved';
-      setTimeout(() => { if (elements.schedulerSaveStatus) elements.schedulerSaveStatus.textContent = ''; }, 2500);
-    }
-    setNotice('Scheduler settings saved.', 'info');
-    await loadDashboard();
-  } catch (error) {
-    if (elements.schedulerSaveStatus) elements.schedulerSaveStatus.textContent = `Error: ${error.message}`;
-    setNotice(error.message, 'error');
-  } finally {
-    elements.saveSchedulerButton.disabled = false;
-  }
 });
 
 elements.schedulerEnabled.addEventListener('change', () => {
