@@ -80,7 +80,9 @@ const elements = {
   schedulerNotifyKeywords: document.querySelector('#scheduler-notify-keywords'),
   schedulerNotifyCategories: document.querySelector('#scheduler-notify-categories'),
   saveSchedulerButton: document.querySelector('#save-scheduler-button'),
+  schedulerSaveStatus: document.querySelector('#scheduler-save-status'),
   schedulerNextRun: document.querySelector('#scheduler-next-run'),
+  modalSchedulerStatus: document.querySelector('#modal-scheduler-status'),
   scannerToggles: document.querySelector('#scanner-toggles'),
   productsCount: document.querySelector('#products-count'),
   productsTable: document.querySelector('#products-table'),
@@ -885,31 +887,32 @@ function renderActiveFilters() {
 }
 
 function renderSchedulerStatus() {
-  if (!elements.schedulerNextRun) return;
+  const targets = [elements.schedulerNextRun, elements.modalSchedulerStatus].filter(Boolean);
+  if (!targets.length) return;
 
-  if (
-    elements.schedulerEnabled.disabled ||
-    elements.schedulerInterval.disabled
-  ) {
-    elements.schedulerNextRun.innerHTML = '<span class="scheduler-next-run-unavailable">Scheduler unavailable</span>';
-    return;
+  const isDisabled = elements.schedulerEnabled.disabled || elements.schedulerInterval.disabled;
+
+  let html;
+  if (isDisabled) {
+    html = '<span class="scheduler-next-run-unavailable">Scheduler unavailable</span>';
+  } else if (!state.schedulerEnabled) {
+    html = '<span class="scheduler-next-run-paused">⏸ Paused</span>';
+  } else {
+    const nextRunAt = state.schedulerNextRunAt ? formatRelativeTime(state.schedulerNextRunAt) + ' (' + formatDate(state.schedulerNextRunAt) + ')' : 'Not scheduled';
+    const windowStr = state.schedulerWindowEnabled
+      ? `${state.schedulerWindowStart}–${state.schedulerWindowEnd} (${state.schedulerIsInActiveWindow ? '✅ in window' : '⏳ outside window'})`
+      : 'All day';
+    const dirtyBadge = state.schedulerFormDirty ? ' <span class="scheduler-dirty-badge">Unsaved</span>' : '';
+
+    html =
+      `<span class="scheduler-next-run-label">Next scan</span>` +
+      `<span class="scheduler-next-run-time">${nextRunAt}${dirtyBadge}</span>` +
+      `<span class="scheduler-next-run-window">${windowStr}</span>`;
   }
 
-  if (!state.schedulerEnabled) {
-    elements.schedulerNextRun.innerHTML = '<span class="scheduler-next-run-paused">⏸ Paused</span>';
-    return;
+  for (const el of targets) {
+    el.innerHTML = html;
   }
-
-  const nextRunAt = state.schedulerNextRunAt ? formatDate(state.schedulerNextRunAt) : 'Not scheduled';
-  const windowStr = state.schedulerWindowEnabled
-    ? `${state.schedulerWindowStart}–${state.schedulerWindowEnd} (${state.schedulerIsInActiveWindow ? '✅ in window' : '⏳ outside window'})`
-    : 'All day';
-  const dirtyBadge = state.schedulerFormDirty ? ' <span class="scheduler-dirty-badge">Unsaved</span>' : '';
-
-  elements.schedulerNextRun.innerHTML =
-    `<span class="scheduler-next-run-label">Next scan</span>` +
-    `<span class="scheduler-next-run-time">${nextRunAt}${dirtyBadge}</span>` +
-    `<span class="scheduler-next-run-window">${windowStr}</span>`;
 }
 
 function syncSchedulerDirtyState() {
@@ -1498,14 +1501,19 @@ elements.refreshButton.addEventListener('click', () => {
 
 elements.saveSchedulerButton.addEventListener('click', async () => {
   elements.saveSchedulerButton.disabled = true;
+  if (elements.schedulerSaveStatus) elements.schedulerSaveStatus.textContent = 'Saving…';
 
   try {
     await saveSchedulerSettings();
+    if (elements.schedulerSaveStatus) {
+      elements.schedulerSaveStatus.textContent = '✓ Saved';
+      setTimeout(() => { if (elements.schedulerSaveStatus) elements.schedulerSaveStatus.textContent = ''; }, 2500);
+    }
     setNotice('Scheduler settings saved.', 'info');
     await loadDashboard();
   } catch (error) {
+    if (elements.schedulerSaveStatus) elements.schedulerSaveStatus.textContent = `Error: ${error.message}`;
     setNotice(error.message, 'error');
-    elements.runSummary.textContent = error.message;
   } finally {
     elements.saveSchedulerButton.disabled = false;
   }
@@ -1554,8 +1562,6 @@ if (elements.cancelButton) {
 if (elements.scanAllBtn) {
   elements.scanAllBtn.addEventListener('click', () => triggerSourceScan(null));
 }
-
-hydrateUiPreferences();
 
 loadDashboard().catch((error) => {
   setNotice(error.message, 'error');
@@ -1758,3 +1764,16 @@ notifModal.openBtn.addEventListener('click', openNotifModal);
 notifModal.closeBtn.addEventListener('click', closeNotifModal);
 notifModal.overlay.addEventListener('click', (e) => { if (e.target === notifModal.overlay) closeNotifModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !notifModal.overlay.classList.contains('hidden')) closeNotifModal(); });
+
+// Rail scheduler icon → open notification modal on the Scheduler tab
+const railSchedulerBtn = document.querySelector('#rail-scheduler-btn');
+if (railSchedulerBtn) {
+  railSchedulerBtn.addEventListener('click', () => {
+    notifModal.tabs.forEach((t) => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+    const schedTab = notifModal.tabs.find((t) => t.dataset.tab === 'scheduler');
+    if (schedTab) { schedTab.classList.add('active'); schedTab.setAttribute('aria-selected', 'true'); }
+    Object.values(notifModal.tabContents).forEach((el) => el?.classList.add('hidden'));
+    notifModal.tabContents.scheduler?.classList.remove('hidden');
+    openNotifModal();
+  });
+}
