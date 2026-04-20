@@ -719,17 +719,21 @@ function renderSources(sources, isScanning, sourceProgress) {
 
       return `
         <div class="source-row${source.schedulerEnabled ? '' : ' source-auto-off'}">
-          <div class="source-info">
+          <div class="source-top">
             <span class="source-name">${escapeHtml(source.label)}</span>
+            <div class="source-controls">
+              <label class="source-auto-toggle" title="${autoTitle}">
+                <input type="checkbox" class="source-scheduler-cb" data-source-id="${escapeHtml(source.id)}" ${autoChecked} />
+                <span class="source-auto-knob"></span>
+              </label>
+              <button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>
+            </div>
+          </div>
+          <div class="source-bottom">
+            <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}${escapeHtml(statusExtra)}</span>
             <span class="source-meta">${escapeHtml(lastScanLine)}</span>
             ${errorLine}
           </div>
-          <span class="source-status ${escapeHtml(statusLabel)}">${escapeHtml(statusLabel)}${escapeHtml(statusExtra)}</span>
-          <label class="source-auto-toggle" title="${autoTitle}">
-            <input type="checkbox" class="source-scheduler-cb" data-source-id="${escapeHtml(source.id)}" ${autoChecked} />
-            <span class="source-auto-knob"></span>
-          </label>
-          <button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>
         </div>
       `;
     })

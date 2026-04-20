@@ -648,7 +648,7 @@ input[type='search']::-webkit-search-cancel-button { cursor: pointer; }
 .source-auto-toggle input:checked ~ .source-auto-knob::after { transform: translateX(13px); }
 .source-auto-toggle:hover .source-auto-knob { filter: brightness(0.92); }
 
-.source-auto-off .source-info { opacity: 0.6; }
+.source-auto-off { opacity: 0.6; }
 
 .sources-hint {
   font-size: 0.69rem;
@@ -1005,19 +1005,40 @@ details[open].run-log-toggle > summary::before { transform: rotate(90deg); }
 
 .source-row {
   display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.52rem 0.65rem;
+  flex-direction: column;
+  gap: 0.38rem;
+  padding: 0.6rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-soft);
   transition: border-color 0.15s;
 }
-.source-row:has(button:hover) {
+.source-row:hover {
   border-color: var(--accent-border);
 }
 .source-row.source-disabled {
   opacity: 0.55;
+}
+
+.source-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.source-bottom {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.source-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
 }
 
 .source-schedule-badge {
@@ -1039,19 +1060,17 @@ details[open].run-log-toggle > summary::before { transform: rotate(90deg); }
   min-width: 0;
 }
 .source-name {
-  font-size: 0.82rem;
+  font-size: 0.84rem;
   font-weight: 600;
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
+  line-height: 1.3;
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
 }
 .source-meta {
-  font-size: 0.72rem;
+  font-size: 0.71rem;
   color: var(--text-muted);
-  margin-top: 0.08rem;
-  display: block;
   line-height: 1.35;
 }
 .source-error-meta {
@@ -1062,7 +1081,7 @@ details[open].run-log-toggle > summary::before { transform: rotate(90deg); }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
+  max-width: 100%;
 }
 
 .source-status {
