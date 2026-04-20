@@ -68,13 +68,8 @@ function filterDeals(deals, query) {
   const category = String(query.category ?? '').trim().toLowerCase();
   const condition = String(query.condition ?? '').trim().toLowerCase();
   const sourceId = String(query.sourceId ?? '').trim().toLowerCase();
-  const amazingOnly = String(query.amazingOnly ?? 'false') === 'true';
 
   return deals.filter((deal) => {
-    if (amazingOnly && !deal.amazingDeal) {
-      return false;
-    }
-
     return (
       (!category || normalizeCategoryKey(deal.category) === category) &&
       (!condition || deal.condition.toLowerCase() === condition) &&
@@ -88,13 +83,8 @@ function filterProducts(products, query) {
   const search = String(query.search ?? '').trim().toLowerCase();
   const category = String(query.category ?? '').trim().toLowerCase();
   const condition = String(query.condition ?? '').trim().toLowerCase();
-  const amazingOnly = String(query.amazingOnly ?? 'false') === 'true';
 
   return products.filter((product) => {
-    if (amazingOnly && product.amazingOfferCount === 0) {
-      return false;
-    }
-
     return (
       (!category || normalizeCategoryKey(product.category) === category) &&
       (!condition || product.offers.some((offer) => offer.condition.toLowerCase() === condition)) &&
@@ -440,7 +430,7 @@ export async function buildApp({ config, store, scanState, triggerScan, cancelSc
       counts: {
         trackedItems: Object.keys(state.items).length,
         deals: state.deals.length,
-        amazingDeals: state.deals.filter((deal) => deal.amazingDeal).length,
+
         enabledSources: config.sources.filter((source) => isSourceEnabled(source, state)).length,
         healthySources: sourceStatuses.filter((status) => status === 'healthy').length,
         blockedSources: sourceStatuses.filter((status) => status === 'error' || status === 'cooling-down').length,

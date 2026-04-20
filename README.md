@@ -22,7 +22,7 @@ A production outlet price tracker for Swedish electronics stores. Runs on Railwa
 - Lets you mark favorite categories and filter/sort by them
 - Cancel button to abort stuck scans
 - Scheduled scans with configurable interval and active-hour windows (Swedish time)
-- Discord alerts for: new discounted listings, price drops in favorite categories, amazing deals
+- Discord alerts for: new discounted listings, price drops in favorite categories
 
 ## Setup
 
@@ -92,7 +92,7 @@ Notification modes per source (set in `config/sources.json`):
 | Mode | When it fires |
 |------|---------------|
 | `favorite-events` | New discounted item or price drop in a favorite category |
-| `amazing-deals` | Items above the amazing-deal threshold |
+
 | `new-listings` | Every first-seen listing |
 | `none` | Silent |
 
@@ -115,14 +115,14 @@ After any code change, verify the following work end-to-end — each test assume
 - [ ] **Webhallen** — images load (not an SVG placeholder); URL must come from `fyndwareOf` parent product ID
 - [ ] **ProShop** — images visible (check `data-src` / `data-lazy-src` extraction)
 - [ ] **NetOnNet, Power, Komplett** — spot-check 3-5 cards each for working images
-- [ ] **Discord embeds** — amazing-deals notifications include product images (not broken or SVG)
+- [ ] **Discord embeds** — notifications include product images (not broken or SVG)
 
 ### Store filter & per-source counts
 - [ ] **Store dropdown** — lists all active sources; selecting "Elgiganten Outlet" shows only Elgiganten products
 - [ ] **Per-source scan results** — after running "Scan all", sidebar shows a count > 0 for each source once it finishes (Elgiganten, Webhallen, NetOnNet, Komplett, Power); ProShop should appear but may be 0 if Cloudflare blocks it
 
 ### Notifications (requires `DISCORD_WEBHOOK_URL`)
-- [ ] **Amazing-deals notification** — trigger a scan; confirm Discord receives an embed with title, price, image, and store badge
+
 - [ ] **New-listings notification** — for a source in `new-listings` mode, first-seen products must post to Discord
 - [ ] **Retry on 429** — deliberately hit the webhook rapidly; confirm no notification is silently lost (check scan summary `notificationSummary.errors`)
 

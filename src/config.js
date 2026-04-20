@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-category', 'komplett-sitemap', 'apify-elgiganten', 'apify-komplett', 'elgiganten-algolia', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals']);
-const supportedNotificationModes = new Set(['amazing-deals', 'new-listings', 'favorite-events', 'none']);
+const supportedNotificationModes = new Set(['new-listings', 'favorite-events', 'none']);
 const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 
 function parsePositiveInt(value, fallback) {
@@ -32,8 +32,8 @@ function asPlainObjectArray(value) {
 }
 
 function normalizeNotificationMode(value) {
-  const mode = String(value ?? 'amazing-deals').trim();
-  return supportedNotificationModes.has(mode) ? mode : 'amazing-deals';
+  const mode = String(value ?? 'new-listings').trim();
+  return supportedNotificationModes.has(mode) ? mode : 'new-listings';
 }
 
 function sanitizeSource(rawSource) {

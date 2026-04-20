@@ -333,49 +333,6 @@ test('notifyKeywordMatches sends alert when new item title matches an enabled ke
   }
 });
 
-test('notifyAmazingDeals routes to category webhook when pattern matches', async () => {
-  const postUrls = [];
-  const originalFetch = globalThis.fetch;
-
-  globalThis.fetch = async (url, _init) => {
-    postUrls.push(url);
-    return { ok: true, status: 204, statusText: 'No Content' };
-  };
-
-  try {
-    const state = createDefaultState();
-    const notifier = new DiscordNotifier({ webhookUrl: 'https://discord.example/main', cooldownHours: 24 });
-
-    await notifier.notifyAmazingDeals(
-      [
-        {
-          listingKey: 'elgiganten:gpu1',
-          sourceId: 'elgiganten-outlet',
-          title: 'RTX 4080 Outlet',
-          category: 'Grafikkort (GPU)',
-          condition: 'outlet',
-          currentPriceSek: 5999,
-          comparisonPriceSek: 9999,
-          discountPercent: 40,
-          profitSek: 3000,
-          score: 95,
-          reasons: ['big-discount'],
-          amazingDeal: true,
-          imageUrl: null,
-          url: 'https://elgiganten.se/...'
-        }
-      ],
-      state,
-      null, // allowedSourceIds
-      [{ id: 'cw1', pattern: 'grafikkort', label: 'GPU', webhook: 'https://discord.example/gpu-channel' }]
-    );
-
-    assert.ok(postUrls.includes('https://discord.example/gpu-channel'), 'Routed to GPU category webhook');
-    assert.ok(!postUrls.includes('https://discord.example/main'), 'Did not post to main webhook');
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
 
 test('Discord 429 does not fail whole notification summary', async () => {
   const originalFetch = globalThis.fetch;
