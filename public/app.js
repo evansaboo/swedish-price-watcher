@@ -1569,7 +1569,7 @@ const notifModal = {
   overlay: document.querySelector('#notif-settings-modal'),
   closeBtn: document.querySelector('#notif-modal-close'),
   tabs: [...document.querySelectorAll('.modal-tab')],
-  tabContents: { keywords: document.querySelector('#tab-keywords'), categories: document.querySelector('#tab-categories'), scheduler: document.querySelector('#tab-scheduler') },
+  tabContents: { keywords: document.querySelector('#tab-keywords'), categories: document.querySelector('#tab-categories'), filters: document.querySelector('#tab-filters'), scheduler: document.querySelector('#tab-scheduler') },
   keywordWebhookInput: document.querySelector('#keyword-webhook-input'),
   newKeywordInput: document.querySelector('#new-keyword-input'),
   addKeywordBtn: document.querySelector('#add-keyword-btn'),
