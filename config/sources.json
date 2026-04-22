@@ -110,12 +110,14 @@
       "label": "ProShop Outlet",
       "category": "electronics",
       "condition": "outlet",
-      "notes": "Uses ScraperAPI (render=true, 5 credits/page). Free tier: 5000 credits/month at scraperapi.com = ~1000 pages free = ~10 full scans/month. Falls back to Scrapfly if SCRAPFLY_API_KEY is set instead. URL: /Outlet?pn=N, /Demoprodukter?pn=N. Outlet has 39 pages (~975 items), Demo has 60 pages (~1500 items).",
+      "notes": "Uses ScraperAPI (render=true, 5 credits/page, free: 5000/mo = ~9 full scans). Falls back to Scrapfly (SCRAPFLY_API_KEY) or self-hosted FlareSolverr (FLARESOLVERR_URL). Incremental mode stops pagination early when pages contain only already-known items — drastically cuts credit usage on repeat scans. scanIntervalMinutes=240 means scheduled scans run this source at most every 4h. Full scan via UI/API always runs immediately.",
       "apiTokenEnvVar": "SCRAPERAPI_KEY",
       "renderJs": true,
       "pageDelayMs": 1500,
       "maxOutletPages": 40,
-      "maxDemoPages": 65
+      "maxDemoPages": 65,
+      "scanIntervalMinutes": 240,
+      "incrementalStopPages": 2
     },
     {
       "id": "power-deals",

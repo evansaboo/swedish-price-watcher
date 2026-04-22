@@ -4,22 +4,27 @@ import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js'
 /**
  * ProShop Outlet + Demo scraper.
  *
- * ProShop is behind Cloudflare Bot Management (cType: 'managed'). All direct
- * browser approaches fail. Two managed-scraping options are supported:
+ * ProShop is behind Cloudflare Bot Management. Three bypass strategies are supported
+ * (evaluated in priority order):
  *
- * Option A — ScraperAPI (recommended, free tier):
- *   Sign up free at scraperapi.com → 5000 credits/month.
- *   render=true costs 5 credits/page → ~1000 pages free/month (~10 full scans).
- *   Set SCRAPERAPI_KEY env var in Railway.
+ * Option A — ScraperAPI (SCRAPERAPI_KEY):
+ *   5000 free credits/month. render=true = 5 credits/page → ~1000 pages free.
+ *   With incremental scanning + 4h interval this fits easily in the free tier.
  *
- * Option B — Scrapfly (fallback, if SCRAPFLY_API_KEY is set):
- *   asp + render_js = ~10 credits per page. Free tier: 1000 credits/month.
- *   Sign up at scrapfly.io.
+ * Option B — Scrapfly (SCRAPFLY_API_KEY):
+ *   1000 free credits/month. asp + render_js = ~10 credits/page.
  *
- * URL format (discovered empirically):
- *   Page 1: /Outlet            Page N: /Outlet?pn=N
- *   Demo:   /Demoprodukter     Demo N: /Demoprodukter?pn=N
- *   Outlet: ~39 pages, Demo: ~60 pages (25 items/page; pagesize param ignored).
+ * Option C — FlareSolverr (FLARESOLVERR_URL):
+ *   Self-hosted Cloudflare bypass via real Chromium. Zero per-request cost.
+ *   Deploy ghcr.io/flaresolverr/flaresolverr:latest on Railway or locally.
+ *   Set FLARESOLVERR_URL=http://<host>:8191 (e.g. http://flaresolverr.railway.internal:8191).
+ *
+ * Incremental / delta scanning:
+ *   sourceState.knownExternalIds is pre-populated by the scan engine with IDs already
+ *   in state. After each page, if all items on that page are already known, we've
+ *   "caught up" to the previous scan. Once `incrementalStopPages` (default 2)
+ *   consecutive pages are fully-known, pagination stops — saving up to 97% of credits
+ *   on repeat scans when the outlet inventory is mostly unchanged.
  */
 
 const BASE_URL = 'https://www.proshop.se';
@@ -46,6 +51,50 @@ function buildScrapflyUrl(targetUrl, apiKey, renderJs) {
   return `https://api.scrapfly.io/scrape?${params}`;
 }
 
+async function scrapeViaScraperApi(url, apiKey, premium) {
+  const apiUrl = buildScraperApiUrl(url, apiKey, premium);
+  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(120_000) });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`ScraperAPI HTTP ${response.status}: ${body.slice(0, 200)}`);
+  }
+  return response.text();
+}
+
+async function scrapeViaScrapfly(url, apiKey, renderJs) {
+  const apiUrl = buildScrapflyUrl(url, apiKey, renderJs);
+  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(90_000) });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Scrapfly HTTP ${response.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await response.json();
+  const result = data.result ?? data;
+  if (result.status === 'ERROR' || (result.error && result.error !== null)) {
+    const reason = result.error?.description ?? result.error ?? 'unknown error';
+    throw new Error(`Scrapfly error: ${reason}`);
+  }
+  return result.content ?? '';
+}
+
+async function scrapeViaFlaresolverr(url, flareSolverrUrl) {
+  const response = await fetch(`${flareSolverrUrl}/v1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd: 'request.get', url, maxTimeout: 60_000 }),
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`FlareSolverr HTTP ${response.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await response.json();
+  if (data.status !== 'ok') {
+    throw new Error(`FlareSolverr error: ${JSON.stringify(data).slice(0, 300)}`);
+  }
+  return data.solution?.response ?? '';
+}
+
 function parseProshopPage(html, source, now, seen) {
   const $ = load(html);
   const observations = [];
@@ -67,8 +116,6 @@ function parseProshopPage(html, source, now, seen) {
       $(el).find('span.site-currency-oldprice, .site-currency-old, .oldprice, .site-currency-before').first().text().trim();
 
     // ProShop images are behind Cloudflare and return 403 to external requests.
-    // Setting imageUrl=null avoids broken images in the dashboard and Discord.
-
     if (!name || !priceText) return;
     const price = parseSekValue(priceText);
     if (price == null) return;
@@ -100,36 +147,8 @@ function parseProshopPage(html, source, now, seen) {
   return observations;
 }
 
-async function scrapeViaScraperApi(url, apiKey, premium) {
-  const apiUrl = buildScraperApiUrl(url, apiKey, premium);
-  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`ScraperAPI HTTP ${response.status}: ${body.slice(0, 200)}`);
-  }
-  // ScraperAPI returns the scraped HTML directly
-  return response.text();
-}
-
-async function scrapeViaScrapfly(url, apiKey, renderJs) {
-  const apiUrl = buildScrapflyUrl(url, apiKey, renderJs);
-  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(90_000) });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`Scrapfly HTTP ${response.status}: ${body.slice(0, 200)}`);
-  }
-  const data = await response.json();
-  const result = data.result ?? data;
-  if (result.status === 'ERROR' || (result.error && result.error !== null)) {
-    const reason = result.error?.description ?? result.error ?? 'unknown error';
-    throw new Error(`Scrapfly error: ${reason}`);
-  }
-  return result.content ?? '';
-}
-
 export async function collectFromProshop({ source, sourceState, now }) {
-  // Prefer ScraperAPI (free: 5000 credits/month, 5 credits/page with render=true).
-  // Fall back to Scrapfly if only that key is configured.
+  // Priority: ScraperAPI → Scrapfly → FlareSolverr
   const scraperApiKey =
     (source.apiTokenEnvVar === 'SCRAPERAPI_KEY' ? process.env.SCRAPERAPI_KEY : null)?.trim() ||
     process.env.SCRAPERAPI_KEY?.trim() ||
@@ -138,21 +157,34 @@ export async function collectFromProshop({ source, sourceState, now }) {
     (source.apiTokenEnvVar === 'SCRAPFLY_API_KEY' ? process.env.SCRAPFLY_API_KEY : null)?.trim() ||
     process.env.SCRAPFLY_API_KEY?.trim() ||
     '';
+  const flareSolverrUrl = process.env.FLARESOLVERR_URL?.trim() || '';
 
   const useScraperApi = Boolean(scraperApiKey);
   const useScrapfly = !useScraperApi && Boolean(scrapflyKey);
+  const useFlaresolverr = !useScraperApi && !useScrapfly && Boolean(flareSolverrUrl);
 
-  if (!useScraperApi && !useScrapfly) {
+  if (!useScraperApi && !useScrapfly && !useFlaresolverr) {
     throw new Error(
-      `No scraping API key for ${source.label ?? source.id}. ` +
-        `Set SCRAPERAPI_KEY (free at scraperapi.com, 5000 credits/month) ` +
-        `or SCRAPFLY_API_KEY (free at scrapfly.io, 1000 credits/month).`
+      `No scraping backend for ${source.label ?? source.id}. ` +
+        `Set one of: SCRAPERAPI_KEY (scraperapi.com, 5000 free credits/mo), ` +
+        `SCRAPFLY_API_KEY (scrapfly.io, 1000 free credits/mo), ` +
+        `or FLARESOLVERR_URL (self-hosted, free — deploy ghcr.io/flaresolverr/flaresolverr:latest).`
     );
   }
 
   const pageDelayMs = source.pageDelayMs ?? 1500;
   const premium = source.premiumProxy === true;
   const renderJs = source.renderJs !== false;
+  // How many consecutive all-known pages before stopping (incremental mode).
+  const incrementalStopPages = source.incrementalStopPages ?? 2;
+
+  // Known IDs from the previous scan — used for incremental/delta pagination.
+  const knownIds = sourceState.knownExternalIds instanceof Set
+    ? sourceState.knownExternalIds
+    : new Set();
+
+  const backendLabel = useScraperApi ? 'ScraperAPI' : useScrapfly ? 'Scrapfly' : 'FlareSolverr';
+  console.log(`[proshop] Using ${backendLabel}; known IDs: ${knownIds.size}`);
 
   const sections = [
     { path: '/Outlet', maxPages: source.maxOutletPages ?? 40 },
@@ -163,15 +195,17 @@ export async function collectFromProshop({ source, sourceState, now }) {
   const observations = [];
 
   for (const { path, maxPages } of sections) {
+    let consecutiveKnownPages = 0;
+
     for (let page = 1; page <= maxPages; page++) {
       const url =
         page === 1 ? `${BASE_URL}${path}` : `${BASE_URL}${path}?pn=${page}`;
 
       let html;
       try {
-        html = useScraperApi
-          ? await scrapeViaScraperApi(url, scraperApiKey, premium)
-          : await scrapeViaScrapfly(url, scrapflyKey, renderJs);
+        if (useScraperApi) html = await scrapeViaScraperApi(url, scraperApiKey, premium);
+        else if (useScrapfly) html = await scrapeViaScrapfly(url, scrapflyKey, renderJs);
+        else html = await scrapeViaFlaresolverr(url, flareSolverrUrl);
       } catch (err) {
         console.warn(`[proshop] ${path} page ${page} failed: ${err.message}`);
         break;
@@ -179,9 +213,24 @@ export async function collectFromProshop({ source, sourceState, now }) {
 
       const pageObservations = parseProshopPage(html, source, now, seen);
       observations.push(...pageObservations);
-      console.log(`[proshop] ${path} page ${page}: ${pageObservations.length} products`);
 
-      if (pageObservations.length === 0) break;
+      // Count items that are genuinely new (not seen in previous scan).
+      const newOnPage = pageObservations.filter((o) => !knownIds.has(o.externalId)).length;
+      console.log(`[proshop] ${path} page ${page}: ${pageObservations.length} items, ${newOnPage} new`);
+
+      if (pageObservations.length === 0) break; // Page is empty — end of listing
+
+      // Incremental stop: if the entire page consists of already-known items,
+      // we've caught up to where the previous scan left off.
+      if (knownIds.size > 0 && newOnPage === 0) {
+        consecutiveKnownPages += 1;
+        if (consecutiveKnownPages >= incrementalStopPages) {
+          console.log(`[proshop] ${path}: ${consecutiveKnownPages} consecutive fully-known pages — stopping early (incremental mode)`);
+          break;
+        }
+      } else {
+        consecutiveKnownPages = 0;
+      }
 
       if (page < maxPages) await sleep(pageDelayMs);
     }

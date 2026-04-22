@@ -76,7 +76,20 @@ async function triggerScan(trigger, options = {}) {
       // Manual scan with explicit sourceIds: always allow regardless of enabled state
       if (requestedSourceIds) return requestedSourceIds.has(entry.id);
       // Scheduled / full scan: respect enabled overrides
-      return isSourceEnabled(entry, store.getState());
+      if (!isSourceEnabled(entry, store.getState())) return false;
+      // Per-source interval: skip sources that were scanned too recently
+      if (trigger === 'scheduled' && Number.isFinite(entry.scanIntervalMinutes) && entry.scanIntervalMinutes > 0) {
+        const srcState = store.getState().sourceStates[entry.id];
+        const lastRun = srcState?.lastSuccessAt ?? srcState?.lastAttemptAt;
+        if (lastRun) {
+          const elapsedMinutes = (Date.now() - Date.parse(lastRun)) / 60_000;
+          if (elapsedMinutes < entry.scanIntervalMinutes) {
+            console.log(`[scheduler] Skipping ${entry.id}: last run ${Math.round(elapsedMinutes)}m ago (interval: ${entry.scanIntervalMinutes}m)`);
+            return false;
+          }
+        }
+      }
+      return true;
     }
   );
 
@@ -140,6 +153,14 @@ async function triggerScan(trigger, options = {}) {
         const sourceState = state.sourceStates[source.id] ?? {};
         state.sourceStates[source.id] = sourceState;
         sourceState.lastAttemptAt = startedAt;
+
+        // Pre-populate known external IDs so scrapers can do incremental/delta scanning.
+        // A scraper can stop pagination early when it's only seeing already-known items.
+        sourceState.knownExternalIds = new Set(
+          Object.values(state.items)
+            .filter((item) => item.sourceId === source.id)
+            .map((item) => item.externalId)
+        );
 
         // ── I/O phase: runs concurrently with other sources ─────────────────
         let collectResult;

@@ -43,6 +43,37 @@ Open `http://127.0.0.1:3030`.
 | `DISCORD_WEBHOOK_URL` | No | Discord channel webhook for notifications |
 | `SCAN_INTERVAL_MINUTES` | No | Initial scheduler interval (default: 30) |
 | `RUN_ON_START` | No | Set `true` to scan immediately on boot |
+| `SCRAPERAPI_KEY` | No | ScraperAPI key for ProShop (5000 free credits/mo) |
+| `SCRAPFLY_API_KEY` | No | Scrapfly key for ProShop fallback (1000 free credits/mo) |
+| `FLARESOLVERR_URL` | No | Self-hosted FlareSolverr URL — zero per-request cost (see below) |
+
+### ProShop — Cloudflare bypass options
+
+ProShop is behind Cloudflare Bot Management. Three backends are supported (first configured wins):
+
+1. **ScraperAPI** (`SCRAPERAPI_KEY`) — 5000 free credits/month; render=true = 5 credits/page.
+2. **Scrapfly** (`SCRAPFLY_API_KEY`) — 1000 free credits/month; ~10 credits/page.
+3. **FlareSolverr** (`FLARESOLVERR_URL`) — self-hosted real-browser bypass; zero per-request cost.
+
+**ProShop uses incremental scanning** — on repeat scans it stops pagination as soon as it sees
+pages full of already-known items, cutting credit usage by up to 97%.
+**`scanIntervalMinutes: 240`** means scheduled scans skip ProShop if it ran within the last 4 hours.
+Manual scans (via dashboard button) always run immediately regardless of interval.
+
+#### FlareSolverr on Railway (recommended for production)
+
+1. In your Railway project, add a new service → **Deploy from image** → `ghcr.io/flaresolverr/flaresolverr:latest`
+2. Name it `flaresolverr`, set env var `PORT=8191`.
+3. In your main `swedish-price-watcher` service, set `FLARESOLVERR_URL=http://flaresolverr.railway.internal:8191`
+   (Railway private networking — no public internet exposure needed).
+
+#### FlareSolverr locally (for development)
+
+```bash
+docker compose -f docker-compose.flaresolverr.yml up -d
+# Then in .env:
+# FLARESOLVERR_URL=http://localhost:8191
+```
 
 ## Railway deployment
 

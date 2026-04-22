@@ -1,0 +1,23 @@
+# Run FlareSolverr locally for development/testing:
+#   docker compose -f docker-compose.flaresolverr.yml up -d
+#
+# Then set FLARESOLVERR_URL=http://localhost:8191 in your .env
+#
+# For Railway deployment:
+#   1. Add a new service in your Railway project
+#   2. Use Docker image: ghcr.io/flaresolverr/flaresolverr:latest
+#   3. Set PORT=8191 environment variable
+#   4. Set FLARESOLVERR_URL=http://flaresolverr.railway.internal:8191
+#      in your swedish-price-watcher service (uses Railway private networking)
+
+services:
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    ports:
+      - "8191:8191"
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - CAPTCHA_SOLVER=none
+    restart: unless-stopped
