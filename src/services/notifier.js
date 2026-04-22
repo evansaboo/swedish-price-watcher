@@ -377,16 +377,19 @@ export class DiscordNotifier {
     const errors = [];
     const now = Date.now();
 
-    for (const { keyword, id, category } of keywords) {
+    for (const { keyword, id, categories, category } of keywords) {
       const kw = keyword.toLowerCase();
+      // Support both legacy `category` string and new `categories` array
+      const cats = Array.isArray(categories) ? categories : (category ? [category] : []);
       const matches = newItems.filter((item) => {
         if (!String(item.title ?? '').toLowerCase().includes(kw)) return false;
-        if (category && String(item.category ?? '').toLowerCase() !== category.toLowerCase()) return false;
+        if (cats.length && !cats.some((c) => String(item.category ?? '').toLowerCase() === c.toLowerCase())) return false;
         return true;
       });
 
       for (const item of matches) {
-        const notificationKey = `${item.listingKey}:keyword:${kw}${category ? `:${category}` : ''}`;
+        const catKey = cats.length ? cats.join(',') : '';
+        const notificationKey = `${item.listingKey}:keyword:${kw}${catKey ? `:${catKey}` : ''}`;
         const previousSentAt = state.notifications[notificationKey];
 
         if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
@@ -395,12 +398,13 @@ export class DiscordNotifier {
         }
 
         const discount = getDiscountSummary(item);
-        const keywordDisplay = category ? `${keyword} (in ${category})` : keyword;
+        const catDisplay = cats.length ? cats.join(', ') : null;
+        const keywordDisplay = catDisplay ? `${keyword} (in ${catDisplay})` : keyword;
 
         try {
           await this.#postWebhook({
             username: 'Price Watcher',
-            content: `🔍 Keyword alert: **${keyword}**${category ? ` · ${category}` : ''}`,
+            content: `🔍 Keyword alert: **${keyword}**${catDisplay ? ` · ${catDisplay}` : ''}`,
             embeds: [
               {
                 title: item.title,

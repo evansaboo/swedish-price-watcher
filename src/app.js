@@ -525,12 +525,19 @@ export async function buildApp({ config, store, scanState, triggerScan, cancelSc
     const keywords = Array.isArray(body.keywords)
       ? body.keywords
           .filter((k) => k && typeof k.keyword === 'string' && k.keyword.trim())
-          .map((k) => ({
-            id: typeof k.id === 'string' && k.id ? k.id : `kw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            keyword: k.keyword.trim(),
-            enabled: k.enabled !== false,
-            ...(typeof k.category === 'string' && k.category.trim() ? { category: k.category.trim() } : {})
-          }))
+          .map((k) => {
+            const entry = {
+              id: typeof k.id === 'string' && k.id ? k.id : `kw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              keyword: k.keyword.trim(),
+              enabled: k.enabled !== false
+            };
+            // Normalize: support both legacy `category` string and new `categories` array
+            const cats = Array.isArray(k.categories)
+              ? k.categories.filter((c) => typeof c === 'string' && c.trim()).map((c) => c.trim())
+              : (typeof k.category === 'string' && k.category.trim() ? [k.category.trim()] : []);
+            if (cats.length) entry.categories = cats;
+            return entry;
+          })
       : [];
 
     const categoryWebhooks = Array.isArray(body.categoryWebhooks)

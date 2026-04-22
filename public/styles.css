@@ -1783,7 +1783,8 @@ td .discount-pct.strong { font-size: 1.02rem; }
 }
 .modal-item-category { flex-direction: column; align-items: stretch; }
 .modal-item-toggle { display: flex; align-items: center; gap: 0.5rem; flex: 1; font-size: 0.83rem; cursor: pointer; }
-.modal-item-label { font-size: 0.83rem; display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
+.modal-item-label { font-size: 0.83rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.kw-cat-pills { display: inline-flex; flex-wrap: wrap; gap: 0.3rem; }
 .kw-category-pill {
   display: inline-block;
   font-size: 0.67rem;
@@ -1795,7 +1796,72 @@ td .discount-pct.strong { font-size: 1.02rem; }
   color: var(--accent);
   white-space: nowrap;
 }
-#new-keyword-category { max-width: 160px; flex-shrink: 1; }
+
+/* Keyword add form */
+.kw-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.kw-add-main {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.kw-add-main .modal-input { flex: 1; }
+
+/* Category multi-picker */
+.kw-cat-picker { position: relative; }
+.kw-cat-input-wrap { position: relative; }
+.kw-cat-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  max-height: 180px;
+  overflow-y: auto;
+  z-index: 200;
+  list-style: none;
+  padding: 0.25rem 0;
+  margin: 0;
+}
+.kw-cat-option {
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.kw-cat-option:hover { background: var(--accent-soft); color: var(--accent); }
+.kw-cat-empty { color: var(--text-muted); cursor: default; font-style: italic; }
+.kw-cat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-height: 0;
+}
+.kw-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+}
+.kw-cat-chip-remove {
+  border: none; background: transparent; padding: 0;
+  color: var(--accent); cursor: pointer; font-size: 0.7rem;
+  line-height: 1; opacity: 0.7;
+}
+.kw-cat-chip-remove:hover { opacity: 1; }
+
 .modal-item-remove {
   flex-shrink: 0;
   border: none; background: transparent;

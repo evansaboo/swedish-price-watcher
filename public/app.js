@@ -1562,8 +1562,11 @@ const notifModal = {
   tabContents: { keywords: document.querySelector('#tab-keywords'), categories: document.querySelector('#tab-categories'), filters: document.querySelector('#tab-filters'), scheduler: document.querySelector('#tab-scheduler') },
   keywordWebhookInput: document.querySelector('#keyword-webhook-input'),
   newKeywordInput: document.querySelector('#new-keyword-input'),
-  newKeywordCategory: document.querySelector('#new-keyword-category'),
+  newKeywordCategory: null, // replaced by multi-cat picker
   addKeywordBtn: document.querySelector('#add-keyword-btn'),
+  kwCatSearch: document.querySelector('#kw-cat-search'),
+  kwCatDropdown: document.querySelector('#kw-cat-dropdown'),
+  kwCatChips: document.querySelector('#kw-cat-chips'),
   keywordsList: document.querySelector('#keywords-list'),
   addCategoryBtn: document.querySelector('#add-category-btn'),
   categoriesList: document.querySelector('#categories-list'),
@@ -1575,6 +1578,67 @@ const notifModal = {
 // In-memory settings state (loaded from API when modal opens)
 let notifSettings = { keywordWebhook: '', keywords: [], categoryWebhooks: [] };
 
+// Category picker state for new-keyword form
+let kwCatAll = [];    // all category names (strings) from API
+let kwCatSelected = []; // currently chosen categories for the next keyword to add
+
+function renderKwCatChips() {
+  if (!notifModal.kwCatChips) return;
+  notifModal.kwCatChips.innerHTML = kwCatSelected
+    .map((cat) => `<span class="kw-cat-chip" data-cat="${escapeHtml(cat)}">${escapeHtml(cat)}<button type="button" class="kw-cat-chip-remove" aria-label="Remove ${escapeHtml(cat)}">✕</button></span>`)
+    .join('');
+  for (const btn of notifModal.kwCatChips.querySelectorAll('.kw-cat-chip-remove')) {
+    btn.addEventListener('click', () => {
+      kwCatSelected = kwCatSelected.filter((c) => c !== btn.parentElement.dataset.cat);
+      renderKwCatChips();
+      renderKwCatDropdown();
+    });
+  }
+}
+
+function renderKwCatDropdown() {
+  if (!notifModal.kwCatDropdown) return;
+  const search = (notifModal.kwCatSearch?.value ?? '').toLowerCase().trim();
+  const available = kwCatAll.filter((c) => !kwCatSelected.includes(c));
+  const filtered = search ? available.filter((c) => c.toLowerCase().includes(search)) : available;
+  if (!filtered.length) {
+    notifModal.kwCatDropdown.innerHTML = `<li class="kw-cat-option kw-cat-empty">${search ? 'No matches' : 'No categories available'}</li>`;
+  } else {
+    notifModal.kwCatDropdown.innerHTML = filtered
+      .map((c) => `<li class="kw-cat-option" role="option" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</li>`)
+      .join('');
+    for (const li of notifModal.kwCatDropdown.querySelectorAll('.kw-cat-option[data-cat]')) {
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // keep input focus
+        const cat = li.dataset.cat;
+        if (!kwCatSelected.includes(cat)) kwCatSelected.push(cat);
+        if (notifModal.kwCatSearch) notifModal.kwCatSearch.value = '';
+        notifModal.kwCatDropdown.classList.add('hidden');
+        renderKwCatChips();
+      });
+    }
+  }
+}
+
+// Wire category search input
+if (notifModal.kwCatSearch) {
+  notifModal.kwCatSearch.addEventListener('focus', () => {
+    renderKwCatDropdown();
+    notifModal.kwCatDropdown.classList.remove('hidden');
+  });
+  notifModal.kwCatSearch.addEventListener('input', () => {
+    renderKwCatDropdown();
+    notifModal.kwCatDropdown.classList.remove('hidden');
+  });
+  notifModal.kwCatSearch.addEventListener('blur', () => {
+    // Delay hide so mousedown on option fires first
+    setTimeout(() => notifModal.kwCatDropdown?.classList.add('hidden'), 150);
+  });
+  notifModal.kwCatSearch.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { notifModal.kwCatDropdown.classList.add('hidden'); notifModal.kwCatSearch.blur(); }
+  });
+}
+
 function renderKeywordsList() {
   notifModal.keywordsList.innerHTML = '';
   if (!notifSettings.keywords.length) {
@@ -1582,22 +1646,20 @@ function renderKeywordsList() {
     return;
   }
   for (const kw of notifSettings.keywords) {
+    // Support both legacy `category` string and new `categories` array
+    const cats = Array.isArray(kw.categories) ? kw.categories : (kw.category ? [kw.category] : []);
+    const catPills = cats.map((c) => `<span class="kw-category-pill">${escapeHtml(c)}</span>`).join('');
     const li = document.createElement('li');
     li.className = 'modal-item';
     li.dataset.id = kw.id;
-    const catPill = kw.category
-      ? `<span class="kw-category-pill">${escapeHtml(kw.category)}</span>`
-      : '';
     li.innerHTML = `
       <label class="modal-item-toggle">
         <input type="checkbox" class="kw-enabled" ${kw.enabled ? 'checked' : ''} />
-        <span class="modal-item-label">${escapeHtml(kw.keyword)}${catPill}</span>
+        <span class="modal-item-label">${escapeHtml(kw.keyword)}${catPills ? `<span class="kw-cat-pills">${catPills}</span>` : ''}</span>
       </label>
       <button type="button" class="modal-item-remove" aria-label="Remove ${escapeHtml(kw.keyword)}">✕</button>
     `;
-    li.querySelector('.kw-enabled').addEventListener('change', (e) => {
-      kw.enabled = e.target.checked;
-    });
+    li.querySelector('.kw-enabled').addEventListener('change', (e) => { kw.enabled = e.target.checked; });
     li.querySelector('.modal-item-remove').addEventListener('click', () => {
       notifSettings.keywords = notifSettings.keywords.filter((k) => k.id !== kw.id);
       renderKeywordsList();
@@ -1641,15 +1703,16 @@ async function openNotifModal() {
     if (res.ok) notifSettings = await res.json();
   } catch {/* use in-memory defaults */}
 
-  // Populate keyword category select from known outlet categories
+  // Populate keyword category picker from known outlet categories
   try {
     const cats = await fetchJson('/api/outlet-categories');
-    if (notifModal.newKeywordCategory && Array.isArray(cats)) {
-      const current = notifModal.newKeywordCategory.value;
-      notifModal.newKeywordCategory.innerHTML = '<option value="">Any category</option>' +
-        cats.map((c) => `<option value="${escapeHtml(c)}"${c === current ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('');
+    if (Array.isArray(cats)) {
+      kwCatAll = cats.map((c) => (typeof c === 'string' ? c : c.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, 'sv-SE'));
     }
-  } catch { /* categories unavailable — select stays as "Any category" only */ }
+  } catch { kwCatAll = []; }
+  kwCatSelected = [];
+  renderKwCatChips();
+  if (notifModal.kwCatSearch) notifModal.kwCatSearch.value = '';
 
   // populate keyword/category fields
   notifModal.keywordWebhookInput.value = notifSettings.keywordWebhook ?? '';
@@ -1701,12 +1764,12 @@ notifModal.addKeywordBtn.addEventListener('click', () => {
   const isDupe = notifSettings.keywords.some((k) => k.keyword.toLowerCase() === kw.toLowerCase());
   if (isDupe) { notifModal.newKeywordInput.classList.add('input-error'); return; }
   notifModal.newKeywordInput.classList.remove('input-error');
-  const category = notifModal.newKeywordCategory?.value || '';
   const entry = { id: `kw-${Date.now()}`, keyword: kw, enabled: true };
-  if (category) entry.category = category;
+  if (kwCatSelected.length) entry.categories = [...kwCatSelected];
   notifSettings.keywords.push(entry);
   notifModal.newKeywordInput.value = '';
-  if (notifModal.newKeywordCategory) notifModal.newKeywordCategory.value = '';
+  kwCatSelected = [];
+  renderKwCatChips();
   renderKeywordsList();
 });
 notifModal.newKeywordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') notifModal.addKeywordBtn.click(); });
