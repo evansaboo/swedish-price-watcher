@@ -1188,12 +1188,13 @@ function renderProducts(response) {
       const storeBadge = product.sourceLabel ? `<span class="store-badge">${escapeHtml(product.sourceLabel)}</span>` : '';
 
       const rowUrl = product.url ? escapeHtml(product.url) : '';
+      const titleContent = rowUrl
+        ? `<a href="${rowUrl}" target="_blank" rel="noreferrer" class="product-title-link">${escapeHtml(product.title)}<svg class="product-link-icon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+        : `<strong>${escapeHtml(product.title)}</strong>`;
       return `
-        <tr class="${rowClass} clickable-row" ${rowUrl ? `data-url="${rowUrl}"` : ''} ${rowUrl ? 'tabindex="0" role="link"' : ''} title="${rowUrl ? `Open ${escapeHtml(product.title)}` : ''}">
+        <tr class="${rowClass}">
           <td data-label="Product">
-            <div class="product-title">
-              <strong>${escapeHtml(product.title)}</strong>
-            </div>
+            <div class="product-title">${titleContent}</div>
             <div class="meta-row">
               ${newBadge}
               ${storeBadge}
@@ -1241,21 +1242,6 @@ function renderProducts(response) {
     });
   }
 
-  // Row click — open product URL in new tab; skip if user clicked the link icon itself
-  elements.productsTable.addEventListener('click', (e) => {
-    const row = e.target.closest('tr[data-url]');
-    if (!row) return;
-    if (e.target.closest('a, button')) return; // let links/buttons handle themselves
-    window.open(row.dataset.url, '_blank', 'noreferrer');
-  });
-
-  elements.productsTable.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const row = e.target.closest('tr[data-url]');
-    if (!row) return;
-    e.preventDefault();
-    window.open(row.dataset.url, '_blank', 'noreferrer');
-  });
 
   for (const pageButton of elements.productsTable.querySelectorAll('button[data-page]')) {
     pageButton.addEventListener('click', () => {
