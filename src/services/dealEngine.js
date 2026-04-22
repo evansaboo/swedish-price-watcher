@@ -115,6 +115,12 @@ export function mergeObservations(state, observations, maxHistoryEntries = 60) {
     currentItem.description = observation.description ?? null;
     currentItem.imageUrl = observation.imageUrl ?? null;
     currentItem.notes = observation.notes ?? null;
+    currentItem.conditionLabel = observation.conditionLabel ?? currentItem.conditionLabel ?? null;
+    // GG.deals-specific fields (stored for all sources; null for non-GG.deals items).
+    currentItem.keyshopPriceSek = observation.keyshopPriceSek != null ? Number(observation.keyshopPriceSek) : (currentItem.keyshopPriceSek ?? null);
+    currentItem.historicalKeyshopPriceSek = observation.historicalKeyshopPriceSek != null ? Number(observation.historicalKeyshopPriceSek) : (currentItem.historicalKeyshopPriceSek ?? null);
+    currentItem.currency = observation.currency ?? currentItem.currency ?? null;
+    currentItem.steamAppId = observation.steamAppId ?? currentItem.steamAppId ?? null;
 
     state.items[listingKey] = currentItem;
 
@@ -257,6 +263,10 @@ export function computeDeals(state, thresholds) {
         atHistoricalLow,
         description: item.description ?? null,
         imageUrl: item.imageUrl ?? null,
+        conditionLabel: item.conditionLabel ?? null,
+        keyshopPriceSek: item.keyshopPriceSek ?? null,
+        historicalKeyshopPriceSek: item.historicalKeyshopPriceSek ?? null,
+        steamAppId: item.steamAppId ?? null,
         lastSeenAt: item.lastSeenAt
       };
     })

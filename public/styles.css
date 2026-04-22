@@ -1438,6 +1438,47 @@ tbody tr:hover .row-link-icon { opacity: 1; }
   white-space: nowrap;
 }
 
+/* Condition badges (Digital, Demo, etc.) */
+.condition-badge {
+  border-radius: 999px;
+  padding: 0.06rem 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.condition-digital {
+  border: 1px solid rgba(16,185,129,0.35);
+  color: #065f46;
+  background: rgba(16,185,129,0.1);
+}
+
+/* GG.deals keyshop price badge */
+.keyshop-badge {
+  border-radius: 999px;
+  padding: 0.06rem 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border: 1px solid rgba(245,158,11,0.35);
+  color: #92400e;
+  background: rgba(245,158,11,0.1);
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* GG.deals Steam store link badge */
+.steam-badge {
+  border-radius: 999px;
+  padding: 0.06rem 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border: 1px solid rgba(30,64,175,0.3);
+  color: #1e3a8a;
+  background: rgba(30,64,175,0.07);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.steam-badge:hover { background: rgba(30,64,175,0.14); text-decoration: none; }
+
 .category-pill {
   display: inline-flex;
   align-items: center;

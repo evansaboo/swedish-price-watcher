@@ -1185,7 +1185,13 @@ function renderProducts(response) {
         : Number.isFinite(product.initialPriceSek) ? 'No discount' : 'No ref price';
       const rowClass = newProduct ? 'new-product-row' : '';
       const newBadge = newProduct ? '<span class="deal-tag new">New</span>' : '';
+      const condLabel = product.conditionLabel && product.conditionLabel !== 'Outlet'
+        ? `<span class="condition-badge condition-${escapeHtml(product.condition)}">${escapeHtml(product.conditionLabel)}</span>` : '';
       const storeBadge = product.sourceLabel ? `<span class="store-badge">${escapeHtml(product.sourceLabel)}</span>` : '';
+      const keyshopBadge = Number.isFinite(product.keyshopPriceSek)
+        ? `<span class="keyshop-badge" title="Cheapest grey-market key price">🔑 ${formatSek(product.keyshopPriceSek)}</span>` : '';
+      const steamBadge = product.steamAppId
+        ? `<a href="https://store.steampowered.com/app/${escapeHtml(product.steamAppId)}/" target="_blank" rel="noreferrer" class="steam-badge" title="View on Steam">Steam ↗</a>` : '';
 
       const rowUrl = product.url ? escapeHtml(product.url) : '';
       const titleContent = rowUrl
@@ -1197,8 +1203,11 @@ function renderProducts(response) {
             <div class="product-title">${titleContent}</div>
             <div class="meta-row">
               ${newBadge}
+              ${condLabel}
               ${storeBadge}
               <span class="${dealClass}">${escapeHtml(dealLabel)}</span>
+              ${keyshopBadge}
+              ${steamBadge}
             </div>
           </td>
           <td data-label="Category">

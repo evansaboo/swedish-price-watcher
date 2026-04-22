@@ -46,6 +46,7 @@ Open `http://127.0.0.1:3030`.
 | `SCRAPERAPI_KEY` | No | ScraperAPI key for ProShop (5000 free credits/mo) |
 | `SCRAPFLY_API_KEY` | No | Scrapfly key for ProShop fallback (1000 free credits/mo) |
 | `FLARESOLVERR_URL` | No | Self-hosted FlareSolverr URL — zero per-request cost (see below) |
+| `GG_DEALS_API_KEY` | No | GG.deals API key for game price tracking (generate at gg.deals/settings/) |
 
 ### ProShop — Cloudflare bypass options
 

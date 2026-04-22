@@ -118,7 +118,7 @@ function describeSourceStatus(source, sourceState = {}) {
 
 function buildOutletProducts(state) {
   return Object.values(state.items)
-    .filter((item) => item.condition === 'outlet' && Number.isFinite(item.latestPriceSek))
+    .filter((item) => ['outlet', 'digital', 'deal'].includes(item.condition) && Number.isFinite(item.latestPriceSek))
     .map((item) => {
       const initialPriceSek = firstFinite(item.referencePriceSek, item.marketValueSek);
       const discountSek = Number.isFinite(initialPriceSek) ? Math.max(0, initialPriceSek - item.latestPriceSek) : null;
@@ -132,6 +132,8 @@ function buildOutletProducts(state) {
         title: item.title,
         url: item.url,
         category: item.category,
+        condition: item.condition,
+        conditionLabel: item.conditionLabel ?? null,
         sourceId: item.sourceId,
         sourceLabel: item.sourceLabel,
         currentPriceSek: item.latestPriceSek,
@@ -145,7 +147,10 @@ function buildOutletProducts(state) {
         availability: item.availability ?? 'unknown',
         firstSeenAt: item.firstSeenAt ?? null,
         lastSeenAt: item.lastSeenAt ?? null,
-        imageUrl: item.imageUrl ?? null
+        imageUrl: item.imageUrl ?? null,
+        keyshopPriceSek: item.keyshopPriceSek ?? null,
+        historicalKeyshopPriceSek: item.historicalKeyshopPriceSek ?? null,
+        steamAppId: item.steamAppId ?? null
       };
     })
     .sort((left, right) => {
