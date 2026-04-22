@@ -1567,6 +1567,7 @@ const notifModal = {
   kwCatSearch: document.querySelector('#kw-cat-search'),
   kwCatDropdown: document.querySelector('#kw-cat-dropdown'),
   kwCatChips: document.querySelector('#kw-cat-chips'),
+  kwTagInput: document.querySelector('#kw-tag-input'),
   keywordsList: document.querySelector('#keywords-list'),
   addCategoryBtn: document.querySelector('#add-category-btn'),
   categoriesList: document.querySelector('#categories-list'),
@@ -1622,6 +1623,9 @@ function renderKwCatDropdown() {
 
 // Wire category search input
 if (notifModal.kwCatSearch) {
+  // Clicking anywhere in the tag-input box focuses the search field
+  notifModal.kwTagInput?.addEventListener('click', () => notifModal.kwCatSearch.focus());
+
   notifModal.kwCatSearch.addEventListener('focus', () => {
     renderKwCatDropdown();
     notifModal.kwCatDropdown.classList.remove('hidden');
@@ -1631,11 +1635,11 @@ if (notifModal.kwCatSearch) {
     notifModal.kwCatDropdown.classList.remove('hidden');
   });
   notifModal.kwCatSearch.addEventListener('blur', () => {
-    // Delay hide so mousedown on option fires first
     setTimeout(() => notifModal.kwCatDropdown?.classList.add('hidden'), 150);
   });
   notifModal.kwCatSearch.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { notifModal.kwCatDropdown.classList.add('hidden'); notifModal.kwCatSearch.blur(); }
+    if (e.key === 'Enter') { e.preventDefault(); notifModal.addKeywordBtn.click(); }
   });
 }
 
@@ -1646,17 +1650,19 @@ function renderKeywordsList() {
     return;
   }
   for (const kw of notifSettings.keywords) {
-    // Support both legacy `category` string and new `categories` array
     const cats = Array.isArray(kw.categories) ? kw.categories : (kw.category ? [kw.category] : []);
     const catPills = cats.map((c) => `<span class="kw-category-pill">${escapeHtml(c)}</span>`).join('');
     const li = document.createElement('li');
-    li.className = 'modal-item';
+    li.className = 'modal-item kw-item';
     li.dataset.id = kw.id;
     li.innerHTML = `
-      <label class="modal-item-toggle">
-        <input type="checkbox" class="kw-enabled" ${kw.enabled ? 'checked' : ''} />
-        <span class="modal-item-label">${escapeHtml(kw.keyword)}${catPills ? `<span class="kw-cat-pills">${catPills}</span>` : ''}</span>
-      </label>
+      <div class="kw-item-body">
+        <label class="kw-item-toggle">
+          <input type="checkbox" class="kw-enabled" ${kw.enabled ? 'checked' : ''} />
+          <span class="kw-item-name">${escapeHtml(kw.keyword)}</span>
+        </label>
+        ${catPills ? `<div class="kw-item-cats">${catPills}</div>` : ''}
+      </div>
       <button type="button" class="modal-item-remove" aria-label="Remove ${escapeHtml(kw.keyword)}">✕</button>
     `;
     li.querySelector('.kw-enabled').addEventListener('change', (e) => { kw.enabled = e.target.checked; });

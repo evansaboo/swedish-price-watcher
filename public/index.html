@@ -54,20 +54,21 @@
             Keyword alerts webhook URL
             <input id="keyword-webhook-input" type="url" placeholder="https://discord.com/api/webhooks/…" class="modal-input" />
           </label>
-          <div class="modal-list-header">
-            <span class="modal-list-title">Keywords</span>
-          </div>
           <div class="kw-add-form">
-            <div class="kw-add-main">
-              <input id="new-keyword-input" type="text" placeholder="e.g. RTX 5070" class="modal-input" />
-              <button id="add-keyword-btn" type="button" class="btn-accent-sm">Add</button>
+            <div class="kw-field">
+              <label class="kw-field-label" for="new-keyword-input">Keyword</label>
+              <input id="new-keyword-input" type="text" placeholder="e.g. RTX 5070" class="modal-input" autocomplete="off" />
             </div>
-            <div class="kw-cat-picker" id="kw-cat-picker">
-              <div class="kw-cat-input-wrap">
-                <input id="kw-cat-search" type="text" placeholder="Filter categories… (optional)" class="modal-input modal-input-sm" autocomplete="off" />
-                <ul id="kw-cat-dropdown" class="kw-cat-dropdown hidden" role="listbox"></ul>
+            <div class="kw-field" id="kw-cat-field">
+              <label class="kw-field-label">Categories <span class="kw-optional">(optional — matches any if empty)</span></label>
+              <div class="kw-tag-input" id="kw-tag-input">
+                <div class="kw-cat-chips" id="kw-cat-chips"></div>
+                <input id="kw-cat-search" type="text" placeholder="Search and add categories…" autocomplete="off" />
               </div>
-              <div class="kw-cat-chips" id="kw-cat-chips"></div>
+              <ul id="kw-cat-dropdown" class="kw-cat-dropdown hidden" role="listbox"></ul>
+            </div>
+            <div class="kw-add-actions">
+              <button id="add-keyword-btn" type="button" class="btn-primary">Add keyword</button>
             </div>
           </div>
           <ul id="keywords-list" class="modal-item-list"></ul>
