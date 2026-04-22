@@ -4,20 +4,20 @@ import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js'
 /**
  * ProShop Outlet + Demo scraper.
  *
- * ProShop is behind Cloudflare Bot Management. Three bypass strategies are supported
- * (evaluated in priority order):
+ * ProShop is behind Cloudflare Bot Management. Three bypass strategies are supported.
+ * FlareSolverr is preferred (free, self-hosted); paid services are fallbacks.
  *
- * Option A — ScraperAPI (SCRAPERAPI_KEY):
+ * Option A — FlareSolverr (FLARESOLVERR_URL) — preferred, free:
+ *   Self-hosted real-Chromium bypass. Zero per-request cost.
+ *   Deploy ghcr.io/flaresolverr/flaresolverr:latest on Railway.
+ *   Set FLARESOLVERR_URL=http://flaresolverr.railway.internal:8080
+ *
+ * Option B — ScraperAPI (SCRAPERAPI_KEY) — fallback:
  *   5000 free credits/month. render=true = 5 credits/page → ~1000 pages free.
  *   With incremental scanning + 4h interval this fits easily in the free tier.
  *
- * Option B — Scrapfly (SCRAPFLY_API_KEY):
+ * Option C — Scrapfly (SCRAPFLY_API_KEY) — fallback:
  *   1000 free credits/month. asp + render_js = ~10 credits/page.
- *
- * Option C — FlareSolverr (FLARESOLVERR_URL):
- *   Self-hosted Cloudflare bypass via real Chromium. Zero per-request cost.
- *   Deploy ghcr.io/flaresolverr/flaresolverr:latest on Railway or locally.
- *   Set FLARESOLVERR_URL=http://<host>:8191 (e.g. http://flaresolverr.railway.internal:8191).
  *
  * Incremental / delta scanning:
  *   sourceState.knownExternalIds is pre-populated by the scan engine with IDs already
@@ -148,7 +148,10 @@ function parseProshopPage(html, source, now, seen) {
 }
 
 export async function collectFromProshop({ source, sourceState, now }) {
-  // Priority: ScraperAPI → Scrapfly → FlareSolverr
+  // Priority: FlareSolverr (free, self-hosted) → ScraperAPI → Scrapfly
+  // FlareSolverr is preferred when configured — it has zero per-request cost.
+  // Paid services act as fallbacks for when FlareSolverr is unavailable.
+  const flareSolverrUrl = process.env.FLARESOLVERR_URL?.trim() || '';
   const scraperApiKey =
     (source.apiTokenEnvVar === 'SCRAPERAPI_KEY' ? process.env.SCRAPERAPI_KEY : null)?.trim() ||
     process.env.SCRAPERAPI_KEY?.trim() ||
@@ -157,11 +160,10 @@ export async function collectFromProshop({ source, sourceState, now }) {
     (source.apiTokenEnvVar === 'SCRAPFLY_API_KEY' ? process.env.SCRAPFLY_API_KEY : null)?.trim() ||
     process.env.SCRAPFLY_API_KEY?.trim() ||
     '';
-  const flareSolverrUrl = process.env.FLARESOLVERR_URL?.trim() || '';
 
-  const useScraperApi = Boolean(scraperApiKey);
-  const useScrapfly = !useScraperApi && Boolean(scrapflyKey);
-  const useFlaresolverr = !useScraperApi && !useScrapfly && Boolean(flareSolverrUrl);
+  const useFlaresolverr = Boolean(flareSolverrUrl);
+  const useScraperApi = !useFlaresolverr && Boolean(scraperApiKey);
+  const useScrapfly = !useFlaresolverr && !useScraperApi && Boolean(scrapflyKey);
 
   if (!useScraperApi && !useScrapfly && !useFlaresolverr) {
     throw new Error(
