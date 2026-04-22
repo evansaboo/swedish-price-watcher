@@ -1783,7 +1783,19 @@ td .discount-pct.strong { font-size: 1.02rem; }
 }
 .modal-item-category { flex-direction: column; align-items: stretch; }
 .modal-item-toggle { display: flex; align-items: center; gap: 0.5rem; flex: 1; font-size: 0.83rem; cursor: pointer; }
-.modal-item-label { font-size: 0.83rem; }
+.modal-item-label { font-size: 0.83rem; display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
+.kw-category-pill {
+  display: inline-block;
+  font-size: 0.67rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+  white-space: nowrap;
+}
+#new-keyword-category { max-width: 160px; flex-shrink: 1; }
 .modal-item-remove {
   flex-shrink: 0;
   border: none; background: transparent;

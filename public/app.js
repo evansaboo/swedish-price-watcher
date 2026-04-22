@@ -1562,6 +1562,7 @@ const notifModal = {
   tabContents: { keywords: document.querySelector('#tab-keywords'), categories: document.querySelector('#tab-categories'), filters: document.querySelector('#tab-filters'), scheduler: document.querySelector('#tab-scheduler') },
   keywordWebhookInput: document.querySelector('#keyword-webhook-input'),
   newKeywordInput: document.querySelector('#new-keyword-input'),
+  newKeywordCategory: document.querySelector('#new-keyword-category'),
   addKeywordBtn: document.querySelector('#add-keyword-btn'),
   keywordsList: document.querySelector('#keywords-list'),
   addCategoryBtn: document.querySelector('#add-category-btn'),
@@ -1584,10 +1585,13 @@ function renderKeywordsList() {
     const li = document.createElement('li');
     li.className = 'modal-item';
     li.dataset.id = kw.id;
+    const catPill = kw.category
+      ? `<span class="kw-category-pill">${escapeHtml(kw.category)}</span>`
+      : '';
     li.innerHTML = `
       <label class="modal-item-toggle">
         <input type="checkbox" class="kw-enabled" ${kw.enabled ? 'checked' : ''} />
-        <span class="modal-item-label">${escapeHtml(kw.keyword)}</span>
+        <span class="modal-item-label">${escapeHtml(kw.keyword)}${catPill}</span>
       </label>
       <button type="button" class="modal-item-remove" aria-label="Remove ${escapeHtml(kw.keyword)}">✕</button>
     `;
@@ -1636,6 +1640,16 @@ async function openNotifModal() {
     const res = await fetch('/api/notification-settings');
     if (res.ok) notifSettings = await res.json();
   } catch {/* use in-memory defaults */}
+
+  // Populate keyword category select from known outlet categories
+  try {
+    const cats = await fetchJson('/api/outlet-categories');
+    if (notifModal.newKeywordCategory && Array.isArray(cats)) {
+      const current = notifModal.newKeywordCategory.value;
+      notifModal.newKeywordCategory.innerHTML = '<option value="">Any category</option>' +
+        cats.map((c) => `<option value="${escapeHtml(c)}"${c === current ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('');
+    }
+  } catch { /* categories unavailable — select stays as "Any category" only */ }
 
   // populate keyword/category fields
   notifModal.keywordWebhookInput.value = notifSettings.keywordWebhook ?? '';
@@ -1687,8 +1701,12 @@ notifModal.addKeywordBtn.addEventListener('click', () => {
   const isDupe = notifSettings.keywords.some((k) => k.keyword.toLowerCase() === kw.toLowerCase());
   if (isDupe) { notifModal.newKeywordInput.classList.add('input-error'); return; }
   notifModal.newKeywordInput.classList.remove('input-error');
-  notifSettings.keywords.push({ id: `kw-${Date.now()}`, keyword: kw, enabled: true });
+  const category = notifModal.newKeywordCategory?.value || '';
+  const entry = { id: `kw-${Date.now()}`, keyword: kw, enabled: true };
+  if (category) entry.category = category;
+  notifSettings.keywords.push(entry);
   notifModal.newKeywordInput.value = '';
+  if (notifModal.newKeywordCategory) notifModal.newKeywordCategory.value = '';
   renderKeywordsList();
 });
 notifModal.newKeywordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') notifModal.addKeywordBtn.click(); });

@@ -528,7 +528,8 @@ export async function buildApp({ config, store, scanState, triggerScan, cancelSc
           .map((k) => ({
             id: typeof k.id === 'string' && k.id ? k.id : `kw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             keyword: k.keyword.trim(),
-            enabled: k.enabled !== false
+            enabled: k.enabled !== false,
+            ...(typeof k.category === 'string' && k.category.trim() ? { category: k.category.trim() } : {})
           }))
       : [];
 

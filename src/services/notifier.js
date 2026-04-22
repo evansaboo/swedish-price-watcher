@@ -377,12 +377,16 @@ export class DiscordNotifier {
     const errors = [];
     const now = Date.now();
 
-    for (const { keyword, id } of keywords) {
+    for (const { keyword, id, category } of keywords) {
       const kw = keyword.toLowerCase();
-      const matches = newItems.filter((item) => String(item.title ?? '').toLowerCase().includes(kw));
+      const matches = newItems.filter((item) => {
+        if (!String(item.title ?? '').toLowerCase().includes(kw)) return false;
+        if (category && String(item.category ?? '').toLowerCase() !== category.toLowerCase()) return false;
+        return true;
+      });
 
       for (const item of matches) {
-        const notificationKey = `${item.listingKey}:keyword:${kw}`;
+        const notificationKey = `${item.listingKey}:keyword:${kw}${category ? `:${category}` : ''}`;
         const previousSentAt = state.notifications[notificationKey];
 
         if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
@@ -391,11 +395,12 @@ export class DiscordNotifier {
         }
 
         const discount = getDiscountSummary(item);
+        const keywordDisplay = category ? `${keyword} (in ${category})` : keyword;
 
         try {
           await this.#postWebhook({
             username: 'Price Watcher',
-            content: `🔍 Keyword alert: **${keyword}**`,
+            content: `🔍 Keyword alert: **${keyword}**${category ? ` · ${category}` : ''}`,
             embeds: [
               {
                 title: item.title,
@@ -403,7 +408,7 @@ export class DiscordNotifier {
                 description: `${item.sourceLabel} • ${item.category}`,
                 color: 0x5865f2,
                 fields: [
-                  { name: 'Keyword', value: keyword, inline: true },
+                  { name: 'Keyword', value: keywordDisplay, inline: true },
                   { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
                   { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
                   { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true },
