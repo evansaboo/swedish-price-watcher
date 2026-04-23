@@ -65,7 +65,7 @@ async function algoliaPost(body) {
 }
 
 /** Fetch active campaign IDs grouped by type from Algolia facets. */
-async function discoverCampaigns(filterTypes) {
+async function discoverCampaigns(filterTypes, filterGraceDays) {
   const payload = await algoliaPost({
     requests: [{
       indexName: INDEX,
@@ -81,9 +81,9 @@ async function discoverCampaigns(filterTypes) {
   const campaignIds = Object.keys(facets['articleCampaigns.campaignId'] ?? {});
   const campaignTypes = facets['articleCampaigns.campaignType'] ?? {};
 
-  // Map each campaign ID back to its type by fetching one product per campaign
-  // (we need type to filter; batch 10 at a time with multi-requests)
-  const idToType = {};
+  // Map each campaign ID back to its type and end date
+  // (batch 10 at a time with multi-requests)
+  const idToMeta = {}; // { [id]: { type, endDate } }
   const BATCH = 10;
   for (let i = 0; i < campaignIds.length; i += BATCH) {
     const chunk = campaignIds.slice(i, i + BATCH);
@@ -99,21 +99,49 @@ async function discoverCampaigns(filterTypes) {
       const hit = data?.results?.[j]?.hits?.[0];
       const campaigns = hit?.articleCampaigns ?? [];
       const match = campaigns.find((c) => c.campaignId === chunk[j]);
-      if (match) idToType[chunk[j]] = match.campaignType;
+      if (match) {
+        idToMeta[chunk[j]] = {
+          type: match.campaignType,
+          endDate: match.campaignOnlineEnd ?? null,
+        };
+      }
     }
     if (i + BATCH < campaignIds.length) await sleep(PAGE_DELAY_MS);
   }
 
-  // Filter by requested types (or return all)
+  const nowMs = Date.now();
+  // How many days after a campaign ends to keep fetching it (gives grace for UI cache)
+  const graceDays = filterGraceDays ?? 3;
+  const graceMs = graceDays * 24 * 60 * 60 * 1000;
+
+  // Filter by requested types and expiry
   const activeIds = campaignIds.filter((id) => {
-    if (!filterTypes || filterTypes.length === 0) return true;
-    return filterTypes.includes(idToType[id]);
+    const meta = idToMeta[id];
+    if (!meta) return false;
+
+    if (filterTypes && filterTypes.length > 0 && !filterTypes.includes(meta.type)) {
+      return false;
+    }
+
+    // Skip campaigns that ended more than graceDays ago
+    if (meta.endDate) {
+      const endMs = Date.parse(meta.endDate);
+      if (Number.isFinite(endMs) && endMs + graceMs < nowMs) {
+        return false;
+      }
+    }
+
+    return true;
   });
 
+  const expired = campaignIds.length - activeIds.length - (campaignIds.length - Object.keys(idToMeta).length);
   console.log(
-    `[elgiganten-campaigns] Discovered ${campaignIds.length} active campaigns; ` +
-    `${activeIds.length} match type filter [${filterTypes?.join(',') ?? 'all'}]`
+    `[elgiganten-campaigns] Discovered ${campaignIds.length} campaigns; ` +
+    `${activeIds.length} match type filter [${filterTypes?.join(',') ?? 'all'}] and are active`
   );
+  if (expired > 0) {
+    console.log(`[elgiganten-campaigns] Skipped ${expired} expired campaign(s)`);
+  }
 
   return activeIds;
 }
@@ -254,11 +282,13 @@ export async function collectFromElgigantenCampaigns({ source, now }) {
   const pinnedIds = Array.isArray(source.campaignIds) ? source.campaignIds : [];
   const minDiscountPct = typeof source.minDiscountPct === 'number' ? source.minDiscountPct : 0;
   const maxProducts = source.maxProducts ?? 5000;
+  // Grace period after campaign end before we stop fetching it (default 3 days)
+  const campaignGraceDays = typeof source.campaignGraceDays === 'number' ? source.campaignGraceDays : 3;
 
   // Step 1: collect campaign IDs — pinned IDs + auto-discovered by type
   let discoveredIds = [];
   try {
-    discoveredIds = await discoverCampaigns(campaignTypes);
+    discoveredIds = await discoverCampaigns(campaignTypes, campaignGraceDays);
   } catch (err) {
     throw new Error(`Elgiganten campaigns: failed to discover campaign IDs — ${err.message}`);
   }

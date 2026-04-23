@@ -121,7 +121,7 @@ export async function loadConfig() {
     scanIntervalMinutes: parsePositiveInt(process.env.SCAN_INTERVAL_MINUTES, 180),
     hostDelayMs: parsePositiveInt(process.env.HOST_DELAY_MS, 8000),
     requestTimeoutMs: parsePositiveInt(process.env.REQUEST_TIMEOUT_MS, 20000),
-    maxHistoryEntries: parsePositiveInt(process.env.MAX_HISTORY_ENTRIES, 60),
+    maxHistoryEntries: parsePositiveInt(process.env.MAX_HISTORY_ENTRIES, 10),
     userAgent: process.env.USER_AGENT ?? 'swedish-price-watcher/0.1 (+set-contact-email)',
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL?.trim() ?? '',
     notificationCooldownHours: parsePositiveInt(process.env.NOTIFICATION_COOLDOWN_HOURS, 24),

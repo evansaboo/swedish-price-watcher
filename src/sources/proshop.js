@@ -81,8 +81,8 @@ async function scrapeViaFlaresolverr(url, flareSolverrUrl) {
   const response = await fetch(`${flareSolverrUrl}/v1`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cmd: 'request.get', url, maxTimeout: 60_000 }),
-    signal: AbortSignal.timeout(90_000),
+    body: JSON.stringify({ cmd: 'request.get', url, maxTimeout: 90_000 }),
+    signal: AbortSignal.timeout(120_000),
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
