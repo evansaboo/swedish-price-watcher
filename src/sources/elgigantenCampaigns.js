@@ -218,16 +218,20 @@ function mapCampaignHit(hit, source, now, minDiscountPct) {
 
 export async function collectFromElgigantenCampaigns({ source, now }) {
   const campaignTypes = Array.isArray(source.campaignTypes) ? source.campaignTypes : ['W'];
+  const pinnedIds = Array.isArray(source.campaignIds) ? source.campaignIds : [];
   const minDiscountPct = typeof source.minDiscountPct === 'number' ? source.minDiscountPct : 0;
   const maxProducts = source.maxProducts ?? 5000;
 
-  // Step 1: discover active campaign IDs matching the type filter
-  let campaignIds;
+  // Step 1: collect campaign IDs — pinned IDs + auto-discovered by type
+  let discoveredIds = [];
   try {
-    campaignIds = await discoverCampaigns(campaignTypes);
+    discoveredIds = await discoverCampaigns(campaignTypes);
   } catch (err) {
     throw new Error(`Elgiganten campaigns: failed to discover campaign IDs — ${err.message}`);
   }
+
+  // Merge pinned IDs (deduped), pinned first so they always run
+  const campaignIds = [...new Set([...pinnedIds, ...discoveredIds])];
 
   if (campaignIds.length === 0) {
     console.log('[elgiganten-campaigns] No active campaigns found for the configured types.');
