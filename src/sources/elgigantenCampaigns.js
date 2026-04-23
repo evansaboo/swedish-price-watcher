@@ -133,7 +133,7 @@ async function fetchAllPages(filter) {
         filters: filter,
         attributesToRetrieve: [
           'objectID', 'articleNumber', 'title', 'name', 'brand',
-          'price', 'beforePrice', 'discountAmount', 'savePrice',
+          'price', 'beforePrice', 'discountAmount', 'savePrice', 'singleFuturePrice',
           'hierarchicalCategories', 'cgm', 'imageUrl', 'urlB2C', 'productUrl',
           'isBuyableOnline', 'isBuyableInternet',
           'articleCampaigns',
@@ -154,21 +154,59 @@ async function fetchAllPages(filter) {
   return hits;
 }
 
-function mapCampaignHit(hit, source, now, minDiscountPct) {
+/** Parse a Swedish price string like "1499:-" or "1 499 kr" → integer SEK, or null. */
+function parseSwedishPrice(str) {
+  if (!str || typeof str !== 'string') return null;
+  const cleaned = str.replace(/[^\d,.]/g, '').replace(',', '.');
+  const val = parseFloat(cleaned);
+  return Number.isFinite(val) && val > 0 ? Math.round(val) : null;
+}
+
+/** Build a short human-readable label from a campaign entry. */
+function buildCampaignLabel(campaign) {
+  if (!campaign) return 'Sale';
+  const text = campaign.campaignText ?? '';
+  // Shorten long internal texts like "Huvudkampanj vecka 17 för Elgiganten SE" → "Veckans deals v.17"
+  const weekMatch = text.match(/vecka\s+(\d+)/i);
+  if (weekMatch) return `Veckans deals v.${weekMatch[1]}`;
+  // Use campaign text as-is if it's short enough
+  if (text.length <= 40) return text;
+  return text.slice(0, 37) + '…';
+}
+
+function mapCampaignHit(hit, campaignId, source, now, minDiscountPct) {
   const externalId = String(hit.objectID ?? hit.articleNumber ?? '').trim();
   const title = String(hit.title ?? hit.name ?? '').trim();
   if (!externalId || !title) return null;
 
-  const priceSek =
+  const regularPriceSek =
     typeof hit.price?.amount === 'number' && hit.price.amount > 0
       ? hit.price.amount
       : null;
-  if (!priceSek) return null;
+  if (!regularPriceSek) return null;
 
-  const referencePriceSek =
-    typeof hit.beforePrice === 'number' && hit.beforePrice > 0
-      ? hit.beforePrice
+  // Find the matching campaign entry to get its specific campaignPrice
+  const allCampaigns = hit.articleCampaigns ?? [];
+  const matchedCampaign = allCampaigns.find((c) => c.campaignId === campaignId);
+  const campaignPrice =
+    matchedCampaign?.campaignPrice != null && matchedCampaign.campaignPrice > 0
+      ? matchedCampaign.campaignPrice
       : null;
+
+  // singleFuturePrice carries the deal price as a formatted string e.g. "1499:-"
+  const sfp = hit.singleFuturePrice ?? null;
+  const futurePriceSek = parseSwedishPrice(sfp?.price);
+
+  // Priority for sale price: campaignPrice > singleFuturePrice > regularPrice
+  const priceSek = campaignPrice ?? futurePriceSek ?? regularPriceSek;
+
+  // Reference (original) price: beforePrice field → singleFuturePrice.beforePrice → regularPriceSek if discounted
+  const sfpBeforeSek = parseSwedishPrice(sfp?.beforePrice);
+  const referencePriceSek =
+    typeof hit.beforePrice === 'number' && hit.beforePrice > 0 ? hit.beforePrice
+    : sfpBeforeSek != null ? sfpBeforeSek
+    : priceSek < regularPriceSek ? regularPriceSek
+    : null;
 
   // Apply minimum discount filter
   if (minDiscountPct > 0 && referencePriceSek != null) {
@@ -176,14 +214,8 @@ function mapCampaignHit(hit, source, now, minDiscountPct) {
     if (pct < minDiscountPct) return null;
   }
 
-  // Pick the most relevant campaign for the label
-  const campaigns = hit.articleCampaigns ?? [];
-  const activeCampaign = campaigns.find((c) => c.campaignType === 'W')
-    ?? campaigns.find((c) => c.campaignType === 'S')
-    ?? campaigns[0];
-  const conditionLabel = activeCampaign?.campaignText
-    ? `Sale: ${activeCampaign.campaignText}`
-    : 'Sale';
+  // Label: use the matched campaign's text for clarity
+  const conditionLabel = buildCampaignLabel(matchedCampaign ?? allCampaigns[0]);
 
   const url = hit.productUrl ?? hit.urlB2C ?? null;
   const imageUrl = resolveImageUrl(hit.imageUrl);
@@ -200,7 +232,8 @@ function mapCampaignHit(hit, source, now, minDiscountPct) {
     sourceId: source.id,
     sourceLabel: source.label ?? source.id,
     sourceType: source.type,
-    externalId,
+    // Include campaignId in externalId so the same product can appear under different campaigns
+    externalId: `${externalId}:${campaignId}`,
     productKey: normalizeProductIdentity(title),
     title,
     url,
@@ -238,32 +271,34 @@ export async function collectFromElgigantenCampaigns({ source, now }) {
     return [];
   }
 
-  // Step 2: fetch all products, one query per campaign ID (avoids 1500-hit cap overlap)
+  // Step 2: fetch all products per campaign, tracking which campaign each hit belongs to
+  // Dedup by externalId+campaignId so the same product can appear under different campaigns
   const seen = new Set();
-  const rawHits = [];
+  const taggedHits = []; // [{hit, campaignId}]
 
   for (const cid of campaignIds) {
-    if (rawHits.length >= maxProducts) break;
+    if (taggedHits.length >= maxProducts) break;
     const filter = `articleCampaigns.campaignId:${cid}`;
     try {
       const hits = await fetchAllPages(filter);
       for (const h of hits) {
         const id = String(h.objectID ?? h.articleNumber ?? '');
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        rawHits.push(h);
+        const key = `${id}:${cid}`;
+        if (!id || seen.has(key)) continue;
+        seen.add(key);
+        taggedHits.push({ hit: h, campaignId: cid });
       }
-      console.log(`[elgiganten-campaigns] Campaign ${cid}: ${hits.length} products (running total: ${rawHits.length})`);
+      console.log(`[elgiganten-campaigns] Campaign ${cid}: ${hits.length} products (running total: ${taggedHits.length})`);
     } catch (err) {
       console.warn(`[elgiganten-campaigns] Skipping campaign ${cid}: ${err.message}`);
     }
   }
 
   // Step 3: map and filter observations
-  const observations = rawHits
-    .map((hit) => mapCampaignHit(hit, source, now, minDiscountPct))
+  const observations = taggedHits
+    .map(({ hit, campaignId: cid }) => mapCampaignHit(hit, cid, source, now, minDiscountPct))
     .filter(Boolean);
 
-  console.log(`[elgiganten-campaigns] ${observations.length} sale items (${rawHits.length - observations.length} skipped by discount filter)`);
+  console.log(`[elgiganten-campaigns] ${observations.length} sale items (${taggedHits.length - observations.length} skipped by discount filter)`);
   return observations;
 }
