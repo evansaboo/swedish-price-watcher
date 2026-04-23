@@ -11,6 +11,7 @@ export function createDefaultState() {
     deals: [],
     notifications: {},
     sourceStates: {},
+    itemHistory: {},
     preferences: {
       favoriteCategories: []
     },
@@ -29,6 +30,7 @@ function normalizeState(rawState = {}) {
   state.deals = Array.isArray(rawState.deals) ? rawState.deals : [];
   state.notifications = rawState.notifications ?? {};
   state.sourceStates = rawState.sourceStates ?? {};
+  state.itemHistory = (rawState.itemHistory && typeof rawState.itemHistory === 'object') ? rawState.itemHistory : {};
   state.preferences = {
     ...state.preferences,
     ...(rawState.preferences ?? {})

@@ -215,10 +215,29 @@ async function triggerScan(trigger, options = {}) {
           if (collected.length > 0) {
             const seenKeys = new Set(collected.map((o) => buildListingKey(o.sourceId, o.externalId)));
             let pruned = 0;
+            const archiveCutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
             for (const key of Object.keys(state.items)) {
               if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
+                const item = state.items[key];
+                // Archive compact history before pruning so it can be restored on re-appearance
+                if (item.history?.length > 0) {
+                  state.itemHistory[key] = {
+                    history: item.history,
+                    lowestPriceSek: item.lowestPriceSek,
+                    highestPriceSek: item.highestPriceSek,
+                    firstSeenAt: item.firstSeenAt,
+                    archivedAt: new Date().toISOString()
+                  };
+                }
                 delete state.items[key];
                 pruned += 1;
+              }
+            }
+            // Expire archived histories older than 90 days
+            for (const key of Object.keys(state.itemHistory ?? {})) {
+              const entry = state.itemHistory[key];
+              if (!entry?.archivedAt || Date.parse(entry.archivedAt) < archiveCutoff) {
+                delete state.itemHistory[key];
               }
             }
             if (pruned > 0) console.log(`[${source.id}] Pruned ${pruned} stale item(s).`);

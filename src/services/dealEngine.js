@@ -59,12 +59,17 @@ export function mergeObservations(state, observations, maxHistoryEntries = 60) {
   for (const observation of observations) {
     const listingKey = buildListingKey(observation.sourceId, observation.externalId);
     const isNewItem = !state.items[listingKey];
+
+    // Restore archived history if this item was previously pruned
+    const archived = isNewItem ? (state.itemHistory?.[listingKey] ?? null) : null;
+    if (archived) delete state.itemHistory[listingKey];
+
     const currentItem = state.items[listingKey] ?? {
       listingKey,
-      firstSeenAt: observation.seenAt,
-      history: [],
-      lowestPriceSek: observation.priceSek,
-      highestPriceSek: observation.priceSek
+      firstSeenAt: archived?.firstSeenAt ?? observation.seenAt,
+      history: archived?.history ?? [],
+      lowestPriceSek: archived?.lowestPriceSek ?? observation.priceSek,
+      highestPriceSek: archived?.highestPriceSek ?? observation.priceSek
     };
     const previousPriceSek = Number.isFinite(currentItem.latestPriceSek) ? currentItem.latestPriceSek : null;
 
