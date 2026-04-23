@@ -15,6 +15,7 @@
       "notes": "Auto-discovers active Elgiganten campaign IDs via Algolia facets, then fetches all products on sale. campaignTypes: W=weekly deals, S=store campaigns, R=recurring, B=brand — default ['W'] for the main weekly sale. minDiscountPct filters out small discounts. beforePrice is the original price; price.amount is the sale price. No external API key required."
     },
     {
+      "id": "elgiganten-outlet",
       "type": "elgiganten-algolia",
       "enabled": true,
       "label": "Elgiganten Outlet",
