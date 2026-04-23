@@ -228,6 +228,7 @@ function filterOutletProducts(products, query, favoriteCategorySet, latestRunSta
   const search = String(query.search ?? '').trim().toLowerCase();
   const category = String(query.category ?? '').trim().toLowerCase();
   const store = String(query.store ?? '').trim().toLowerCase();
+  const campaign = String(query.campaign ?? '').trim().toLowerCase();
   const favoritesOnly = String(query.favoritesOnly ?? 'false') === 'true';
   const discountedOnly = String(query.discountedOnly ?? 'false') === 'true';
   const referenceOnly = String(query.referenceOnly ?? 'false') === 'true';
@@ -240,6 +241,10 @@ function filterOutletProducts(products, query, favoriteCategorySet, latestRunSta
     const productCategoryKey = normalizeCategoryKey(product.category);
 
     if (store && product.sourceId !== store) {
+      return false;
+    }
+
+    if (campaign && (product.conditionLabel ?? '').toLowerCase() !== campaign) {
       return false;
     }
 
@@ -487,6 +492,15 @@ export async function buildApp({ config, store, scanState, triggerScan, cancelSc
       }
     }
     return [...seen.entries()].map(([id, label]) => ({ id, label }));
+  });
+
+  app.get('/api/outlet-campaigns', async () => {
+    const state = store.getState();
+    const labels = new Set();
+    for (const item of Object.values(state.items)) {
+      if (item.conditionLabel) labels.add(item.conditionLabel);
+    }
+    return [...labels].sort().map((label) => ({ label, value: label.toLowerCase() }));
   });
 
   app.get('/api/preferences', async () => ({

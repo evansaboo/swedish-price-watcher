@@ -8,6 +8,7 @@ const state = {
   search: '',
   category: '',
   store: '',
+  campaign: '',
   favoritesOnly: false,
   discountedOnly: false,
   newOnly: false,
@@ -46,6 +47,7 @@ const elements = {
   runSummary: document.querySelector('#run-summary'),
   categoryFilter: document.querySelector('#category-filter'),
   storeFilter: document.querySelector('#store-filter'),
+  campaignFilter: document.querySelector('#campaign-filter'),
   searchInput: document.querySelector('#search-input'),
   favoritesOnly: document.querySelector('#favorites-only'),
   discountedOnly: document.querySelector('#discounted-only'),
@@ -185,6 +187,7 @@ function saveUiPreferences() {
     search: state.search,
     category: state.category,
     store: state.store,
+    campaign: state.campaign,
     favoritesOnly: state.favoritesOnly,
     discountedOnly: state.discountedOnly,
     newOnly: state.newOnly,
@@ -219,6 +222,10 @@ function hydrateUiPreferences() {
 
   if (typeof saved.store === 'string') {
     state.store = saved.store;
+  }
+
+  if (typeof saved.campaign === 'string') {
+    state.campaign = saved.campaign;
   }
 
   if (typeof saved.favoritesOnly === 'boolean') {
@@ -532,6 +539,10 @@ function buildProductsQueryString() {
     params.set('store', state.store);
   }
 
+  if (state.campaign) {
+    params.set('campaign', state.campaign);
+  }
+
   if (state.favoritesOnly) {
     params.set('favoritesOnly', 'true');
   }
@@ -573,6 +584,7 @@ function buildOutletProductsQuery() {
   if (state.search) params.set('search', state.search);
   if (state.category) params.set('category', state.category);
   if (state.store) params.set('store', state.store);
+  if (state.campaign) params.set('campaign', state.campaign);
   if (state.favoritesOnly) params.set('favoritesOnly', 'true');
   if (state.discountedOnly) params.set('discountedOnly', 'true');
   if (state.newOnly) params.set('newOnly', 'true');
@@ -828,6 +840,23 @@ function renderStoreFilter(sources) {
   elements.storeFilter.innerHTML = options;
 }
 
+function renderCampaignFilter(campaigns) {
+  if (!elements.campaignFilter || !Array.isArray(campaigns)) return;
+
+  const current = state.campaign;
+  const options = ['<option value="">All campaigns</option>']
+    .concat(
+      campaigns.map(({ label, value }) => {
+        const selected = value === current ? ' selected' : '';
+        return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
+      })
+    )
+    .join('');
+
+  elements.campaignFilter.innerHTML = options;
+  elements.campaignFilter.closest('.filter-group')?.classList.toggle('hidden', campaigns.length === 0);
+}
+
 function renderActiveFilters() {
   const activeFilters = [];
   const minDiscount = parsePositiveInteger(state.minDiscountPercent);
@@ -846,6 +875,11 @@ function renderActiveFilters() {
   if (state.store) {
     const storeLabel = elements.storeFilter?.querySelector(`option[value="${CSS.escape(state.store)}"]`)?.textContent;
     activeFilters.push(`Store: ${storeLabel ?? state.store}`);
+  }
+
+  if (state.campaign) {
+    const campaignLabel = elements.campaignFilter?.querySelector(`option[value="${CSS.escape(state.campaign)}"]`)?.textContent;
+    activeFilters.push(`Campaign: ${campaignLabel ?? state.campaign}`);
   }
 
   if (state.favoritesOnly) {
@@ -1290,6 +1324,7 @@ function applyCurrentFilterState() {
   state.search = elements.searchInput.value.trim();
   state.category = elements.categoryFilter.value;
   state.store = elements.storeFilter?.value ?? '';
+  state.campaign = elements.campaignFilter?.value ?? '';
   state.favoritesOnly = elements.favoritesOnly.checked;
   state.discountedOnly = elements.discountedOnly.checked;
   state.newOnly = elements.newOnly.checked;
@@ -1305,6 +1340,7 @@ function resetFilters() {
   state.search = '';
   state.category = '';
   state.store = '';
+  state.campaign = '';
   state.favoritesOnly = false;
   state.discountedOnly = false;
   state.newOnly = false;
@@ -1316,6 +1352,7 @@ function resetFilters() {
   elements.searchInput.value = '';
   elements.categoryFilter.value = '';
   if (elements.storeFilter) elements.storeFilter.value = '';
+  if (elements.campaignFilter) elements.campaignFilter.value = '';
   elements.favoritesOnly.checked = false;
   elements.discountedOnly.checked = false;
   elements.newOnly.checked = false;
@@ -1328,12 +1365,13 @@ function resetFilters() {
 }
 
 async function loadDashboard() {
-  const [status, categories, preferences, sources, outletSources] = await Promise.all([
+  const [status, categories, preferences, sources, outletSources, outletCampaigns] = await Promise.all([
     fetchJson('/api/status'),
     fetchJson('/api/outlet-categories'),
     fetchJson('/api/preferences'),
     fetchJson('/api/sources'),
-    fetchJson('/api/outlet-sources')
+    fetchJson('/api/outlet-sources'),
+    fetchJson('/api/outlet-campaigns')
   ]);
 
   state.latestRunStartedAt = status.lastRunSummary?.startedAt ?? status.lastRunStartedAt ?? null;
@@ -1355,6 +1393,7 @@ async function loadDashboard() {
   renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
   renderCategoryFilter(categories);
   renderStoreFilter(outletSources ?? []);
+  renderCampaignFilter(outletCampaigns ?? []);
   renderActiveFilters();
   renderScheduler(status.scheduler);
   renderFavoriteChips();
@@ -1414,6 +1453,7 @@ function updateFilters({ debounce = false } = {}) {
 elements.searchInput.addEventListener('input', () => updateFilters({ debounce: true }));
 elements.categoryFilter.addEventListener('change', () => updateFilters());
 elements.storeFilter?.addEventListener('change', () => updateFilters());
+elements.campaignFilter?.addEventListener('change', () => updateFilters());
 elements.favoritesOnly.addEventListener('change', () => updateFilters());
 elements.discountedOnly.addEventListener('change', () => updateFilters());
 elements.newOnly.addEventListener('change', () => updateFilters());
