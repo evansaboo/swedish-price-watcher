@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-category', 'komplett-sitemap', 'apify-elgiganten', 'apify-komplett', 'elgiganten-algolia', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals', 'gg-deals-games']);
+const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-category', 'komplett-sitemap', 'apify-elgiganten', 'apify-komplett', 'elgiganten-algolia', 'elgiganten-campaigns', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals', 'gg-deals-games']);
 const supportedNotificationModes = new Set(['new-listings', 'favorite-events', 'none']);
 const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 

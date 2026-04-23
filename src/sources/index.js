@@ -1,6 +1,7 @@
 import { collectFromApifyElgiganten } from './apifyElgiganten.js';
 import { collectFromApifyKomplett } from './apifyKomplett.js';
 import { collectFromElgiganten } from './elgiganten.js';
+import { collectFromElgigantenCampaigns } from './elgigantenCampaigns.js';
 import { collectFromGgDeals } from './ggdeals.js';
 import { collectFromHtml } from './html.js';
 import { collectFromKomplettCategory, collectFromKomplettSitemap } from './komplett.js';
@@ -14,6 +15,7 @@ const handlers = {
   'apify-elgiganten': collectFromApifyElgiganten,
   'apify-komplett': collectFromApifyKomplett,
   'elgiganten-algolia': collectFromElgiganten,
+  'elgiganten-campaigns': collectFromElgigantenCampaigns,
   'gg-deals-games': collectFromGgDeals,
   'komplett-category': collectFromKomplettCategory,
   'komplett-sitemap': collectFromKomplettSitemap,
