@@ -158,7 +158,7 @@ export class JsonStore {
 
   async save() {
     await this.ensureWritableFilePath();
-    await fs.writeFile(this.filePath, `${JSON.stringify(stateForSerialization(this.state), null, 2)}\n`, 'utf8');
+    await fs.writeFile(this.filePath, `${JSON.stringify(stateForSerialization(this.state))}\n`, 'utf8');
   }
 }
 
@@ -242,7 +242,7 @@ export class ApifyStore {
         headers: {
           'content-type': 'application/json; charset=utf-8'
         },
-        body: JSON.stringify(stateForSerialization(this.state), null, 2)
+        body: JSON.stringify(stateForSerialization(this.state))
       }
     );
 

@@ -202,7 +202,7 @@ async function triggerScan(trigger, options = {}) {
               sourceState.disabledUntil = new Date(Date.now() + error.disableHours * 60 * 60 * 1000).toISOString();
             }
             sourceResults.push({ sourceId: source.id, status: 'error', message: error.message, disabledUntil: sourceState.disabledUntil ?? null });
-            await store.save();
+            // Don't save on per-source error — save at end of full scan to reduce memory pressure
             return;
           }
 
@@ -229,6 +229,10 @@ async function triggerScan(trigger, options = {}) {
                     archivedAt: new Date().toISOString()
                   };
                 }
+                // Clean up notification records for this item so state.notifications doesn't grow unboundedly
+                for (const notifKey of Object.keys(state.notifications)) {
+                  if (notifKey.startsWith(`${key}:`)) delete state.notifications[notifKey];
+                }
                 delete state.items[key];
                 pruned += 1;
               }
@@ -250,11 +254,7 @@ async function triggerScan(trigger, options = {}) {
 
           state.deals = computeDeals(state, config.thresholds);
 
-          // Save state immediately so the products API returns fresh data as each
-          // source finishes — Discord notifications run after so they never block
-          // the table from updating.
-          await store.save();
-
+          // No per-source save — save once at end of scan to avoid repeated large JSON serialization
           sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
 
           // Send Discord notifications after state is persisted.

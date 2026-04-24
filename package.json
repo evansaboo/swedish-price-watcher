@@ -4,7 +4,7 @@
   "description": "Local price watcher for Swedish electronics with polite fetching and Discord alerts",
   "main": "src/index.js",
   "scripts": {
-    "start": "node --max-old-space-size=460 src/index.js",
+    "start": "node --max-old-space-size=700 src/index.js",
     "dev": "node --watch src/index.js",
     "scan": "node src/index.js --run-once",
     "test": "node --test",

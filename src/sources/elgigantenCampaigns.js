@@ -65,6 +65,29 @@ async function algoliaPost(body) {
 }
 
 /** Fetch active campaign IDs grouped by type from Algolia facets. */
+/**
+ * Parse the ISO week from a campaign ID like SSA2617W01 → { year: 2026, week: 17 }.
+ * Returns null if the ID doesn't match the expected format.
+ */
+function parseCampaignWeek(campaignId) {
+  const match = /^SSA(\d{2})(\d{2})/.exec(campaignId);
+  if (!match) return null;
+  return { year: 2000 + Number(match[1]), week: Number(match[2]) };
+}
+
+/**
+ * Return the last day (Sunday UTC) of ISO week `week` in `year`.
+ * ISO week 1 is the week containing Jan 4.
+ */
+function isoWeekEndDate(year, week) {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const dayOfWeek = jan4.getUTCDay() || 7; // 1=Mon … 7=Sun
+  const weekOneMonday = new Date(Date.UTC(year, 0, 4 - dayOfWeek + 1));
+  const end = new Date(weekOneMonday);
+  end.setUTCDate(weekOneMonday.getUTCDate() + (week - 1) * 7 + 6); // +6 = Sunday
+  return end;
+}
+
 async function discoverCampaigns(filterTypes, filterGraceDays) {
   const payload = await algoliaPost({
     requests: [{
@@ -79,7 +102,6 @@ async function discoverCampaigns(filterTypes, filterGraceDays) {
 
   const facets = payload?.results?.[0]?.facets ?? {};
   const campaignIds = Object.keys(facets['articleCampaigns.campaignId'] ?? {});
-  const campaignTypes = facets['articleCampaigns.campaignType'] ?? {};
 
   // Map each campaign ID back to its type and end date
   // (batch 10 at a time with multi-requests)
@@ -110,8 +132,8 @@ async function discoverCampaigns(filterTypes, filterGraceDays) {
   }
 
   const nowMs = Date.now();
-  // How many days after a campaign ends to keep fetching it (gives grace for UI cache)
-  const graceDays = filterGraceDays ?? 3;
+  // Grace period after campaign end before we stop fetching (default 7 days = 1 week)
+  const graceDays = filterGraceDays ?? 7;
   const graceMs = graceDays * 24 * 60 * 60 * 1000;
 
   // Filter by requested types and expiry
@@ -123,25 +145,25 @@ async function discoverCampaigns(filterTypes, filterGraceDays) {
       return false;
     }
 
-    // Skip campaigns that ended more than graceDays ago
-    if (meta.endDate) {
-      const endMs = Date.parse(meta.endDate);
-      if (Number.isFinite(endMs) && endMs + graceMs < nowMs) {
-        return false;
-      }
+    // Determine end date: prefer Algolia field, fall back to week parsed from campaign ID
+    let endDate = meta.endDate ? new Date(meta.endDate) : null;
+    if (!endDate) {
+      const parsed = parseCampaignWeek(id);
+      if (parsed) endDate = isoWeekEndDate(parsed.year, parsed.week);
+    }
+
+    if (endDate && Number.isFinite(endDate.getTime())) {
+      if (endDate.getTime() + graceMs < nowMs) return false;
     }
 
     return true;
   });
 
-  const expired = campaignIds.length - activeIds.length - (campaignIds.length - Object.keys(idToMeta).length);
+  const skipped = campaignIds.length - activeIds.length;
   console.log(
     `[elgiganten-campaigns] Discovered ${campaignIds.length} campaigns; ` +
-    `${activeIds.length} match type filter [${filterTypes?.join(',') ?? 'all'}] and are active`
+    `${activeIds.length} active after type/expiry filter (${skipped} skipped)`
   );
-  if (expired > 0) {
-    console.log(`[elgiganten-campaigns] Skipped ${expired} expired campaign(s)`);
-  }
 
   return activeIds;
 }
