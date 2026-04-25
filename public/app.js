@@ -1077,13 +1077,25 @@ function renderFavoriteChips() {
   elements.favoriteChips.innerHTML = state.favoriteCategories
     .map(
       (category) => `
-        <button type="button" class="category-chip" data-remove-favorite="${escapeHtml(category)}">
-          <span>★ ${escapeHtml(category)}</span>
-          <span aria-hidden="true">×</span>
-        </button>
+        <span class="category-chip">
+          <button type="button" class="category-chip__label" data-filter-category="${escapeHtml(category)}" title="Show deals in ${escapeHtml(category)}">★ ${escapeHtml(category)}</button>
+          <button type="button" class="category-chip__remove" data-remove-favorite="${escapeHtml(category)}" aria-label="Remove ${escapeHtml(category)} from favorites">×</button>
+        </span>
       `
     )
     .join('');
+
+  for (const button of elements.favoriteChips.querySelectorAll('button[data-filter-category]')) {
+    button.addEventListener('click', () => {
+      const category = button.getAttribute('data-filter-category');
+      const matchingKey = state.categories.find(
+        (c) => normalizeCategoryKey(c.name) === normalizeCategoryKey(category)
+      )?.key ?? normalizeCategoryKey(category);
+      elements.categoryFilter.value = matchingKey;
+      updateFilters();
+      document.getElementById('products-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
 
   for (const button of elements.favoriteChips.querySelectorAll('button[data-remove-favorite]')) {
     button.addEventListener('click', async () => {
@@ -1245,7 +1257,7 @@ function renderProducts(response) {
             </div>
           </td>
           <td data-label="Category">
-            <span class="category-pill">${categoryFavorite ? '★ ' : ''}${escapeHtml(product.category)}</span>
+            <button type="button" class="category-pill category-pill--clickable" data-filter-category="${escapeHtml(product.category)}" title="Show all deals in ${escapeHtml(product.category)}">${categoryFavorite ? '★ ' : ''}${escapeHtml(product.category)}</button>
           </td>
           <td data-label="Price">${formatSek(product.currentPriceSek)}</td>
           <td data-label="New price">${Number.isFinite(product.initialPriceSek) ? formatSek(product.initialPriceSek) : '—'}</td>
@@ -1282,6 +1294,18 @@ function renderProducts(response) {
   for (const sortButton of elements.productsTable.querySelectorAll('button[data-sort-key]')) {
     sortButton.addEventListener('click', () => {
       updateSort(sortButton.getAttribute('data-sort-key'));
+    });
+  }
+
+  for (const catButton of elements.productsTable.querySelectorAll('button[data-filter-category]')) {
+    catButton.addEventListener('click', () => {
+      const categoryName = catButton.getAttribute('data-filter-category');
+      const match = state.categories.find(
+        (c) => normalizeCategoryKey(c.name) === normalizeCategoryKey(categoryName)
+      );
+      elements.categoryFilter.value = match ? match.key : normalizeCategoryKey(categoryName);
+      updateFilters();
+      elements.productsTable.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }
 
