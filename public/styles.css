@@ -1139,18 +1139,45 @@ details[open].run-log-toggle > summary::before { transform: rotate(90deg); }
 .category-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.32rem;
   border-radius: 999px;
   border: 1px solid rgba(22,163,74,0.3);
   background: rgba(22,163,74,0.08);
   color: #15803d;
-  padding: 0.2rem 0.52rem;
   font-size: 0.78rem;
   font-weight: 500;
-  cursor: pointer;
+  overflow: hidden;
   transition: background-color 0.15s;
 }
-.category-chip:hover { background: rgba(22,163,74,0.15); }
+.category-chip__label {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem 0.2rem 0.52rem;
+  transition: background-color 0.15s;
+}
+.category-chip__label:hover {
+  background: rgba(22,163,74,0.18);
+  text-decoration: underline;
+}
+.category-chip__remove {
+  background: none;
+  border: none;
+  border-left: 1px solid rgba(22,163,74,0.25);
+  color: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.2rem 0.45rem;
+  opacity: 0.6;
+  transition: background-color 0.15s, opacity 0.15s;
+}
+.category-chip__remove:hover {
+  background: rgba(220,38,38,0.12);
+  color: #b91c1c;
+  opacity: 1;
+}
 
 .favorites-editor-wrap {
   margin-top: 0.72rem;
@@ -1492,6 +1519,18 @@ tbody tr:hover .row-link-icon { opacity: 1; }
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.category-pill--clickable {
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.category-pill--clickable:hover {
+  background: rgba(22,163,74,0.1);
+  border-color: rgba(22,163,74,0.4);
+  color: #15803d;
 }
 
 /* Price column styling */
