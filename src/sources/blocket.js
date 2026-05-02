@@ -94,12 +94,12 @@ export async function collectFromBlocket({ source, fetcher, now }) {
       const url = `${API_BASE}?q=${encodeURIComponent(keyword)}&sort=${sort}&page=${page}`;
       let data;
       try {
-        const raw = await fetcher.fetchText(source, null, url, {
+        const result = await fetcher.fetchText(source, null, url, {
           headers: API_HEADERS,
           skipRobotsCheck: true,
           skipHostDelay: true,
         });
-        data = JSON.parse(raw);
+        data = JSON.parse(result.body);
       } catch {
         break; // non-fatal — skip remaining pages for this keyword
       }
