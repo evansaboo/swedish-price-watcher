@@ -114,9 +114,15 @@ function stateForSerialization(state) {
   return { ...state, deals: [] };
 }
 
+/** Extract only the preferences sub-object for fast partial saves. */
+function preferencesForSerialization(state) {
+  return state.preferences ?? {};
+}
+
 export class JsonStore {
   constructor(filePath) {
     this.filePath = filePath;
+    this.preferencesFilePath = filePath.replace(/(\.[^.]+)?$/, '.preferences$1');
     this.state = createDefaultState();
   }
 
@@ -149,6 +155,18 @@ export class JsonStore {
       await this.save();
     }
 
+    // Overlay fast-path preferences file if it exists — it wins over the
+    // stale preferences baked into the main state file.
+    try {
+      const prefFile = await fs.readFile(this.preferencesFilePath, 'utf8');
+      const savedPrefs = JSON.parse(prefFile);
+      if (savedPrefs && typeof savedPrefs === 'object') {
+        this.state.preferences = normalizeState({ preferences: savedPrefs }).preferences;
+      }
+    } catch {
+      // Preferences file doesn't exist yet — use preferences from main state.
+    }
+
     return this.state;
   }
 
@@ -159,6 +177,16 @@ export class JsonStore {
   async save() {
     await this.ensureWritableFilePath();
     await fs.writeFile(this.filePath, `${JSON.stringify(stateForSerialization(this.state))}\n`, 'utf8');
+  }
+
+  /** Fast save: only writes the small preferences object (~1 KB). */
+  async savePreferences() {
+    await this.ensureWritableFilePath();
+    await fs.writeFile(
+      this.preferencesFilePath,
+      `${JSON.stringify(preferencesForSerialization(this.state))}\n`,
+      'utf8'
+    );
   }
 }
 
@@ -226,6 +254,23 @@ export class ApifyStore {
 
     const payload = await response.json();
     this.state = normalizeState(payload ?? {});
+
+    // Overlay fast-path preferences record if it exists.
+    try {
+      const prefResponse = await fetch(
+        `${APIFY_API_BASE_URL}/key-value-stores/${encodeURIComponent(storeId)}/records/${encodeURIComponent(this.recordKey + '-preferences')}?token=${encodeURIComponent(this.token)}&disableRedirect=true`,
+        { method: 'GET', headers: { accept: 'application/json' } }
+      );
+      if (prefResponse.ok) {
+        const savedPrefs = await prefResponse.json();
+        if (savedPrefs && typeof savedPrefs === 'object') {
+          this.state.preferences = normalizeState({ preferences: savedPrefs }).preferences;
+        }
+      }
+    } catch {
+      // Preferences record missing — use preferences from main state.
+    }
+
     return this.state;
   }
 
@@ -248,6 +293,23 @@ export class ApifyStore {
 
     if (!response.ok) {
       throw new Error(`Unable to save Apify state: ${response.status} ${response.statusText}`);
+    }
+  }
+
+  /** Fast save: only writes the small preferences record (~1 KB) to Apify KV. */
+  async savePreferences() {
+    const storeId = await this.ensureStoreId();
+    const response = await fetch(
+      `${APIFY_API_BASE_URL}/key-value-stores/${encodeURIComponent(storeId)}/records/${encodeURIComponent(this.recordKey + '-preferences')}?token=${encodeURIComponent(this.token)}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: JSON.stringify(preferencesForSerialization(this.state))
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Unable to save Apify preferences: ${response.status} ${response.statusText}`);
     }
   }
 }

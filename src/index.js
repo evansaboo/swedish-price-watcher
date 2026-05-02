@@ -354,7 +354,7 @@ async function updateScheduler(nextSettings = {}) {
     }
   };
 
-  await store.save();
+  await (store.savePreferences ?? store.save).call(store);
   return updated;
 }
 
