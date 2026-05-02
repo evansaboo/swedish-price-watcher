@@ -71,12 +71,57 @@ function mapDoc(doc, source, now) {
 }
 
 /**
+ * Build the merged, deduplicated keyword list for this scan:
+ * 1. Static keywords from source config
+ * 2. Enabled keyword alert terms from preferences
+ * 3. Favorite category names from preferences
+ * 4. Category webhook patterns from preferences
+ */
+function buildKeywords(source, preferences) {
+  const seen = new Set();
+  const result = [];
+
+  function add(term) {
+    const t = String(term ?? '').trim();
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(t);
+    }
+  }
+
+  // 1. Static keywords from source config
+  for (const kw of (source.keywords ?? DEFAULT_KEYWORDS)) add(kw);
+
+  // 2. Enabled keyword alert terms
+  const kwAlerts = preferences?.notificationSettings?.keywords ?? [];
+  for (const k of kwAlerts) {
+    if (k.enabled !== false && typeof k.keyword === 'string') add(k.keyword);
+  }
+
+  // 3. Favorite categories
+  const favCats = preferences?.favoriteCategories ?? [];
+  for (const cat of favCats) add(cat);
+
+  // 4. Category webhook patterns
+  const catWebhooks = preferences?.notificationSettings?.categoryWebhooks ?? [];
+  for (const cw of catWebhooks) {
+    if (typeof cw.pattern === 'string') add(cw.pattern);
+  }
+
+  return result;
+}
+
+
+/**
  * Collect Blocket second-hand electronics listings via the internal BFF JSON API.
  * No API key required — the endpoint is public and unauthenticated.
  * Paginates up to maxPagesPerKeyword pages for each search keyword.
+ * Keywords are merged from: source config + enabled keyword alerts + favorite categories + category webhook patterns.
  */
-export async function collectFromBlocket({ source, fetcher, now }) {
-  const keywords = source.keywords ?? DEFAULT_KEYWORDS;
+export async function collectFromBlocket({ source, fetcher, preferences, now }) {
+  const keywords = buildKeywords(source, preferences);
   const maxPagesPerKeyword = source.maxPagesPerKeyword ?? 3;
   const maxProducts = source.maxProducts ?? 2000;
 

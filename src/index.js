@@ -170,7 +170,7 @@ async function triggerScan(trigger, options = {}) {
             collectResult = { status: 'cooling-down', disabledUntil: sourceState.disabledUntil };
           } else {
             scanState.sourceProgress[source.id] = { status: 'running' };
-            const collected = await collectSource({ source, fetcher, sourceState, now: startedAt });
+            const collected = await collectSource({ source, fetcher, sourceState, now: startedAt, preferences: state.preferences });
             scanState.sourceProgress[source.id] = { status: 'done', count: collected.length };
             collectResult = { status: 'ok', collected };
           }
