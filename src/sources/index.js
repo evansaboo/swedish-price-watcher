@@ -1,3 +1,4 @@
+import { collectFromBlocket } from './blocket.js';
 import { collectFromApifyElgiganten } from './apifyElgiganten.js';
 import { collectFromApifyKomplett } from './apifyKomplett.js';
 import { collectFromElgiganten } from './elgiganten.js';
@@ -14,6 +15,7 @@ import { collectFromWebhallen } from './webhallen.js';
 const handlers = {
   'apify-elgiganten': collectFromApifyElgiganten,
   'apify-komplett': collectFromApifyKomplett,
+  blocket: collectFromBlocket,
   'elgiganten-algolia': collectFromElgiganten,
   'elgiganten-campaigns': collectFromElgigantenCampaigns,
   'gg-deals-games': collectFromGgDeals,

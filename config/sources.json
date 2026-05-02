@@ -162,6 +162,33 @@
       "notes": "Auto-discovers top Steam games via SteamSpy (10k IDs, weekly refresh). Processes maxGamesPerScan=500 Steam games per scan via GG.deals API (rotating window). PS5/Xbox: scrapes GG.deals deal pages via FlareSolverr (dealsPageCount=5 pages per platform = ~250 active deals each). GG_DEALS_API_KEY required for Steam. FLARESOLVERR_URL required for PS5/Xbox. Steam rate limits: 100 games/min, 1000/hour — handled automatically with 62s inter-batch delay."
     },
     {
+      "id": "blocket-electronics",
+      "type": "blocket",
+      "enabled": true,
+      "label": "Blocket (begagnat elektronik)",
+      "category": "electronics",
+      "condition": "used",
+      "maxPagesPerKeyword": 3,
+      "maxProducts": 2000,
+      "keywords": [
+        "grafikkort",
+        "gaming laptop",
+        "playstation 5",
+        "xbox series",
+        "iphone",
+        "samsung galaxy",
+        "macbook",
+        "hörlurar",
+        "bildskärm",
+        "cpu",
+        "gaming headset",
+        "nintendo switch",
+        "kamera",
+        "datorkomponenter"
+      ],
+      "notes": "Uses Blocket's internal BFF JSON API (no auth required). Searches for electronics keywords and paginates up to maxPagesPerKeyword pages each. ~53 results per page. Good for spotting resale deals on second-hand Swedish electronics."
+    },
+    {
       "id": "approved-rss-feed",
       "type": "rss",
       "enabled": false,
