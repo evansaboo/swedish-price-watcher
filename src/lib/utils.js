@@ -4,8 +4,30 @@ const sekFormatter = new Intl.NumberFormat('sv-SE', {
   maximumFractionDigits: 0
 });
 
-export function sleep(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+export function sleep(milliseconds, signal = null) {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', onAbort);
+      const error = new Error('Aborted');
+      error.name = 'AbortError';
+      reject(error);
+    };
+
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
 }
 
 export function stripText(value) {

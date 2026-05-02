@@ -117,13 +117,26 @@ function buildKeywords(source, preferences) {
 }
 
 
+async function waitOrAbort(milliseconds, signal) {
+  try {
+    await sleep(milliseconds, signal);
+    return true;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
 /**
  * Collect Blocket second-hand electronics listings via the internal BFF JSON API.
  * No API key required — the endpoint is public and unauthenticated.
  * Paginates up to maxPagesPerKeyword pages for each search keyword.
  * Keywords are merged from: source config + enabled keyword alerts + favorite categories + category webhook patterns.
  */
-export async function collectFromBlocket({ source, fetcher, preferences, now }) {
+export async function collectFromBlocket({ source, fetcher, preferences, now, signal }) {
   const keywords = buildKeywords(source, preferences);
   const maxPagesPerKeyword = source.maxPagesPerKeyword ?? 3;
   const maxProducts = source.maxProducts ?? 2000;
@@ -157,6 +170,10 @@ export async function collectFromBlocket({ source, fetcher, preferences, now }) 
 
         data = JSON.parse(result.body);
       } catch (err) {
+        if (signal?.aborted || /aborted/i.test(err?.message ?? '')) {
+          return observations;
+        }
+
         console.warn(`[${source.id}] Fetch/parse error for keyword="${keyword}" page=${page}: ${err.message}`);
         break; // non-fatal — skip remaining pages for this keyword
       }
@@ -178,10 +195,14 @@ export async function collectFromBlocket({ source, fetcher, preferences, now }) 
       // No new results or reached end of pagination — stop this keyword
       if (newOnPage === 0 || page >= totalPages) break;
 
-      if (page < lastPage) await sleep(PAGE_DELAY_MS);
+      if (page < lastPage && !(await waitOrAbort(PAGE_DELAY_MS, signal))) {
+        return observations;
+      }
     }
 
-    await sleep(PAGE_DELAY_MS);
+    if (!(await waitOrAbort(PAGE_DELAY_MS, signal))) {
+      return observations;
+    }
   }
 
   console.log(`[${source.id}] Total: ${observations.length} products`);

@@ -7,6 +7,7 @@ import { createSchedulerController, normalizeActiveWindow } from './scheduler.js
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { DiscordNotifier } from './services/notifier.js';
+import { shouldSkipDiscordNotifications } from './services/scanPolicy.js';
 
 const runOnce = process.argv.includes('--run-once');
 const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
@@ -105,6 +106,7 @@ async function triggerScan(trigger, options = {}) {
   scanState.totalSources = sourcesToRun.length;
   scanState.sourceProgress = {};
   scanState.abortController = new AbortController();
+  fetcher.setAbortSignal(scanState.abortController.signal);
 
   const startedAt = new Date().toISOString();
   scanState.startedAt = startedAt;
@@ -170,13 +172,27 @@ async function triggerScan(trigger, options = {}) {
             collectResult = { status: 'cooling-down', disabledUntil: sourceState.disabledUntil };
           } else {
             scanState.sourceProgress[source.id] = { status: 'running' };
-            const collected = await collectSource({ source, fetcher, sourceState, now: startedAt, preferences: state.preferences });
+            const collected = await collectSource({
+              source,
+              fetcher,
+              sourceState,
+              now: startedAt,
+              preferences: state.preferences,
+              signal: scanState.abortController.signal
+            });
             scanState.sourceProgress[source.id] = { status: 'done', count: collected.length };
             collectResult = { status: 'ok', collected };
           }
         } catch (error) {
-          scanState.sourceProgress[source.id] = { status: 'error', message: error.message };
-          collectResult = { status: 'error', error };
+          const cancelled =
+            scanState.abortController?.signal.aborted ||
+            error?.name === 'AbortError' ||
+            /aborted/i.test(error?.message ?? '');
+
+          scanState.sourceProgress[source.id] = cancelled
+            ? { status: 'cancelled' }
+            : { status: 'error', message: error.message };
+          collectResult = cancelled ? { status: 'cancelled', error } : { status: 'error', error };
         } finally {
           scanState.completedSources += 1;
         }
@@ -185,13 +201,13 @@ async function triggerScan(trigger, options = {}) {
         // Setting processingChain is synchronous (no await between read + write),
         // so there is no race when multiple workers reach this line concurrently.
         processingChain = processingChain.then(async () => {
-          if (scanState.abortController?.signal.aborted) {
-            sourceResults.push({ sourceId: source.id, status: 'cancelled' });
+          if (collectResult.status === 'cooling-down') {
+            sourceResults.push({ sourceId: source.id, status: 'cooling-down', disabledUntil: collectResult.disabledUntil });
             return;
           }
 
-          if (collectResult.status === 'cooling-down') {
-            sourceResults.push({ sourceId: source.id, status: 'cooling-down', disabledUntil: collectResult.disabledUntil });
+          if (collectResult.status === 'cancelled') {
+            sourceResults.push({ sourceId: source.id, status: 'cancelled' });
             return;
           }
 
@@ -207,6 +223,13 @@ async function triggerScan(trigger, options = {}) {
           }
 
           const { collected } = collectResult;
+          const scanCancelled = scanState.cancelling || scanState.abortController?.signal.aborted;
+
+          if (scanCancelled && collected.length === 0) {
+            sourceResults.push({ sourceId: source.id, status: 'cancelled' });
+            return;
+          }
+
           observations += collected.length;
           const mergeResult = mergeObservations(state, collected, config.maxHistoryEntries);
           newItems.push(...mergeResult.newItems);
@@ -247,6 +270,8 @@ async function triggerScan(trigger, options = {}) {
             if (pruned > 0) console.log(`[${source.id}] Pruned ${pruned} stale item(s).`);
           }
 
+          const isFirstSuccessfulRun = !sourceState.lastSuccessAt;
+          const skipDiscordNotifications = shouldSkipDiscordNotifications({ sourceState, scanState });
           sourceState.lastSuccessAt = startedAt;
           sourceState.lastError = null;
           sourceState.lastCount = collected.length;
@@ -256,6 +281,16 @@ async function triggerScan(trigger, options = {}) {
 
           // No per-source save — save once at end of scan to avoid repeated large JSON serialization
           sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
+
+          if (skipDiscordNotifications) {
+            if (isFirstSuccessfulRun) {
+              console.log(`[${source.id}] Skipping Discord notifications on first successful run.`);
+            }
+            if (scanState.cancelling || scanState.abortController?.signal.aborted) {
+              console.log(`[${source.id}] Scan cancelled; saved fetched data without Discord notifications.`);
+            }
+            return;
+          }
 
           // Send Discord notifications after state is persisted.
           const effectiveNotificationSettings = { ...(state.preferences?.notificationSettings ?? {}) };
@@ -319,6 +354,7 @@ async function triggerScan(trigger, options = {}) {
     scanState.totalSources = 0;
     scanState.sourceProgress = {};
     scanState.abortController = null;
+    fetcher.setAbortSignal(null);
   }
 }
 

@@ -19,6 +19,11 @@ export class PoliteFetcher {
     this.disableHoursOnBlock = options.disableHoursOnBlock;
     this.hostState = new Map();
     this.robotsCache = new Map();
+    this.abortSignal = null;
+  }
+
+  setAbortSignal(signal) {
+    this.abortSignal = signal ?? null;
   }
 
   async fetchText(source, sourceState, url, options = {}) {
@@ -197,10 +202,26 @@ export class PoliteFetcher {
   async #timedFetch(url, init = {}) {
     const {
       timeoutMs = this.requestTimeoutMs,
+      signal = this.abortSignal,
       ...fetchInit
     } = init;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    let externalAbortHandler = null;
+
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        externalAbortHandler = () => controller.abort();
+        signal.addEventListener('abort', externalAbortHandler, { once: true });
+      }
+    }
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
 
     try {
       return await fetch(url, {
@@ -208,13 +229,18 @@ export class PoliteFetcher {
         signal: controller.signal
       });
     } catch (error) {
-      const detail = error?.name === 'AbortError'
+      const detail = timedOut
         ? `Timed out after ${timeoutMs}ms`
+        : signal?.aborted
+          ? 'Aborted'
         : error.message;
 
       throw new Error(`Request failed for ${url}: ${detail}`);
     } finally {
       clearTimeout(timeout);
+      if (signal && externalAbortHandler) {
+        signal.removeEventListener('abort', externalAbortHandler);
+      }
     }
   }
 
