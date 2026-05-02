@@ -4,6 +4,9 @@ import { normalizeProductIdentity, sleep } from '../lib/utils.js';
 const API_BASE =
   'https://www.blocket.se/recommerce/forsale/search/api/search/SEARCH_ID_BAP_COMMON';
 
+// Default sort: newest listings first (RELEVANCE also available)
+const DEFAULT_SORT = 'PUBLISHED_DESC';
+
 // ms to wait between page/keyword requests
 const PAGE_DELAY_MS = 600;
 
@@ -87,7 +90,8 @@ export async function collectFromBlocket({ source, fetcher, now }) {
     for (let page = 1; page <= lastPage; page++) {
       if (observations.length >= maxProducts) break;
 
-      const url = `${API_BASE}?q=${encodeURIComponent(keyword)}&page=${page}`;
+      const sort = source.sort ?? DEFAULT_SORT;
+      const url = `${API_BASE}?q=${encodeURIComponent(keyword)}&sort=${sort}&page=${page}`;
       let data;
       try {
         const raw = await fetcher.fetchText(source, null, url, {

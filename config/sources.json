@@ -170,6 +170,7 @@
       "condition": "used",
       "maxPagesPerKeyword": 3,
       "maxProducts": 2000,
+      "sort": "PUBLISHED_DESC",
       "keywords": [
         "grafikkort",
         "gaming laptop",
