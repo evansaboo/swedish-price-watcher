@@ -34,7 +34,7 @@ const DEFAULT_KEYWORDS = [
   'datorkomponenter',
 ];
 
-function mapDoc(doc, source, now) {
+function mapDoc(doc, source, now, keyword) {
   const id = String(doc.id ?? '').trim();
   const title = (doc.heading ?? '').trim();
   if (!id || !title) return null;
@@ -46,8 +46,11 @@ function mapDoc(doc, source, now) {
     doc.canonical_url ?? `https://www.blocket.se/recommerce/forsale/item/${id}`;
   const imageUrl = doc.image?.url ?? null;
 
-  // ad_type 67 = "Säljes" (for sale); sub_category_id / category_id not always present
-  const category = doc.category_name ?? doc.subject ?? 'Elektronik';
+  // API does not return category fields — use the search keyword as a best-effort category label
+  const keywordCategory = keyword
+    ? keyword.charAt(0).toUpperCase() + keyword.slice(1)
+    : null;
+  const category = keywordCategory ?? 'Elektronik';
 
   return {
     sourceId: source.id,
@@ -125,6 +128,8 @@ export async function collectFromBlocket({ source, fetcher, preferences, now }) 
   const maxPagesPerKeyword = source.maxPagesPerKeyword ?? 3;
   const maxProducts = source.maxProducts ?? 2000;
 
+  console.log(`[${source.id}] Searching ${keywords.length} keywords (maxPages=${maxPagesPerKeyword}, maxProducts=${maxProducts})`);
+
   const observations = [];
   const seenIds = new Set();
 
@@ -144,8 +149,15 @@ export async function collectFromBlocket({ source, fetcher, preferences, now }) 
           skipRobotsCheck: true,
           skipHostDelay: true,
         });
+
+        if (!result.body) {
+          console.warn(`[${source.id}] Empty response for keyword="${keyword}" page=${page}`);
+          break;
+        }
+
         data = JSON.parse(result.body);
-      } catch {
+      } catch (err) {
+        console.warn(`[${source.id}] Fetch/parse error for keyword="${keyword}" page=${page}: ${err.message}`);
         break; // non-fatal — skip remaining pages for this keyword
       }
 
@@ -156,7 +168,7 @@ export async function collectFromBlocket({ source, fetcher, preferences, now }) 
       for (const doc of docs) {
         if (seenIds.has(doc.id)) continue;
         seenIds.add(doc.id);
-        const obs = mapDoc(doc, source, now);
+        const obs = mapDoc(doc, source, now, keyword);
         if (obs) {
           observations.push(obs);
           newOnPage++;
@@ -172,5 +184,6 @@ export async function collectFromBlocket({ source, fetcher, preferences, now }) 
     await sleep(PAGE_DELAY_MS);
   }
 
+  console.log(`[${source.id}] Total: ${observations.length} products`);
   return observations;
 }
