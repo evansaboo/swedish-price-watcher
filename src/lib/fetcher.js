@@ -78,7 +78,10 @@ export class PoliteFetcher {
     if (!options.skipRobotsCheck) {
       await this.#ensureRobotsAllowed(url);
     }
-    await this.#waitForHost(url.host);
+
+    if (!options.skipHostDelay) {
+      await this.#waitForHost(url.host);
+    }
 
     const headers = {
       'user-agent': this.userAgent,
@@ -101,7 +104,9 @@ export class PoliteFetcher {
       timeoutMs: options.timeoutMs
     });
 
-    this.#recordHostRequest(url.host);
+    if (!options.skipHostDelay) {
+      this.#recordHostRequest(url.host);
+    }
 
     if (response.status === 304) {
       return { response, notModified: true };
