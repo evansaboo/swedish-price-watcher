@@ -1697,27 +1697,34 @@ function createEmptyRule() {
  * Wire a chip tag-input: Enter/comma to add, × to remove.
  * If allOptions is provided, shows a searchable dropdown for autocomplete.
  */
-function wireChipInput({ container, items, onAdd, onRemove, allOptions }) {
+function wireChipInput({ container, items, onAdd, onRemove, allOptions, placeholder }) {
   const chipList = container.querySelector('.chip-list');
   const textInput = container.querySelector('.chip-text-input');
   const dropdown = container.querySelector('.kw-cat-dropdown');
+  if (placeholder) textInput.setAttribute('placeholder', placeholder);
 
   function refreshChips() {
     chipList.innerHTML = items
-      .map((v) => `<span class="chip" data-val="${escapeHtml(v)}">${escapeHtml(v)}<button type="button" class="chip-remove" aria-label="Remove ${escapeHtml(v)}">✕</button></span>`)
+      .map((v) => `<span class="chip" data-val="${escapeHtml(v)}">${escapeHtml(v)}<button type="button" class="chip-remove" aria-label="Remove ${escapeHtml(v)}" tabindex="-1">×</button></span>`)
       .join('');
-    for (const btn of chipList.querySelectorAll('.chip-remove')) {
-      btn.addEventListener('click', () => {
-        onRemove(btn.parentElement.dataset.val);
+    chipList.querySelectorAll('.chip-remove').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const val = btn.closest('.chip').dataset.val;
+        // Mutate in-place so the `items` reference stays valid
+        const idx = items.indexOf(val);
+        if (idx !== -1) items.splice(idx, 1);
+        onRemove(val);
         refreshChips();
         if (dropdown) renderDropdown();
       });
-    }
+    });
   }
 
   function addValue(val) {
     val = val.trim();
     if (!val || items.includes(val)) return;
+    items.push(val);
     onAdd(val);
     textInput.value = '';
     refreshChips();
@@ -1749,6 +1756,12 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions }) {
     } else if (e.key === 'Escape') {
       if (dropdown) dropdown.classList.add('hidden');
       textInput.blur();
+    } else if (e.key === 'Backspace' && !textInput.value && items.length) {
+      // remove last chip on backspace when input is empty
+      const last = items[items.length - 1];
+      items.splice(items.length - 1, 1);
+      onRemove(last);
+      refreshChips();
     }
   });
 
@@ -1770,76 +1783,85 @@ function createRuleElement(rule) {
   const webhooksHtml = (rule.webhooks.length ? rule.webhooks : ['']).map((w) => `
     <div class="webhook-row">
       <input type="url" class="modal-input rule-webhook-input" placeholder="https://discord.com/api/webhooks/…" value="${escapeHtml(w)}" />
+      <button type="button" class="btn-icon-sm remove-webhook-btn" aria-label="Remove" style="visibility:hidden">×</button>
     </div>`).join('');
 
   li.innerHTML = `
     <div class="rule-header">
-      <label class="rule-enabled-wrap" title="Enable rule">
+      <label class="rule-toggle-wrap" title="${rule.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}">
         <input type="checkbox" class="rule-enabled-cb" ${rule.enabled ? 'checked' : ''} />
+        <span class="rule-toggle-label">${rule.enabled ? 'On' : 'Off'}</span>
       </label>
-      <input type="text" class="modal-input rule-label-input" placeholder="Rule name (e.g. GPU Deals)" value="${escapeHtml(rule.label)}" />
-      <button type="button" class="rule-expand-btn ghost-btn" aria-label="Toggle details" title="Expand / collapse">▾</button>
-      <button type="button" class="modal-item-remove rule-delete-btn" aria-label="Delete rule">✕</button>
+      <input type="text" class="modal-input rule-label-input" placeholder="Alert name (e.g. GPU Deals)" value="${escapeHtml(rule.label)}" />
+      <button type="button" class="modal-item-remove rule-delete-btn" aria-label="Delete alert" title="Delete">✕</button>
     </div>
     <div class="rule-body">
-      <div class="rule-field">
-        <label class="rule-field-label">Keywords <span class="kw-optional">(optional — any keyword triggers; press Enter or comma to add)</span></label>
-        <div class="chip-input-wrap" id="kw-chips-${rule.id}">
-          <div class="chip-list"></div>
-          <input type="text" class="chip-text-input" placeholder="e.g. RTX 5070" autocomplete="off" />
+      <div class="rule-row rule-row-two-col">
+        <div class="rule-field">
+          <label class="rule-field-label">Keywords
+            <span class="rule-hint">Any keyword triggers · Enter or comma to add · Backspace to remove last</span>
+          </label>
+          <div class="chip-input-wrap" id="kw-chips-${rule.id}">
+            <div class="chip-list"></div>
+            <input type="text" class="chip-text-input" placeholder="e.g. RTX 5070, iPhone 14…" autocomplete="off" />
+          </div>
+        </div>
+        <div class="rule-field">
+          <label class="rule-field-label">Categories
+            <span class="rule-hint">Optional · filter to specific categories</span>
+          </label>
+          <div class="chip-input-wrap" id="cat-chips-${rule.id}">
+            <div class="chip-list"></div>
+            <input type="text" class="chip-text-input" placeholder="Search or leave blank for all…" autocomplete="off" />
+            <ul class="kw-cat-dropdown hidden" role="listbox"></ul>
+          </div>
         </div>
       </div>
-      <div class="rule-field">
-        <label class="rule-field-label">Categories <span class="kw-optional">(optional — filter to specific product categories)</span></label>
-        <div class="chip-input-wrap" id="cat-chips-${rule.id}">
-          <div class="chip-list"></div>
-          <input type="text" class="chip-text-input" placeholder="Search categories…" autocomplete="off" />
-          <ul class="kw-cat-dropdown hidden" role="listbox"></ul>
+      <div class="rule-row">
+        <div class="rule-field rule-field-webhooks">
+          <label class="rule-field-label">Discord webhook(s)
+            <span class="rule-hint">All listed webhooks receive the alert</span>
+          </label>
+          <div class="webhooks-list">${webhooksHtml}</div>
+          <button type="button" class="ghost-btn add-webhook-btn">+ Add webhook</button>
         </div>
-      </div>
-      <div class="rule-field">
-        <label class="rule-field-label">Discord webhook(s) <span class="kw-optional">(one per line; all will receive the alert)</span></label>
-        <div class="webhooks-list">${webhooksHtml}</div>
-        <button type="button" class="ghost-btn add-webhook-btn">+ Add another webhook</button>
-      </div>
-      <div class="rule-field">
-        <label class="rule-field-label">Max price (SEK) <span class="kw-optional">(optional — skip alert if listing price is above this)</span></label>
-        <input type="number" class="modal-input rule-maxprice-input" placeholder="e.g. 5000" min="0" step="100" value="${rule.maxPriceSek != null ? rule.maxPriceSek : ''}" />
+        <div class="rule-field rule-field-maxprice">
+          <label class="rule-field-label">Max price (SEK)
+            <span class="rule-hint">Optional — skip if price exceeds this</span>
+          </label>
+          <input type="number" class="modal-input rule-maxprice-input" placeholder="e.g. 5000" min="0" step="100" value="${rule.maxPriceSek != null ? rule.maxPriceSek : ''}" />
+        </div>
       </div>
     </div>`;
 
   // Enable toggle
-  li.querySelector('.rule-enabled-cb').addEventListener('change', (e) => {
+  const cb = li.querySelector('.rule-enabled-cb');
+  const toggleLabel = li.querySelector('.rule-toggle-label');
+  cb.addEventListener('change', (e) => {
     rule.enabled = e.target.checked;
     li.classList.toggle('rule-disabled', !rule.enabled);
+    toggleLabel.textContent = rule.enabled ? 'On' : 'Off';
+    li.querySelector('.rule-toggle-wrap').title = rule.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable';
   });
 
   // Label
   li.querySelector('.rule-label-input').addEventListener('input', (e) => { rule.label = e.target.value; });
-
-  // Expand / collapse
-  const ruleBody = li.querySelector('.rule-body');
-  const expandBtn = li.querySelector('.rule-expand-btn');
-  expandBtn.addEventListener('click', () => {
-    const collapsed = ruleBody.classList.toggle('rule-body-collapsed');
-    expandBtn.textContent = collapsed ? '▸' : '▾';
-  });
 
   // Delete
   li.querySelector('.rule-delete-btn').addEventListener('click', () => {
     notifSettings.alertRules = notifSettings.alertRules.filter((r) => r.id !== rule.id);
     li.remove();
     if (!notifSettings.alertRules.length) {
-      notifModal.rulesList.innerHTML = '<li class="modal-empty">No alert rules yet. Click "+ New rule" to create one.</li>';
+      notifModal.rulesList.innerHTML = '<li class="modal-empty">No alert rules yet. Click "+ Add alert" to create one.</li>';
     }
   });
 
-  // Keyword chip input
+  // Keyword chip input — onAdd/onRemove are no-ops because wireChipInput mutates `items` directly
   wireChipInput({
     container: li.querySelector(`#kw-chips-${rule.id}`),
     items: rule.keywords,
-    onAdd: (val) => { if (!rule.keywords.includes(val)) rule.keywords.push(val); },
-    onRemove: (val) => { rule.keywords = rule.keywords.filter((k) => k !== val); },
+    onAdd: () => {},
+    onRemove: () => {},
     allOptions: null
   });
 
@@ -1847,8 +1869,8 @@ function createRuleElement(rule) {
   wireChipInput({
     container: li.querySelector(`#cat-chips-${rule.id}`),
     items: rule.categories,
-    onAdd: (val) => { if (!rule.categories.includes(val)) rule.categories.push(val); },
-    onRemove: (val) => { rule.categories = rule.categories.filter((c) => c !== val); },
+    onAdd: () => {},
+    onRemove: () => {},
     allOptions: allCategories
   });
 
@@ -1860,14 +1882,8 @@ function createRuleElement(rule) {
     rule.webhooks = [...webhooksList.querySelectorAll('.rule-webhook-input')].map((i) => i.value.trim());
     const rows = webhooksList.querySelectorAll('.webhook-row');
     rows.forEach((row) => {
-      let rmBtn = row.querySelector('.remove-webhook-btn');
-      if (rows.length > 1 && !rmBtn) {
-        rmBtn = document.createElement('button');
-        rmBtn.type = 'button'; rmBtn.className = 'btn-icon-sm remove-webhook-btn'; rmBtn.setAttribute('aria-label', 'Remove'); rmBtn.textContent = '✕';
-        row.appendChild(rmBtn);
-      } else if (rows.length === 1 && rmBtn) {
-        rmBtn.remove();
-      }
+      const rmBtn = row.querySelector('.remove-webhook-btn');
+      if (rmBtn) rmBtn.style.visibility = rows.length > 1 ? 'visible' : 'hidden';
     });
   }
 
@@ -1881,7 +1897,7 @@ function createRuleElement(rule) {
   addWebhookBtn.addEventListener('click', () => {
     const row = document.createElement('div');
     row.className = 'webhook-row';
-    row.innerHTML = `<input type="url" class="modal-input rule-webhook-input" placeholder="https://discord.com/api/webhooks/…" /><button type="button" class="btn-icon-sm remove-webhook-btn" aria-label="Remove">✕</button>`;
+    row.innerHTML = `<input type="url" class="modal-input rule-webhook-input" placeholder="https://discord.com/api/webhooks/…" /><button type="button" class="btn-icon-sm remove-webhook-btn" aria-label="Remove">×</button>`;
     webhooksList.appendChild(row);
     syncAndRefreshWebhooks();
     row.querySelector('.rule-webhook-input').focus();
@@ -1901,7 +1917,7 @@ function createRuleElement(rule) {
 function renderRuleList() {
   notifModal.rulesList.innerHTML = '';
   if (!notifSettings.alertRules.length) {
-    notifModal.rulesList.innerHTML = '<li class="modal-empty">No alert rules yet. Click "+ New rule" to create one.</li>';
+    notifModal.rulesList.innerHTML = '<li class="modal-empty">No alert rules yet. Click "+ Add alert" to create one.</li>';
     return;
   }
   for (const rule of notifSettings.alertRules) {
