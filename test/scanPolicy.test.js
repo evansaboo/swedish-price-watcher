@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { PoliteFetcher } from '../src/lib/fetcher.js';
-import { shouldSkipDiscordNotifications } from '../src/services/scanPolicy.js';
+import { shouldSkipDiscordNotifications, shouldSkipSourceNotifications } from '../src/services/scanPolicy.js';
 
 test('first successful run skips discord notifications', () => {
   assert.equal(
@@ -28,6 +28,28 @@ test('first successful run skips discord notifications', () => {
       scanState: { cancelling: true, abortController: { signal: { aborted: false } } }
     }),
     true
+  );
+});
+
+test('disabled sources skip notifications even after collecting data', () => {
+  assert.equal(
+    shouldSkipSourceNotifications({
+      source: { id: 'blocket-electronics', enabled: true },
+      state: { preferences: { sourceOverrides: { 'blocket-electronics': false } } },
+      sourceState: { lastSuccessAt: '2026-05-01T10:00:00.000Z' },
+      scanState: { cancelling: false, abortController: { signal: { aborted: false } } }
+    }),
+    true
+  );
+
+  assert.equal(
+    shouldSkipSourceNotifications({
+      source: { id: 'proshop-outlet', enabled: true },
+      state: { preferences: { sourceOverrides: { 'proshop-outlet': true } } },
+      sourceState: { lastSuccessAt: '2026-05-01T10:00:00.000Z' },
+      scanState: { cancelling: false, abortController: { signal: { aborted: false } } }
+    }),
+    false
   );
 });
 

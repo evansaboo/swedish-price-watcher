@@ -7,7 +7,7 @@ import { createSchedulerController, normalizeActiveWindow } from './scheduler.js
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { DiscordNotifier } from './services/notifier.js';
-import { shouldSkipDiscordNotifications } from './services/scanPolicy.js';
+import { shouldSkipSourceNotifications } from './services/scanPolicy.js';
 
 const runOnce = process.argv.includes('--run-once');
 const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
@@ -271,7 +271,12 @@ async function triggerScan(trigger, options = {}) {
           }
 
           const isFirstSuccessfulRun = !sourceState.lastSuccessAt;
-          const skipDiscordNotifications = shouldSkipDiscordNotifications({ sourceState, scanState });
+          const skipDiscordNotifications = shouldSkipSourceNotifications({
+            source,
+            state,
+            sourceState,
+            scanState
+          });
           sourceState.lastSuccessAt = startedAt;
           sourceState.lastError = null;
           sourceState.lastCount = collected.length;
