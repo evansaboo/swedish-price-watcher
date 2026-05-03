@@ -1790,7 +1790,7 @@ function createRuleElement(rule) {
     <div class="rule-header">
       <label class="rule-toggle-wrap" title="${rule.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}">
         <input type="checkbox" class="rule-enabled-cb" ${rule.enabled ? 'checked' : ''} />
-        <span class="rule-toggle-label">${rule.enabled ? 'On' : 'Off'}</span>
+        <span class="rule-toggle-track"><span class="rule-toggle-thumb"></span></span>
       </label>
       <input type="text" class="modal-input rule-label-input" placeholder="Alert name (e.g. GPU Deals)" value="${escapeHtml(rule.label)}" />
       <button type="button" class="modal-item-remove rule-delete-btn" aria-label="Delete alert" title="Delete">✕</button>
@@ -1836,11 +1836,9 @@ function createRuleElement(rule) {
 
   // Enable toggle
   const cb = li.querySelector('.rule-enabled-cb');
-  const toggleLabel = li.querySelector('.rule-toggle-label');
   cb.addEventListener('change', (e) => {
     rule.enabled = e.target.checked;
     li.classList.toggle('rule-disabled', !rule.enabled);
-    toggleLabel.textContent = rule.enabled ? 'On' : 'Off';
     li.querySelector('.rule-toggle-wrap').title = rule.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable';
   });
 
@@ -1852,7 +1850,7 @@ function createRuleElement(rule) {
     notifSettings.alertRules = notifSettings.alertRules.filter((r) => r.id !== rule.id);
     li.remove();
     if (!notifSettings.alertRules.length) {
-      notifModal.rulesList.innerHTML = '<li class="modal-empty">No alert rules yet. Click "+ Add alert" to create one.</li>';
+      notifModal.rulesList.innerHTML = '<li class="rules-empty-state"><div class="rules-empty-icon">🔔</div><p class="rules-empty-title">No alert rules yet</p><p class="rules-empty-sub">Create a rule to receive Discord notifications when products matching your keywords or categories go on sale.</p></li>';
     }
   });
 
@@ -1916,8 +1914,12 @@ function createRuleElement(rule) {
 
 function renderRuleList() {
   notifModal.rulesList.innerHTML = '';
+  const countLabel = document.getElementById('rules-count-label');
+  if (countLabel) countLabel.textContent = notifSettings.alertRules.length
+    ? `${notifSettings.alertRules.length} alert rule${notifSettings.alertRules.length !== 1 ? 's' : ''}`
+    : 'Alert rules';
   if (!notifSettings.alertRules.length) {
-    notifModal.rulesList.innerHTML = '<li class="modal-empty">No alert rules yet. Click "+ Add alert" to create one.</li>';
+    notifModal.rulesList.innerHTML = '<li class="rules-empty-state"><div class="rules-empty-icon">🔔</div><p class="rules-empty-title">No alert rules yet</p><p class="rules-empty-sub">Create a rule to receive Discord notifications when products matching your keywords or categories go on sale.</p></li>';
     return;
   }
   for (const rule of notifSettings.alertRules) {
