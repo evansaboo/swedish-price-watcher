@@ -2029,3 +2029,33 @@ if (railSchedulerBtn) {
     openNotifModal();
   });
 }
+
+// ── Theme toggle ──────────────────────────────────────────────
+(function initThemeToggle() {
+  const btn = document.getElementById('theme-toggle-btn');
+  if (!btn) return;
+
+  function getCurrentTheme() {
+    return document.documentElement.getAttribute('data-theme') || 'dark';
+  }
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    btn.textContent = theme === 'dark' ? '🌙' : '☀️';
+    btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+    try { localStorage.setItem('spw-theme', theme); } catch (e) { /* */ }
+  }
+
+  // Apply on load (backup in case the inline script didn't run)
+  try {
+    const saved = localStorage.getItem('spw-theme');
+    if (saved === 'light' || saved === 'dark') applyTheme(saved);
+    else applyTheme('dark');
+  } catch (e) {
+    applyTheme('dark');
+  }
+
+  btn.addEventListener('click', () => {
+    applyTheme(getCurrentTheme() === 'dark' ? 'light' : 'dark');
+  });
+})();

@@ -1,12 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Swedish Price Watcher — Outlet & Deals</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="/styles.css" />
+    <!-- Apply saved theme before paint to avoid flash -->
+    <script>try{const t=localStorage.getItem('spw-theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}</script>
   </head>
   <body>
     <!-- ===== TOP BAR ===== -->
@@ -23,6 +27,7 @@
       <div class="topbar-actions">
         <div id="scheduler-next-run" class="topbar-scheduler-status"></div>
         <button id="refresh-button" type="button">Refresh</button>
+        <button id="theme-toggle-btn" type="button" class="btn-theme-toggle" title="Toggle light/dark theme" aria-label="Toggle theme">🌙</button>
         <button id="notif-settings-btn" type="button" class="btn-icon" title="Notification settings" aria-label="Notification settings">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         </button>
