@@ -908,6 +908,10 @@ function renderActiveFilters() {
     activeFilters.push('Matched new price');
   }
 
+  if (state.hotOnly) {
+    activeFilters.push('Hot deals (≥20% off or ≥500 SEK saved)');
+  }
+
   if (minDiscount) {
     activeFilters.push(`Min discount: ${minDiscount}%`);
   }
@@ -1404,6 +1408,7 @@ function resetFilters() {
   state.favoritesOnly = false;
   state.discountedOnly = false;
   state.newOnly = false;
+  state.hotOnly = false;
   state.referenceOnly = false;
   state.minDiscountPercent = '';
   state.minPriceSek = '';
@@ -1636,6 +1641,7 @@ if (elements.cancelButton) {
 // "Scan all" button in the sidebar Sources section
 if (elements.scanAllBtn) {
   elements.scanAllBtn.addEventListener('click', () => triggerSourceScan(null));
+}
 
 async function bulkToggleSources(enabled) {
   const sources = await fetchJson('/api/sources');
@@ -1653,7 +1659,6 @@ async function bulkToggleSources(enabled) {
 
 elements.sourcesAllOnBtn?.addEventListener('click', () => bulkToggleSources(true));
 elements.sourcesAllOffBtn?.addEventListener('click', () => bulkToggleSources(false));
-}
 
 loadDashboard().catch((error) => {
   setNotice(error.message, 'error');
