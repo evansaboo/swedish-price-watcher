@@ -1,17 +1,5 @@
 import { firstFinite, formatSek } from '../lib/utils.js';
 
-function normalizeCategoryKey(category) {
-  return String(category ?? '').trim().toLowerCase();
-}
-
-function asFavoriteCategorySet(categories = []) {
-  return new Set(
-    categories
-      .map((category) => normalizeCategoryKey(category))
-      .filter(Boolean)
-  );
-}
-
 function getInitialPrice(item) {
   return firstFinite(item.referencePriceSek, item.marketValueSek);
 }
@@ -74,19 +62,33 @@ function parseRetryDelayMs(response) {
 }
 
 /**
- * Returns the first matching category webhook URL from the configured mappings,
- * or null if no pattern matches the given category string.
- * Pattern matching is bidirectional case-insensitive substring.
+ * Returns true if the item matches all constraints of an alert rule:
+ * - At least one keyword token sequence must appear in item title (if keywords are set)
+ * - Item category must match at least one rule category (if categories are set)
+ * - Item price must be ≤ maxPriceSek (if set)
  */
-function resolveCategoryWebhook(category, categoryWebhooks) {
-  if (!category || !Array.isArray(categoryWebhooks) || !categoryWebhooks.length) return null;
-  const cat = String(category).toLowerCase();
-  for (const { pattern, webhook } of categoryWebhooks) {
-    if (!pattern || !webhook) continue;
-    const pat = String(pattern).toLowerCase();
-    if (cat.includes(pat) || pat.includes(cat)) return webhook;
+function itemMatchesRule(item, { keywords, categories, maxPriceSek }) {
+  const price = item.latestPriceSek ?? item.priceSek;
+
+  if (typeof maxPriceSek === 'number' && Number.isFinite(maxPriceSek) && price > maxPriceSek) {
+    return false;
   }
-  return null;
+
+  if (keywords.length) {
+    const titleLower = String(item.title ?? '').toLowerCase();
+    const anyKeywordMatches = keywords.some((kw) => {
+      const tokens = kw.split(/\s+/).filter(Boolean);
+      return tokens.every((t) => titleLower.includes(t));
+    });
+    if (!anyKeywordMatches) return false;
+  }
+
+  if (categories.length) {
+    const itemCat = String(item.category ?? '').toLowerCase();
+    if (!categories.some((c) => itemCat.includes(c) || c.includes(itemCat))) return false;
+  }
+
+  return true;
 }
 
 export class DiscordNotifier {
@@ -99,276 +101,36 @@ export class DiscordNotifier {
   }
 
   async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings }) {
-    // By default global "new-listings" posts are disabled. Enable via notificationSettings.enableGlobalNewListings = true
-    const enabledSources = sources.filter((source) => source.enabled);
-    const sourceMap = new Map(enabledSources.map((source) => [source.id, source]));
-    const favoriteCategories = state.preferences?.favoriteCategories ?? [];
-
     const settings = notificationSettings ?? {};
-    const categoryWebhooks = Array.isArray(settings.categoryWebhooks) ? settings.categoryWebhooks : [];
-    const notifFilter = settings.schedulerNotificationTypes ?? null;
-    const favoritesAllowed = !notifFilter || notifFilter.favorites !== false;
-    const keywordsAllowed = !notifFilter || notifFilter.keywords !== false;
-    const categoriesAllowed = !notifFilter || notifFilter.categories !== false;
 
-    // Conditionally send global new-listings if explicitly enabled in settings and allowed
-    const enableGlobalNewListings = Boolean(settings.enableGlobalNewListings);
-    let newListingsSummary = { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'disabled-by-config' };
-
-    if (enableGlobalNewListings && categoriesAllowed) {
-      const newListingSources = enabledSources.filter((source) => source.notificationMode === 'new-listings');
-      newListingsSummary = await this.notifyNewListings(newItems, state, newListingSources, sourceMap);
-    } else if (enableGlobalNewListings && !categoriesAllowed) {
-      newListingsSummary = { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'skipped-by-filter' };
+    // Respect global notifications-enabled flag (default: true for backward compat)
+    if (settings.notificationsEnabled === false) {
+      return { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'notifications-disabled', alertRules: { sent: 0, skipped: newItems.length, failed: 0, errors: [] } };
     }
 
-    const favoriteCategoryEvents = favoritesAllowed
-      ? await this.notifyFavoriteCategoryEvents({
-          newItems,
-          priceDrops,
-          favoriteCategories,
-          allowedSourceIds: null,
-          categoryWebhooks,
-          state
-        })
-      : { sent: 0, skipped: newItems.length + priceDrops.length, failed: 0, errors: [], reason: 'skipped-by-filter' };
-
-    const keywords = Array.isArray(settings.keywords) ? settings.keywords.filter((k) => k.enabled) : [];
-    const keywordWebhook = typeof settings.keywordWebhook === 'string' ? settings.keywordWebhook.trim() : '';
-    const keywordSummary = keywordsAllowed ? await this.notifyKeywordMatches({ newItems, state, keywordWebhook, keywords }) : { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'skipped-by-filter' };
-
-    const errors = [
-      ...(newListingsSummary.errors ?? []),
-      ...(favoriteCategoryEvents.errors ?? []),
-      ...(keywordSummary.errors ?? [])
-    ].slice(0, 10);
+    const alertRules = Array.isArray(settings.alertRules) ? settings.alertRules.filter((r) => r.enabled !== false) : [];
+    const alertSummary = await this.notifyAlertRules({ newItems, state, alertRules });
 
     return {
-      sent: (newListingsSummary.sent ?? 0) + (favoriteCategoryEvents.sent ?? 0) + (keywordSummary.sent ?? 0),
-      skipped: (newListingsSummary.skipped ?? 0) + (favoriteCategoryEvents.skipped ?? 0) + (keywordSummary.skipped ?? 0),
-      failed: (newListingsSummary.failed ?? 0) + (favoriteCategoryEvents.failed ?? 0) + (keywordSummary.failed ?? 0),
-      errors,
-      newListings: newListingsSummary,
-      favoriteCategoryEvents,
-      keywordMatches: keywordSummary
+      sent: alertSummary.sent,
+      skipped: alertSummary.skipped,
+      failed: alertSummary.failed,
+      errors: alertSummary.errors,
+      alertRules: alertSummary
     };
   }
 
-
-
-  async notifyNewListings(newItems, state, sources, sourceMap = new Map()) {
-    const items = newItems.filter((item) => sources.some((source) => source.id === item.sourceId));
-
-    if (!this.webhookUrl) {
-      return {
-        sent: 0,
-        skipped: items.length,
-        failed: 0,
-        errors: [],
-        reason: 'discord-webhook-not-configured'
-      };
-    }
-
-    let sent = 0;
-    let skipped = 0;
-    let failed = 0;
-    let messages = 0;
-    const errors = [];
-    const now = Date.now();
-
-    for (const source of sources) {
-      const sourceItems = items.filter((item) => item.sourceId === source.id);
-      const freshItems = [];
-
-      for (const item of sourceItems) {
-        const notificationKey = `${item.listingKey}:new-listing`;
-        const previousSentAt = state.notifications[notificationKey];
-
-        if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
-          skipped += 1;
-          continue;
-        }
-
-        freshItems.push(item);
-      }
-
-      const batchSize = Math.min(10, Math.max(1, Number(source.notificationBatchSize ?? 5)));
-
-      for (let index = 0; index < freshItems.length; index += batchSize) {
-        const batch = freshItems.slice(index, index + batchSize);
-        const label = sourceMap.get(source.id)?.label ?? source.label ?? source.id;
-
-        try {
-          await this.#postWebhook({
-            username: 'Price Watcher',
-            content: `${label}: ${batch.length} new outlet listing${batch.length === 1 ? '' : 's'}`,
-            embeds: batch.map((item) => {
-              const discount = getDiscountSummary(item);
-
-              return {
-                title: item.title,
-                url: item.url,
-                description: `${item.sourceLabel} • ${item.category} • ${item.condition}`,
-                fields: [
-                  { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
-                  { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
-                  { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true },
-                  { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
-                ],
-                image: item.imageUrl ? { url: item.imageUrl } : undefined
-              };
-            })
-          });
-        } catch (error) {
-          failed += batch.length;
-          this.#recordError(errors, error);
-          continue;
-        }
-
-        for (const item of batch) {
-          state.notifications[`${item.listingKey}:new-listing`] = new Date(now).toISOString();
-          sent += 1;
-        }
-
-        messages += 1;
-      }
-    }
-
-    return { sent, skipped, failed, messages, errors };
-  }
-
-  async notifyFavoriteCategoryEvents({ newItems, priceDrops, favoriteCategories, allowedSourceIds, categoryWebhooks = [], state }) {
-    const favoriteCategorySet = asFavoriteCategorySet(favoriteCategories);
-    const allowedSources = allowedSourceIds instanceof Set ? allowedSourceIds : null;
-    const sourceAllowed = (sourceId) => !allowedSources || allowedSources.has(sourceId);
-
-    if (!favoriteCategorySet.size) {
-      return {
-        sent: 0,
-        skipped: 0,
-        failed: 0,
-        errors: [],
-        reason: 'no-favorite-categories'
-      };
-    }
-
-    const favoriteNewItems = newItems
-      .filter((item) => sourceAllowed(item.sourceId) && favoriteCategorySet.has(normalizeCategoryKey(item.category)))
-      .map((item) => ({
-        item,
-        discount: getDiscountSummary(item)
-      }));
-    const favoritePriceDrops = priceDrops.filter(
-      (event) => sourceAllowed(event.sourceId) && favoriteCategorySet.has(normalizeCategoryKey(event.category))
-    );
-
-    if (!this.webhookUrl) {
-      return {
-        sent: 0,
-        skipped: favoriteNewItems.length + favoritePriceDrops.length,
-        failed: 0,
-        errors: [],
-        reason: 'discord-webhook-not-configured'
-      };
-    }
-
-    let sent = 0;
-    let skipped = 0;
-    let failed = 0;
-    let newListingEvents = 0;
-    let priceDropEvents = 0;
-    const errors = [];
-
-    for (const { item, discount } of favoriteNewItems) {
-      const notificationKey = `${item.listingKey}:favorite-new:${item.latestPriceSek}`;
-
-      if (state.notifications[notificationKey]) {
-        skipped += 1;
-        continue;
-      }
-
-      try {
-        const targetWebhook = resolveCategoryWebhook(item.category, categoryWebhooks) ?? this.webhookUrl;
-        await this.#postWebhook({
-          username: 'Price Watcher',
-          content: `Favorite category: new listing in ${item.category}`,
-          embeds: [
-            {
-              title: item.title,
-              url: item.url,
-              description: `${item.sourceLabel} • ${item.category}`,
-              fields: [
-                { name: 'Price', value: formatSek(item.latestPriceSek), inline: true },
-                { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
-                { name: 'Discount', value: formatSek(discount.discountSek), inline: true },
-                { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true }
-              ],
-              image: item.imageUrl ? { url: item.imageUrl } : undefined
-            }
-          ]
-        }, targetWebhook);
-      } catch (error) {
-        failed += 1;
-        this.#recordError(errors, error);
-        continue;
-      }
-
-      state.notifications[notificationKey] = new Date().toISOString();
-      sent += 1;
-      newListingEvents += 1;
-    }
-
-    for (const event of favoritePriceDrops) {
-      const notificationKey = `${event.listingKey}:favorite-drop:${event.previousPriceSek}:${event.newPriceSek}`;
-
-      if (state.notifications[notificationKey]) {
-        skipped += 1;
-        continue;
-      }
-
-      try {
-        const targetWebhook = resolveCategoryWebhook(event.category, categoryWebhooks) ?? this.webhookUrl;
-        await this.#postWebhook({
-          username: 'Price Watcher',
-          content: `Favorite category update: price drop in ${event.category}`,
-          embeds: [
-            {
-              title: event.title,
-              url: event.url,
-              description: `${event.sourceLabel} • ${event.category}`,
-              fields: [
-                { name: 'Previous', value: formatSek(event.previousPriceSek), inline: true },
-                { name: 'Current', value: formatSek(event.newPriceSek), inline: true },
-                { name: 'Drop', value: formatSek(event.dropSek), inline: true },
-                { name: 'Drop %', value: `${event.dropPercent}%`, inline: true }
-              ]
-            }
-          ]
-        }, targetWebhook);
-      } catch (error) {
-        failed += 1;
-        this.#recordError(errors, error);
-        continue;
-      }
-
-      state.notifications[notificationKey] = new Date().toISOString();
-      sent += 1;
-      priceDropEvents += 1;
-    }
-
-    return {
-      sent,
-      skipped,
-      failed,
-      newListingEvents,
-      priceDropEvents,
-      errors
-    };
-  }
-
-  async notifyKeywordMatches({ newItems, state, keywordWebhook, keywords }) {
-    if (!keywordWebhook || !keywords.length) {
-      return { sent: 0, skipped: 0, failed: 0, errors: [], reason: 'no-keyword-webhook-or-keywords' };
+  /**
+   * Send Discord notifications for each enabled alert rule.
+   * A rule fires when a new item matches all its constraints:
+   *   - At least one keyword matches item title (if keywords are set; empty = any)
+   *   - Item category matches a rule category (if categories are set; empty = any)
+   *   - Item price ≤ maxPriceSek (if set)
+   * Sends to all webhooks listed on the rule.
+   */
+  async notifyAlertRules({ newItems, state, alertRules }) {
+    if (!alertRules.length) {
+      return { sent: 0, skipped: 0, failed: 0, errors: [], reason: 'no-alert-rules' };
     }
 
     let sent = 0;
@@ -377,59 +139,61 @@ export class DiscordNotifier {
     const errors = [];
     const now = Date.now();
 
-    for (const { keyword, id, categories, category } of keywords) {
-      const kw = keyword.toLowerCase();
-      // Support both legacy `category` string and new `categories` array
-      const cats = Array.isArray(categories) ? categories : (category ? [category] : []);
-      const matches = newItems.filter((item) => {
-        if (!String(item.title ?? '').toLowerCase().includes(kw)) return false;
-        if (cats.length && !cats.some((c) => String(item.category ?? '').toLowerCase() === c.toLowerCase())) return false;
-        return true;
-      });
+    for (const rule of alertRules) {
+      const webhooks = (rule.webhooks ?? []).filter((w) => typeof w === 'string' && w.trim());
+      if (!webhooks.length) continue;
+
+      const keywords = (rule.keywords ?? []).map((k) => String(k).toLowerCase().trim()).filter(Boolean);
+      const categories = (rule.categories ?? []).map((c) => String(c).toLowerCase().trim()).filter(Boolean);
+      const maxPriceSek = typeof rule.maxPriceSek === 'number' && Number.isFinite(rule.maxPriceSek) ? rule.maxPriceSek : null;
+
+      const matches = newItems.filter((item) => itemMatchesRule(item, { keywords, categories, maxPriceSek }));
 
       for (const item of matches) {
-        const catKey = cats.length ? cats.join(',') : '';
-        const notificationKey = `${item.listingKey}:keyword:${kw}${catKey ? `:${catKey}` : ''}`;
+        const notificationKey = `${item.listingKey}:rule:${rule.id}`;
         const previousSentAt = state.notifications[notificationKey];
 
         if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
-          skipped += 1;
+          skipped++;
           continue;
         }
 
         const discount = getDiscountSummary(item);
-        const catDisplay = cats.length ? cats.join(', ') : null;
-        const keywordDisplay = catDisplay ? `${keyword} (in ${catDisplay})` : keyword;
+        const ruleLabel = rule.label || (keywords.length ? keywords.join(', ') : categories.length ? categories.join(', ') : 'Alert');
 
-        try {
-          await this.#postWebhook({
-            username: 'Price Watcher',
-            content: `🔍 Keyword alert: **${keyword}**${catDisplay ? ` · ${catDisplay}` : ''}`,
-            embeds: [
-              {
-                title: item.title,
-                url: item.url,
-                description: `${item.sourceLabel} • ${item.category}`,
-                color: 0x5865f2,
-                fields: [
-                  { name: 'Keyword', value: keywordDisplay, inline: true },
-                  { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
-                  { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
-                  { name: 'Discount %', value: formatPercent(discount.discountPercent), inline: true },
-                  { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
-                ],
-                image: item.imageUrl ? { url: item.imageUrl } : undefined
-              }
-            ]
-          }, keywordWebhook);
-        } catch (error) {
-          failed += 1;
-          this.#recordError(errors, error);
-          continue;
+        let itemSent = false;
+        for (const webhookUrl of webhooks) {
+          try {
+            await this.#postWebhook({
+              username: 'Price Watcher',
+              content: `🔔 **${ruleLabel}** — new match`,
+              embeds: [
+                {
+                  title: item.title,
+                  url: item.url,
+                  description: `${item.sourceLabel} • ${item.category}`,
+                  color: 0x5865f2,
+                  fields: [
+                    { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
+                    { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
+                    { name: 'Discount', value: formatPercent(discount.discountPercent), inline: true },
+                    { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
+                  ],
+                  image: item.imageUrl ? { url: item.imageUrl } : undefined
+                }
+              ]
+            }, webhookUrl);
+            itemSent = true;
+          } catch (error) {
+            failed++;
+            this.#recordError(errors, error);
+          }
         }
 
-        state.notifications[notificationKey] = new Date(now).toISOString();
-        sent += 1;
+        if (itemSent) {
+          state.notifications[notificationKey] = new Date(now).toISOString();
+          sent++;
+        }
       }
     }
 

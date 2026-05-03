@@ -41,57 +41,24 @@
           </button>
         </div>
         <div class="modal-tabs" role="tablist">
-          <button type="button" class="modal-tab active" data-tab="keywords" role="tab" aria-selected="true">🔍 Keyword Alerts</button>
-          <button type="button" class="modal-tab" data-tab="categories" role="tab" aria-selected="false">📢 Category Channels</button>
-          <button type="button" class="modal-tab" data-tab="filters" role="tab" aria-selected="false">🔔 Notifications</button>
+          <button type="button" class="modal-tab active" data-tab="alert-rules" role="tab" aria-selected="true">🔔 Alert Rules</button>
           <button type="button" class="modal-tab" data-tab="scheduler" role="tab" aria-selected="false">⏰ Scheduler</button>
         </div>
 
-        <!-- Keywords tab -->
-        <div id="tab-keywords" class="modal-tab-content">
-          <p class="modal-hint">Get notified when new listings match a keyword (e.g. "RTX 5070"). Alerts go to a dedicated Discord channel.</p>
-          <label class="field-label modal-field">
-            Keyword alerts webhook URL
-            <input id="keyword-webhook-input" type="url" placeholder="https://discord.com/api/webhooks/…" class="modal-input" />
-          </label>
-          <div class="kw-add-form">
-            <div class="kw-field">
-              <label class="kw-field-label" for="new-keyword-input">Keyword</label>
-              <input id="new-keyword-input" type="text" placeholder="e.g. RTX 5070" class="modal-input" autocomplete="off" />
-            </div>
-            <div class="kw-field" id="kw-cat-field">
-              <label class="kw-field-label">Categories <span class="kw-optional">(optional — matches any if empty)</span></label>
-              <div class="kw-tag-input" id="kw-tag-input">
-                <div class="kw-cat-chips" id="kw-cat-chips"></div>
-                <input id="kw-cat-search" type="text" placeholder="Search and add categories…" autocomplete="off" />
-              </div>
-              <ul id="kw-cat-dropdown" class="kw-cat-dropdown hidden" role="listbox"></ul>
-            </div>
-            <div class="kw-add-actions">
-              <button id="add-keyword-btn" type="button" class="btn-primary">Add keyword</button>
-            </div>
+        <!-- Alert Rules tab -->
+        <div id="tab-alert-rules" class="modal-tab-content">
+          <div class="tab-section-header">
+            <label class="toggle-item toggle-item-inline">
+              <input id="notifications-enabled-toggle" type="checkbox" checked />
+              <span>Enable Discord notifications</span>
+            </label>
           </div>
-          <ul id="keywords-list" class="modal-item-list"></ul>
-        </div>
-
-        <!-- Category channels tab -->
-        <div id="tab-categories" class="modal-tab-content hidden">
-          <p class="modal-hint">Route Discord alerts for specific product categories to dedicated channels. Pattern is matched case-insensitively against the product category name.</p>
+          <p class="modal-hint">Each rule sends a Discord alert when a new listing matches its keywords and/or categories. Keywords and categories are both optional — an empty rule matches everything.</p>
           <div class="modal-list-header">
-            <span class="modal-list-title">Category → Channel mappings</span>
-            <button id="add-category-btn" type="button" class="btn-accent-sm">+ Add mapping</button>
+            <span class="modal-list-title">Rules</span>
+            <button id="add-rule-btn" type="button" class="btn-accent-sm">+ New rule</button>
           </div>
-          <ul id="categories-list" class="modal-item-list"></ul>
-        </div>
-
-        <!-- Notification type filters tab -->
-        <div id="tab-filters" class="modal-tab-content hidden">
-          <p class="modal-hint">Choose which notification types are sent. These apply to all scans (manual and scheduled).</p>
-          <div class="toggle-group toggle-group-stacked">
-            <label class="toggle-item"><input id="notify-type-favorites" type="checkbox" /> <span>Favorites — alert when a favourited product drops in price</span></label>
-            <label class="toggle-item"><input id="notify-type-keywords" type="checkbox" /> <span>Keywords — alert when a new listing matches a keyword</span></label>
-            <label class="toggle-item"><input id="notify-type-categories" type="checkbox" /> <span>Category channels — route alerts to per-category webhooks</span></label>
-          </div>
+          <ul id="rules-list" class="modal-item-list rules-list"></ul>
         </div>
 
         <!-- Scheduler tab -->
@@ -275,6 +242,7 @@
               <div class="quick-filters">
                 <span class="quick-filters-label">Quick:</span>
                 <button type="button" class="chip-btn" data-filter-preset="new">New</button>
+                <button type="button" class="chip-btn" data-filter-preset="hot">🔥 Hot deals</button>
                 <button type="button" class="chip-btn" data-filter-preset="discounted">Discounted</button>
                 <button type="button" class="chip-btn" data-filter-preset="matched">Matched</button>
                 <button type="button" class="chip-btn" data-filter-preset="favorites">Favorites</button>

@@ -124,11 +124,7 @@ async function triggerScan(trigger, options = {}) {
   // Aggregate notification summaries from per-source notifications
   const aggregatedNotif = {
     sent: 0, skipped: 0, failed: 0, errors: [],
-    // amazingDeals removed: not used anymore
-
-    newListings: { sent: 0, skipped: 0, failed: 0, messages: 0, errors: [] },
-    favoriteCategoryEvents: { sent: 0, skipped: 0, failed: 0, newListingEvents: 0, priceDropEvents: 0, errors: [] },
-    keywordMatches: { sent: 0, skipped: 0, failed: 0, errors: [] }
+    alertRules: { sent: 0, skipped: 0, failed: 0, errors: [] }
   };
 
   function mergeNotif(agg, n) {
@@ -137,9 +133,6 @@ async function triggerScan(trigger, options = {}) {
     agg.skipped += n.skipped ?? 0;
     agg.failed += n.failed ?? 0;
     agg.errors.push(...(n.errors ?? []));
-    if (n.messages != null) agg.messages = (agg.messages ?? 0) + n.messages;
-    if (n.newListingEvents != null) agg.newListingEvents = (agg.newListingEvents ?? 0) + n.newListingEvents;
-    if (n.priceDropEvents != null) agg.priceDropEvents = (agg.priceDropEvents ?? 0) + n.priceDropEvents;
   }
 
   try {
@@ -308,9 +301,7 @@ async function triggerScan(trigger, options = {}) {
             notificationSettings: effectiveNotificationSettings
           });
           mergeNotif(aggregatedNotif, sourceNotif);
-          mergeNotif(aggregatedNotif.newListings, sourceNotif.newListings);
-          mergeNotif(aggregatedNotif.favoriteCategoryEvents, sourceNotif.favoriteCategoryEvents);
-          mergeNotif(aggregatedNotif.keywordMatches, sourceNotif.keywordMatches);
+          mergeNotif(aggregatedNotif.alertRules, sourceNotif.alertRules);
         });
 
         // Wait for this source's turn in the processing queue before resolving.

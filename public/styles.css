@@ -2036,3 +2036,120 @@ td .discount-pct.strong { font-size: 1.02rem; }
   .modal-add-row { flex-direction: column; align-items: stretch; }
   .modal-category-fields { flex-direction: column; }
 }
+
+/* ── Alert Rules modal ─────────────────────────────── */
+.tab-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0 0.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.75rem;
+}
+.toggle-item-inline {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.84rem; font-weight: 600; cursor: pointer; margin: 0;
+}
+
+/* Rule list */
+.rules-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+
+.rule-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+  transition: opacity 0.2s;
+}
+.rule-item.rule-disabled { opacity: 0.6; }
+
+.rule-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-subtle, #f8f9fa);
+  border-bottom: 1px solid var(--border);
+}
+.rule-enabled-wrap { display: flex; align-items: center; flex-shrink: 0; }
+.rule-label-input { flex: 1; min-width: 0; font-size: 0.84rem; font-weight: 600; }
+.rule-expand-btn { padding: 0.2rem 0.4rem; font-size: 0.9rem; }
+.rule-delete-btn { margin-left: 0.25rem; }
+
+.rule-body { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.rule-body.rule-body-collapsed { display: none; }
+
+.rule-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.rule-field-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* Chip tag input (keywords/categories inside rules) */
+.chip-input-wrap {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+  min-height: 2.2rem;
+  cursor: text;
+}
+.chip-input-wrap:focus-within { border-color: var(--accent, #5865f2); }
+.chip-list { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.72rem; font-weight: 600; padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: var(--accent-soft, #eff0ff);
+  border: 1px solid var(--accent-border, #c7caff);
+  color: var(--accent, #5865f2);
+  white-space: nowrap;
+}
+.chip-remove {
+  border: none; background: transparent; cursor: pointer;
+  color: inherit; font-size: 0.65rem; padding: 0; line-height: 1;
+  opacity: 0.7;
+}
+.chip-remove:hover { opacity: 1; }
+.chip-text-input {
+  border: none; outline: none; background: transparent;
+  font-size: 0.82rem; min-width: 120px; flex: 1; padding: 0;
+}
+
+/* Webhook rows */
+.webhooks-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.webhook-row { display: flex; gap: 0.4rem; align-items: center; }
+.webhook-row .modal-input { flex: 1; min-width: 0; }
+.btn-icon-sm {
+  flex-shrink: 0; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; font-size: 0.78rem;
+  padding: 0.2rem 0.45rem; border-radius: 4px;
+}
+.btn-icon-sm:hover { background: #fee2e2; color: #e53e3e; }
+.add-webhook-btn { font-size: 0.78rem; padding: 0.25rem 0.5rem; margin-top: 0.15rem; }
+
+/* Deal score badge */
+.deal-score-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 2rem; height: 1.4rem; padding: 0 0.35rem;
+  border-radius: 999px; font-size: 0.7rem; font-weight: 700;
+  background: var(--accent-soft, #eff0ff);
+  color: var(--accent, #5865f2);
+  border: 1px solid var(--accent-border, #c7caff);
+}
+.deal-score-badge.hot { background: #fff3e0; color: #e65100; border-color: #ffcc80; }
+.deal-score-badge.fire { background: #fce4ec; color: #c62828; border-color: #ef9a9a; }
+
+/* Time-ago chip */
+.time-ago { font-size: 0.72rem; color: var(--text-muted); }
+
+/* Hot deals quick-filter pill */
+.quick-filter-btn.quick-filter-hot { background: #fff3e0; color: #e65100; border-color: #ffcc80; }
+.quick-filter-btn.quick-filter-hot.active { background: #e65100; color: white; border-color: #e65100; }
+
+@media (max-width: 480px) {
+  .rule-header { flex-wrap: wrap; }
+  .rule-label-input { flex: 1 1 120px; }
+}

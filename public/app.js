@@ -13,6 +13,7 @@ const state = {
   discountedOnly: false,
   newOnly: false,
   referenceOnly: false,
+  hotOnly: false,
   minDiscountPercent: '',
   minPriceSek: '',
   maxPriceSek: '',
@@ -80,9 +81,6 @@ const elements = {
   schedulerWindowEnabled: document.querySelector('#scheduler-window-enabled'),
   schedulerWindowStart: document.querySelector('#scheduler-window-start'),
   schedulerWindowEnd: document.querySelector('#scheduler-window-end'),
-  notifyTypeFavorites: document.querySelector('#notify-type-favorites'),
-  notifyTypeKeywords: document.querySelector('#notify-type-keywords'),
-  notifyTypeCategories: document.querySelector('#notify-type-categories'),
   saveSchedulerButton: null,
   schedulerSaveStatus: null,
   schedulerNextRun: document.querySelector('#scheduler-next-run'),
@@ -192,6 +190,7 @@ function saveUiPreferences() {
     discountedOnly: state.discountedOnly,
     newOnly: state.newOnly,
     referenceOnly: state.referenceOnly,
+    hotOnly: state.hotOnly,
     minDiscountPercent: state.minDiscountPercent,
     minPriceSek: state.minPriceSek,
     maxPriceSek: state.maxPriceSek,
@@ -230,6 +229,9 @@ function hydrateUiPreferences() {
 
   if (typeof saved.favoritesOnly === 'boolean') {
     state.favoritesOnly = saved.favoritesOnly;
+  }
+  if (typeof saved.hotOnly === 'boolean') {
+    state.hotOnly = saved.hotOnly;
   }
 
   if (typeof saved.discountedOnly === 'boolean') {
@@ -299,6 +301,7 @@ function getFavoriteCategorySet() {
 function getActiveFilterPreset() {
   const active = [
     state.newOnly ? 'new' : null,
+    state.hotOnly ? 'hot' : null,
     state.discountedOnly ? 'discounted' : null,
     state.referenceOnly ? 'matched' : null,
     state.favoritesOnly ? 'favorites' : null
@@ -320,6 +323,7 @@ function renderFilterPresetButtons() {
 
 function applyFilterPreset(preset) {
   state.newOnly = preset === 'new';
+  state.hotOnly = preset === 'hot';
   state.discountedOnly = preset === 'discounted';
   state.referenceOnly = preset === 'matched';
   state.favoritesOnly = preset === 'favorites';
@@ -339,6 +343,7 @@ function getActiveFilterCount() {
   if (state.category) count++;
   if (state.store) count++;
   if (state.favoritesOnly) count++;
+  if (state.hotOnly) count++;
   if (state.discountedOnly) count++;
   if (state.newOnly) count++;
   if (state.referenceOnly) count++;
@@ -457,6 +462,7 @@ function sortProducts(products) {
       case 'initialPriceSek':
       case 'discountSek':
       case 'discountPercent':
+      case 'score':
       default:
         comparison = compareValues(left[column], right[column], 'number', direction);
         break;
@@ -547,6 +553,9 @@ function buildProductsQueryString() {
     params.set('favoritesOnly', 'true');
   }
 
+  if (state.hotOnly) {
+    params.set('hotOnly', 'true');
+  }
   if (state.discountedOnly) {
     params.set('discountedOnly', 'true');
   }
@@ -586,6 +595,7 @@ function buildOutletProductsQuery() {
   if (state.store) params.set('store', state.store);
   if (state.campaign) params.set('campaign', state.campaign);
   if (state.favoritesOnly) params.set('favoritesOnly', 'true');
+  if (state.hotOnly) params.set('hotOnly', 'true');
   if (state.discountedOnly) params.set('discountedOnly', 'true');
   if (state.newOnly) params.set('newOnly', 'true');
   if (state.referenceOnly) params.set('referenceOnly', 'true');
@@ -1209,6 +1219,23 @@ function renderPagination(response) {
   `;
 }
 
+
+function timeAgo(isoStr) {
+  if (!isoStr) return null;
+  const diffMs = Date.now() - Date.parse(isoStr);
+  if (!Number.isFinite(diffMs) || diffMs < 0) return null;
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  return `${mo}mo ago`;
+}
+
 function renderProducts(response) {
   const products = response?.items ?? [];
   const total = response?.total ?? products.length;
@@ -1231,6 +1258,12 @@ function renderProducts(response) {
         : Number.isFinite(product.initialPriceSek) ? 'No discount' : 'No ref price';
       const rowClass = newProduct ? 'new-product-row' : '';
       const newBadge = newProduct ? '<span class="deal-tag new">New</span>' : '';
+      const score = product.score ?? 0;
+      const scoreBadgeClass = score >= 75 ? 'deal-score-badge fire' : score >= 55 ? 'deal-score-badge hot' : 'deal-score-badge';
+      const scoreBadge = score > 0 ? `<span class="${scoreBadgeClass}" title="Deal score: ${score}/100">${score >= 75 ? '🔥' : ''}${score}</span>` : '';
+      const seenAgo = timeAgo(product.firstSeenAt);
+      const seenAgoHtml = seenAgo ? `<span class="time-ago" title="${escapeHtml(product.firstSeenAt ?? '')}">${escapeHtml(seenAgo)}</span>` : '';
+
       const condLabel = product.conditionLabel && product.conditionLabel !== 'Outlet'
         ? `<span class="condition-badge condition-${escapeHtml(product.condition)}">${escapeHtml(product.conditionLabel)}</span>` : '';
       const storeBadge = product.sourceLabel ? `<span class="store-badge">${escapeHtml(product.sourceLabel)}</span>` : '';
@@ -1252,6 +1285,7 @@ function renderProducts(response) {
               ${condLabel}
               ${storeBadge}
               <span class="${dealClass}">${escapeHtml(dealLabel)}</span>
+              ${scoreBadge}
               ${keyshopBadge}
               ${steamBadge}
             </div>
@@ -1263,7 +1297,8 @@ function renderProducts(response) {
           <td data-label="New price">${Number.isFinite(product.initialPriceSek) ? formatSek(product.initialPriceSek) : '—'}</td>
           <td data-label="Discount">${Number.isFinite(product.discountSek) ? formatSek(product.discountSek) : 'n/a'}</td>
           <td data-label="Discount %">${Number.isFinite(product.discountPercent) ? `${product.discountPercent}%` : 'n/a'}</td>
-          <td data-label="Last seen">${formatDate(product.lastSeenAt)}</td>
+          <td data-label="Score">${score > 0 ? `<span class="${scoreBadgeClass}">${score >= 75 ? '🔥 ' : ''}${score}</span>` : '—'}</td>
+          <td data-label="Last seen"><span title="${escapeHtml(product.lastSeenAt ?? '')}">${timeAgo(product.lastSeenAt) ?? formatDate(product.lastSeenAt)}</span></td>
           <td data-label="Link" class="link-cell">${rowUrl ? `<a href="${rowUrl}" target="_blank" rel="noreferrer" class="row-link-icon" tabindex="-1" aria-label="Open ${escapeHtml(product.title)} in new tab" title="Open in new tab"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}</td>
         </tr>
       `;
@@ -1281,6 +1316,7 @@ function renderProducts(response) {
             <th>${renderSortHeader('New price', 'initialPriceSek')}</th>
             <th>${renderSortHeader('Discount', 'discountSek')}</th>
             <th>${renderSortHeader('Discount %', 'discountPercent')}</th>
+            <th>${renderSortHeader('Score', 'score')}</th>
             <th>${renderSortHeader('Last seen', 'lastSeenAt')}</th>
             <th>Link</th>
           </tr>
@@ -1632,147 +1668,244 @@ const notifModal = {
   overlay: document.querySelector('#notif-settings-modal'),
   closeBtn: document.querySelector('#notif-modal-close'),
   tabs: [...document.querySelectorAll('.modal-tab')],
-  tabContents: { keywords: document.querySelector('#tab-keywords'), categories: document.querySelector('#tab-categories'), filters: document.querySelector('#tab-filters'), scheduler: document.querySelector('#tab-scheduler') },
-  keywordWebhookInput: document.querySelector('#keyword-webhook-input'),
-  newKeywordInput: document.querySelector('#new-keyword-input'),
-  newKeywordCategory: null, // replaced by multi-cat picker
-  addKeywordBtn: document.querySelector('#add-keyword-btn'),
-  kwCatSearch: document.querySelector('#kw-cat-search'),
-  kwCatDropdown: document.querySelector('#kw-cat-dropdown'),
-  kwCatChips: document.querySelector('#kw-cat-chips'),
-  kwTagInput: document.querySelector('#kw-tag-input'),
-  keywordsList: document.querySelector('#keywords-list'),
-  addCategoryBtn: document.querySelector('#add-category-btn'),
-  categoriesList: document.querySelector('#categories-list'),
+  tabContents: { 'alert-rules': document.querySelector('#tab-alert-rules'), scheduler: document.querySelector('#tab-scheduler') },
+  notificationsEnabledToggle: document.querySelector('#notifications-enabled-toggle'),
+  addRuleBtn: document.querySelector('#add-rule-btn'),
+  rulesList: document.querySelector('#rules-list'),
   saveBtn: document.querySelector('#save-notif-settings-btn'),
   saveStatus: document.querySelector('#notif-save-status'),
   openBtn: document.querySelector('#notif-settings-btn')
 };
 
 // In-memory settings state (loaded from API when modal opens)
-let notifSettings = { keywordWebhook: '', keywords: [], categoryWebhooks: [] };
+let notifSettings = { notificationsEnabled: true, alertRules: [] };
+let allCategories = []; // populated from /api/outlet-categories
 
-// Category picker state for new-keyword form
-let kwCatAll = [];    // all category names (strings) from API
-let kwCatSelected = []; // currently chosen categories for the next keyword to add
-
-function renderKwCatChips() {
-  if (!notifModal.kwCatChips) return;
-  notifModal.kwCatChips.innerHTML = kwCatSelected
-    .map((cat) => `<span class="kw-cat-chip" data-cat="${escapeHtml(cat)}">${escapeHtml(cat)}<button type="button" class="kw-cat-chip-remove" aria-label="Remove ${escapeHtml(cat)}">✕</button></span>`)
-    .join('');
-  for (const btn of notifModal.kwCatChips.querySelectorAll('.kw-cat-chip-remove')) {
-    btn.addEventListener('click', () => {
-      kwCatSelected = kwCatSelected.filter((c) => c !== btn.parentElement.dataset.cat);
-      renderKwCatChips();
-      renderKwCatDropdown();
-    });
-  }
+function createEmptyRule() {
+  return {
+    id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    label: '',
+    enabled: true,
+    keywords: [],
+    categories: [],
+    webhooks: [''],
+    maxPriceSek: null
+  };
 }
 
-function renderKwCatDropdown() {
-  if (!notifModal.kwCatDropdown) return;
-  const search = (notifModal.kwCatSearch?.value ?? '').toLowerCase().trim();
-  const available = kwCatAll.filter((c) => !kwCatSelected.includes(c));
-  const filtered = search ? available.filter((c) => c.toLowerCase().includes(search)) : available;
-  if (!filtered.length) {
-    notifModal.kwCatDropdown.innerHTML = `<li class="kw-cat-option kw-cat-empty">${search ? 'No matches' : 'No categories available'}</li>`;
-  } else {
-    notifModal.kwCatDropdown.innerHTML = filtered
-      .map((c) => `<li class="kw-cat-option" role="option" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</li>`)
+/**
+ * Wire a chip tag-input: Enter/comma to add, × to remove.
+ * If allOptions is provided, shows a searchable dropdown for autocomplete.
+ */
+function wireChipInput({ container, items, onAdd, onRemove, allOptions }) {
+  const chipList = container.querySelector('.chip-list');
+  const textInput = container.querySelector('.chip-text-input');
+  const dropdown = container.querySelector('.kw-cat-dropdown');
+
+  function refreshChips() {
+    chipList.innerHTML = items
+      .map((v) => `<span class="chip" data-val="${escapeHtml(v)}">${escapeHtml(v)}<button type="button" class="chip-remove" aria-label="Remove ${escapeHtml(v)}">✕</button></span>`)
       .join('');
-    for (const li of notifModal.kwCatDropdown.querySelectorAll('.kw-cat-option[data-cat]')) {
-      li.addEventListener('mousedown', (e) => {
-        e.preventDefault(); // keep input focus
-        const cat = li.dataset.cat;
-        if (!kwCatSelected.includes(cat)) kwCatSelected.push(cat);
-        if (notifModal.kwCatSearch) notifModal.kwCatSearch.value = '';
-        notifModal.kwCatDropdown.classList.add('hidden');
-        renderKwCatChips();
+    for (const btn of chipList.querySelectorAll('.chip-remove')) {
+      btn.addEventListener('click', () => {
+        onRemove(btn.parentElement.dataset.val);
+        refreshChips();
+        if (dropdown) renderDropdown();
       });
     }
   }
+
+  function addValue(val) {
+    val = val.trim();
+    if (!val || items.includes(val)) return;
+    onAdd(val);
+    textInput.value = '';
+    refreshChips();
+    if (dropdown) renderDropdown();
+  }
+
+  function renderDropdown() {
+    if (!dropdown || !allOptions) return;
+    const search = textInput.value.toLowerCase().trim();
+    const available = allOptions.filter((o) => !items.includes(o));
+    const filtered = search ? available.filter((o) => o.toLowerCase().includes(search)) : available;
+    dropdown.innerHTML = filtered.length
+      ? filtered.slice(0, 30).map((o) => `<li class="kw-cat-option" role="option" data-cat="${escapeHtml(o)}">${escapeHtml(o)}</li>`).join('')
+      : `<li class="kw-cat-option kw-cat-empty">${search ? 'No matches' : 'No categories available'}</li>`;
+    for (const li of dropdown.querySelectorAll('.kw-cat-option[data-cat]')) {
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        addValue(li.dataset.cat);
+        dropdown.classList.add('hidden');
+      });
+    }
+  }
+
+  textInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addValue(textInput.value);
+      if (dropdown) dropdown.classList.add('hidden');
+    } else if (e.key === 'Escape') {
+      if (dropdown) dropdown.classList.add('hidden');
+      textInput.blur();
+    }
+  });
+
+  if (dropdown) {
+    textInput.addEventListener('focus', () => { renderDropdown(); dropdown.classList.remove('hidden'); });
+    textInput.addEventListener('input', () => { renderDropdown(); dropdown.classList.remove('hidden'); });
+    textInput.addEventListener('blur', () => { setTimeout(() => dropdown.classList.add('hidden'), 150); });
+  }
+
+  refreshChips();
 }
 
-// Wire category search input
-if (notifModal.kwCatSearch) {
-  // Clicking anywhere in the tag-input box focuses the search field
-  notifModal.kwTagInput?.addEventListener('click', () => notifModal.kwCatSearch.focus());
+function createRuleElement(rule) {
+  const li = document.createElement('li');
+  li.className = 'rule-item';
+  if (!rule.enabled) li.classList.add('rule-disabled');
+  li.dataset.ruleId = rule.id;
 
-  notifModal.kwCatSearch.addEventListener('focus', () => {
-    renderKwCatDropdown();
-    notifModal.kwCatDropdown.classList.remove('hidden');
+  const webhooksHtml = (rule.webhooks.length ? rule.webhooks : ['']).map((w) => `
+    <div class="webhook-row">
+      <input type="url" class="modal-input rule-webhook-input" placeholder="https://discord.com/api/webhooks/…" value="${escapeHtml(w)}" />
+    </div>`).join('');
+
+  li.innerHTML = `
+    <div class="rule-header">
+      <label class="rule-enabled-wrap" title="Enable rule">
+        <input type="checkbox" class="rule-enabled-cb" ${rule.enabled ? 'checked' : ''} />
+      </label>
+      <input type="text" class="modal-input rule-label-input" placeholder="Rule name (e.g. GPU Deals)" value="${escapeHtml(rule.label)}" />
+      <button type="button" class="rule-expand-btn ghost-btn" aria-label="Toggle details" title="Expand / collapse">▾</button>
+      <button type="button" class="modal-item-remove rule-delete-btn" aria-label="Delete rule">✕</button>
+    </div>
+    <div class="rule-body">
+      <div class="rule-field">
+        <label class="rule-field-label">Keywords <span class="kw-optional">(optional — any keyword triggers; press Enter or comma to add)</span></label>
+        <div class="chip-input-wrap" id="kw-chips-${rule.id}">
+          <div class="chip-list"></div>
+          <input type="text" class="chip-text-input" placeholder="e.g. RTX 5070" autocomplete="off" />
+        </div>
+      </div>
+      <div class="rule-field">
+        <label class="rule-field-label">Categories <span class="kw-optional">(optional — filter to specific product categories)</span></label>
+        <div class="chip-input-wrap" id="cat-chips-${rule.id}">
+          <div class="chip-list"></div>
+          <input type="text" class="chip-text-input" placeholder="Search categories…" autocomplete="off" />
+          <ul class="kw-cat-dropdown hidden" role="listbox"></ul>
+        </div>
+      </div>
+      <div class="rule-field">
+        <label class="rule-field-label">Discord webhook(s) <span class="kw-optional">(one per line; all will receive the alert)</span></label>
+        <div class="webhooks-list">${webhooksHtml}</div>
+        <button type="button" class="ghost-btn add-webhook-btn">+ Add another webhook</button>
+      </div>
+      <div class="rule-field">
+        <label class="rule-field-label">Max price (SEK) <span class="kw-optional">(optional — skip alert if listing price is above this)</span></label>
+        <input type="number" class="modal-input rule-maxprice-input" placeholder="e.g. 5000" min="0" step="100" value="${rule.maxPriceSek != null ? rule.maxPriceSek : ''}" />
+      </div>
+    </div>`;
+
+  // Enable toggle
+  li.querySelector('.rule-enabled-cb').addEventListener('change', (e) => {
+    rule.enabled = e.target.checked;
+    li.classList.toggle('rule-disabled', !rule.enabled);
   });
-  notifModal.kwCatSearch.addEventListener('input', () => {
-    renderKwCatDropdown();
-    notifModal.kwCatDropdown.classList.remove('hidden');
+
+  // Label
+  li.querySelector('.rule-label-input').addEventListener('input', (e) => { rule.label = e.target.value; });
+
+  // Expand / collapse
+  const ruleBody = li.querySelector('.rule-body');
+  const expandBtn = li.querySelector('.rule-expand-btn');
+  expandBtn.addEventListener('click', () => {
+    const collapsed = ruleBody.classList.toggle('rule-body-collapsed');
+    expandBtn.textContent = collapsed ? '▸' : '▾';
   });
-  notifModal.kwCatSearch.addEventListener('blur', () => {
-    setTimeout(() => notifModal.kwCatDropdown?.classList.add('hidden'), 150);
+
+  // Delete
+  li.querySelector('.rule-delete-btn').addEventListener('click', () => {
+    notifSettings.alertRules = notifSettings.alertRules.filter((r) => r.id !== rule.id);
+    li.remove();
+    if (!notifSettings.alertRules.length) {
+      notifModal.rulesList.innerHTML = '<li class="modal-empty">No alert rules yet. Click "+ New rule" to create one.</li>';
+    }
   });
-  notifModal.kwCatSearch.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { notifModal.kwCatDropdown.classList.add('hidden'); notifModal.kwCatSearch.blur(); }
-    if (e.key === 'Enter') { e.preventDefault(); notifModal.addKeywordBtn.click(); }
+
+  // Keyword chip input
+  wireChipInput({
+    container: li.querySelector(`#kw-chips-${rule.id}`),
+    items: rule.keywords,
+    onAdd: (val) => { if (!rule.keywords.includes(val)) rule.keywords.push(val); },
+    onRemove: (val) => { rule.keywords = rule.keywords.filter((k) => k !== val); },
+    allOptions: null
   });
+
+  // Category chip input
+  wireChipInput({
+    container: li.querySelector(`#cat-chips-${rule.id}`),
+    items: rule.categories,
+    onAdd: (val) => { if (!rule.categories.includes(val)) rule.categories.push(val); },
+    onRemove: (val) => { rule.categories = rule.categories.filter((c) => c !== val); },
+    allOptions: allCategories
+  });
+
+  // Webhooks
+  const webhooksList = li.querySelector('.webhooks-list');
+  const addWebhookBtn = li.querySelector('.add-webhook-btn');
+
+  function syncAndRefreshWebhooks() {
+    rule.webhooks = [...webhooksList.querySelectorAll('.rule-webhook-input')].map((i) => i.value.trim());
+    const rows = webhooksList.querySelectorAll('.webhook-row');
+    rows.forEach((row) => {
+      let rmBtn = row.querySelector('.remove-webhook-btn');
+      if (rows.length > 1 && !rmBtn) {
+        rmBtn = document.createElement('button');
+        rmBtn.type = 'button'; rmBtn.className = 'btn-icon-sm remove-webhook-btn'; rmBtn.setAttribute('aria-label', 'Remove'); rmBtn.textContent = '✕';
+        row.appendChild(rmBtn);
+      } else if (rows.length === 1 && rmBtn) {
+        rmBtn.remove();
+      }
+    });
+  }
+
+  webhooksList.addEventListener('input', () => { rule.webhooks = [...webhooksList.querySelectorAll('.rule-webhook-input')].map((i) => i.value.trim()); });
+  webhooksList.addEventListener('click', (e) => {
+    if (e.target.classList.contains('remove-webhook-btn')) {
+      e.target.closest('.webhook-row').remove();
+      syncAndRefreshWebhooks();
+    }
+  });
+  addWebhookBtn.addEventListener('click', () => {
+    const row = document.createElement('div');
+    row.className = 'webhook-row';
+    row.innerHTML = `<input type="url" class="modal-input rule-webhook-input" placeholder="https://discord.com/api/webhooks/…" /><button type="button" class="btn-icon-sm remove-webhook-btn" aria-label="Remove">✕</button>`;
+    webhooksList.appendChild(row);
+    syncAndRefreshWebhooks();
+    row.querySelector('.rule-webhook-input').focus();
+  });
+  // Initial sync to set remove buttons correctly
+  syncAndRefreshWebhooks();
+
+  // Max price
+  li.querySelector('.rule-maxprice-input').addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    rule.maxPriceSek = e.target.value.trim() === '' ? null : (Number.isFinite(v) && v >= 0 ? v : null);
+  });
+
+  return li;
 }
 
-function renderKeywordsList() {
-  notifModal.keywordsList.innerHTML = '';
-  if (!notifSettings.keywords.length) {
-    notifModal.keywordsList.innerHTML = '<li class="modal-empty">No keywords yet. Add one above.</li>';
+function renderRuleList() {
+  notifModal.rulesList.innerHTML = '';
+  if (!notifSettings.alertRules.length) {
+    notifModal.rulesList.innerHTML = '<li class="modal-empty">No alert rules yet. Click "+ New rule" to create one.</li>';
     return;
   }
-  for (const kw of notifSettings.keywords) {
-    const cats = Array.isArray(kw.categories) ? kw.categories : (kw.category ? [kw.category] : []);
-    const catPills = cats.map((c) => `<span class="kw-category-pill">${escapeHtml(c)}</span>`).join('');
-    const li = document.createElement('li');
-    li.className = 'modal-item kw-item';
-    li.dataset.id = kw.id;
-    li.innerHTML = `
-      <div class="kw-item-body">
-        <label class="kw-item-toggle">
-          <input type="checkbox" class="kw-enabled" ${kw.enabled ? 'checked' : ''} />
-          <span class="kw-item-name">${escapeHtml(kw.keyword)}</span>
-        </label>
-        ${catPills ? `<div class="kw-item-cats">${catPills}</div>` : ''}
-      </div>
-      <button type="button" class="modal-item-remove" aria-label="Remove ${escapeHtml(kw.keyword)}">✕</button>
-    `;
-    li.querySelector('.kw-enabled').addEventListener('change', (e) => { kw.enabled = e.target.checked; });
-    li.querySelector('.modal-item-remove').addEventListener('click', () => {
-      notifSettings.keywords = notifSettings.keywords.filter((k) => k.id !== kw.id);
-      renderKeywordsList();
-    });
-    notifModal.keywordsList.appendChild(li);
-  }
-}
-
-function renderCategoryList() {
-  notifModal.categoriesList.innerHTML = '';
-  if (!notifSettings.categoryWebhooks.length) {
-    notifModal.categoriesList.innerHTML = '<li class="modal-empty">No category mappings yet. Click "+ Add mapping" to create one.</li>';
-    return;
-  }
-  for (const cw of notifSettings.categoryWebhooks) {
-    const li = document.createElement('li');
-    li.className = 'modal-item modal-item-category';
-    li.dataset.id = cw.id;
-    li.innerHTML = `
-      <div class="modal-category-fields">
-        <input type="text" class="modal-input modal-input-sm cw-pattern" placeholder="Category pattern (e.g. grafikkort)" value="${escapeHtml(cw.pattern)}" />
-        <input type="text" class="modal-input modal-input-sm cw-label" placeholder="Label (e.g. GPU)" value="${escapeHtml(cw.label)}" />
-        <input type="url" class="modal-input cw-webhook" placeholder="Discord webhook URL" value="${escapeHtml(cw.webhook)}" />
-      </div>
-      <button type="button" class="modal-item-remove" aria-label="Remove mapping">✕</button>
-    `;
-    li.querySelector('.cw-pattern').addEventListener('input', (e) => { cw.pattern = e.target.value; });
-    li.querySelector('.cw-label').addEventListener('input', (e) => { cw.label = e.target.value; });
-    li.querySelector('.cw-webhook').addEventListener('input', (e) => { cw.webhook = e.target.value; });
-    li.querySelector('.modal-item-remove').addEventListener('click', () => {
-      notifSettings.categoryWebhooks = notifSettings.categoryWebhooks.filter((c) => c.id !== cw.id);
-      renderCategoryList();
-    });
-    notifModal.categoriesList.appendChild(li);
+  for (const rule of notifSettings.alertRules) {
+    notifModal.rulesList.appendChild(createRuleElement(rule));
   }
 }
 
@@ -1780,40 +1913,28 @@ async function openNotifModal() {
   try {
     const res = await fetch('/api/notification-settings');
     if (res.ok) notifSettings = await res.json();
-  } catch {/* use in-memory defaults */}
+    if (!Array.isArray(notifSettings.alertRules)) notifSettings.alertRules = [];
+  } catch { /* use in-memory defaults */ }
 
-  // Populate keyword category picker from known outlet categories
+  // Load categories for the category pickers
   try {
     const cats = await fetchJson('/api/outlet-categories');
     if (Array.isArray(cats)) {
-      kwCatAll = cats.map((c) => (typeof c === 'string' ? c : c.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, 'sv-SE'));
+      allCategories = cats.map((c) => (typeof c === 'string' ? c : c.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, 'sv-SE'));
     }
-  } catch { kwCatAll = []; }
-  kwCatSelected = [];
-  renderKwCatChips();
-  if (notifModal.kwCatSearch) notifModal.kwCatSearch.value = '';
+  } catch { allCategories = []; }
 
-  // populate keyword/category fields
-  notifModal.keywordWebhookInput.value = notifSettings.keywordWebhook ?? '';
-  renderKeywordsList();
-  renderCategoryList();
-
-  // Populate scheduler fields from scheduler endpoint
-  try {
-    const schedRes = await fetch('/api/scheduler');
-    if (schedRes.ok) {
-      const sched = await schedRes.json();
-      renderScheduler(sched);
-    }
-  } catch (err) {
-    // ignore scheduler fetch failures
+  if (notifModal.notificationsEnabledToggle) {
+    notifModal.notificationsEnabledToggle.checked = notifSettings.notificationsEnabled !== false;
   }
 
-  // Populate scheduler-specific notification type checkboxes from saved notification settings
-  const schedTypes = notifSettings.schedulerNotificationTypes ?? { favorites: true, keywords: true, categories: true };
-  if (elements.notifyTypeFavorites) elements.notifyTypeFavorites.checked = Boolean(schedTypes.favorites);
-  if (elements.notifyTypeKeywords) elements.notifyTypeKeywords.checked = Boolean(schedTypes.keywords);
-  if (elements.notifyTypeCategories) elements.notifyTypeCategories.checked = Boolean(schedTypes.categories);
+  renderRuleList();
+
+  // Populate scheduler fields
+  try {
+    const schedRes = await fetch('/api/scheduler');
+    if (schedRes.ok) renderScheduler(await schedRes.json());
+  } catch { /* ignore */ }
 
   notifModal.overlay.classList.remove('hidden');
   notifModal.saveStatus.textContent = '';
@@ -1831,48 +1952,25 @@ notifModal.tabs.forEach((tab) => {
     notifModal.tabs.forEach((t) => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
     tab.classList.add('active');
     tab.setAttribute('aria-selected', 'true');
-    Object.values(notifModal.tabContents).forEach((el) => el.classList.add('hidden'));
+    Object.values(notifModal.tabContents).forEach((el) => el?.classList.add('hidden'));
     notifModal.tabContents[tab.dataset.tab]?.classList.remove('hidden');
   });
 });
 
-// Add keyword
-notifModal.addKeywordBtn.addEventListener('click', () => {
-  const kw = notifModal.newKeywordInput.value.trim();
-  if (!kw) return;
-  const isDupe = notifSettings.keywords.some((k) => k.keyword.toLowerCase() === kw.toLowerCase());
-  if (isDupe) { notifModal.newKeywordInput.classList.add('input-error'); return; }
-  notifModal.newKeywordInput.classList.remove('input-error');
-  const entry = { id: `kw-${Date.now()}`, keyword: kw, enabled: true };
-  if (kwCatSelected.length) entry.categories = [...kwCatSelected];
-  notifSettings.keywords.push(entry);
-  notifModal.newKeywordInput.value = '';
-  kwCatSelected = [];
-  renderKwCatChips();
-  renderKeywordsList();
-});
-notifModal.newKeywordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') notifModal.addKeywordBtn.click(); });
-
-// Add category mapping
-notifModal.addCategoryBtn.addEventListener('click', () => {
-  notifSettings.categoryWebhooks.push({ id: `cw-${Date.now()}`, pattern: '', label: '', webhook: '' });
-  renderCategoryList();
-  // Scroll to bottom of list
-  notifModal.categoriesList.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+// Add new rule
+notifModal.addRuleBtn.addEventListener('click', () => {
+  const rule = createEmptyRule();
+  notifSettings.alertRules.push(rule);
+  const emptyLi = notifModal.rulesList.querySelector('.modal-empty');
+  if (emptyLi) emptyLi.remove();
+  const li = createRuleElement(rule);
+  notifModal.rulesList.appendChild(li);
+  li.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 
 // Save settings
 notifModal.saveBtn.addEventListener('click', async () => {
-  // gather notification settings
-  notifSettings.keywordWebhook = notifModal.keywordWebhookInput.value.trim();
-
-  // include scheduler-driven notification choices
-  notifSettings.schedulerNotificationTypes = {
-    favorites: Boolean(elements.notifyTypeFavorites?.checked),
-    keywords: Boolean(elements.notifyTypeKeywords?.checked),
-    categories: Boolean(elements.notifyTypeCategories?.checked)
-  };
-
+  notifSettings.notificationsEnabled = notifModal.notificationsEnabledToggle?.checked !== false;
   notifModal.saveBtn.disabled = true;
   notifModal.saveStatus.textContent = 'Saving…';
   try {
@@ -1883,16 +1981,9 @@ notifModal.saveBtn.addEventListener('click', async () => {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     notifSettings = await res.json();
-    renderKeywordsList();
-    renderCategoryList();
-
-    // Persist scheduler settings as well
-    try {
-      await saveSchedulerSettings();
-    } catch (err) {
-      console.warn('[scheduler-save]', err.message);
-    }
-
+    if (!Array.isArray(notifSettings.alertRules)) notifSettings.alertRules = [];
+    renderRuleList();
+    try { await saveSchedulerSettings(); } catch (err) { console.warn('[scheduler-save]', err.message); }
     notifModal.saveStatus.textContent = '✓ Saved';
     setTimeout(() => { notifModal.saveStatus.textContent = ''; }, 2500);
   } catch (err) {
@@ -1908,7 +1999,7 @@ notifModal.closeBtn.addEventListener('click', closeNotifModal);
 notifModal.overlay.addEventListener('click', (e) => { if (e.target === notifModal.overlay) closeNotifModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !notifModal.overlay.classList.contains('hidden')) closeNotifModal(); });
 
-// Rail scheduler icon → open notification modal on the Scheduler tab
+// Rail scheduler icon → open notification modal on Scheduler tab
 const railSchedulerBtn = document.querySelector('#rail-scheduler-btn');
 if (railSchedulerBtn) {
   railSchedulerBtn.addEventListener('click', () => {
