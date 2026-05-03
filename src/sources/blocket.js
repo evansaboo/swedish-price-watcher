@@ -34,6 +34,35 @@ const DEFAULT_KEYWORDS = [
   'datorkomponenter',
 ];
 
+/**
+ * Normalize a string for keyword matching:
+ * NFKD-decompose → lowercase → collapse whitespace.
+ * Keeps diacritics stripped via decomposition so "ö" → "o"-ish token still matches "ö".
+ * We keep all characters (including diacritics) but lowercase everything so that
+ * "Hörlurar" still matches keyword "hörlurar" without stripping the umlauts.
+ */
+function normalizeForMatch(str) {
+  return String(str ?? '')
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Returns true if every whitespace-separated token in `keyword` appears as a
+ * word fragment inside the normalized `title`.
+ * Examples:
+ *   titleMatchesKeyword("iPhone 14 Pro Max", "iphone 14")  → true
+ *   titleMatchesKeyword("Kabel för laddning", "iphone")    → false
+ *   titleMatchesKeyword("Hörlurar Sony", "hörlurar")       → true
+ */
+function titleMatchesKeyword(title, keyword) {
+  const normTitle = normalizeForMatch(title);
+  const tokens = normalizeForMatch(keyword).split(/\s+/).filter(Boolean);
+  return tokens.every(token => normTitle.includes(token));
+}
+
 function mapDoc(doc, source, now, keyword) {
   const id = String(doc.id ?? '').trim();
   const title = (doc.heading ?? '').trim();
@@ -182,14 +211,24 @@ export async function collectFromBlocket({ source, fetcher, preferences, now, si
       const totalPages = data?.metadata?.paging?.last ?? 1;
 
       let newOnPage = 0;
+      let filteredOnPage = 0;
       for (const doc of docs) {
         if (seenIds.has(doc.id)) continue;
         seenIds.add(doc.id);
+        // Client-side relevance filter: Blocket's API does fuzzy/semantic matching,
+        // so we require every keyword token to appear in the listing title.
+        if (!titleMatchesKeyword(doc.heading ?? '', keyword)) {
+          filteredOnPage++;
+          continue;
+        }
         const obs = mapDoc(doc, source, now, keyword);
         if (obs) {
           observations.push(obs);
           newOnPage++;
         }
+      }
+      if (filteredOnPage > 0) {
+        console.log(`[${source.id}] keyword="${keyword}" page=${page}: filtered out ${filteredOnPage}/${docs.length} irrelevant results`);
       }
 
       // No new results or reached end of pagination — stop this keyword
