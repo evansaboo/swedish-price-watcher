@@ -305,3 +305,68 @@ test('notificationsEnabled false skips all rules', async () => {
 });
 
 
+
+test('alert rule with both keywords AND categories requires both to match (AND logic)', async () => {
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_url, init) => {
+    payloads.push(JSON.parse(init.body));
+    return { ok: true, status: 204, statusText: 'No Content' };
+  };
+
+  try {
+    const state = createDefaultState();
+    const notifier = makeNotifier();
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [
+        // matches keyword AND category → should notify
+        { ...BASE_ITEM, listingKey: 'src:match', title: 'ASUS RTX 4070 Outlet OC 12GB', category: 'Grafikkort', latestPriceSek: 4999 },
+        // matches category but NOT keyword → should NOT notify
+        { ...BASE_ITEM, listingKey: 'src:cat-only', title: 'ASUS RX 7900 XTX Outlet', category: 'Grafikkort', latestPriceSek: 6999 },
+        // matches keyword but NOT category → should NOT notify
+        { ...BASE_ITEM, listingKey: 'src:kw-only', title: 'ASUS RTX 4070 Headset Bundle', category: 'Horlurar', latestPriceSek: 2999 }
+      ],
+      sources: [],
+      notificationSettings: {
+        notificationsEnabled: true,
+        alertRules: [{ id: 'rule-and', label: 'GPU Alert', enabled: true, keywords: ['RTX 4070'], categories: ['Grafikkort'], webhooks: [MAIN_WEBHOOK] }]
+      },
+      state
+    });
+
+    assert.equal(summary.sent, 1, 'Only the item matching both keyword and category should be notified');
+    assert.match(payloads[0].embeds[0].title, /RTX 4070/i);
+    assert.ok(state.notifications['src:match:rule:rule-and'], 'Match stored');
+    assert.equal(state.notifications['src:cat-only:rule:rule-and'], undefined, 'Category-only match must be skipped');
+    assert.equal(state.notifications['src:kw-only:rule:rule-and'], undefined, 'Keyword-only match must be skipped');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('alert rule with categories does not match products with no category', async () => {
+  let called = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { called = true; return { ok: true, status: 204 }; };
+
+  try {
+    const state = createDefaultState();
+    const notifier = makeNotifier();
+    await notifier.notifyScan({
+      deals: [],
+      newItems: [{ ...BASE_ITEM, listingKey: 'src:nocat', category: '', latestPriceSek: 999 }],
+      sources: [],
+      notificationSettings: {
+        notificationsEnabled: true,
+        alertRules: [{ id: 'rule-cat-guard', label: 'Cat guard', enabled: true, keywords: [], categories: ['Grafikkort'], webhooks: [MAIN_WEBHOOK] }]
+      },
+      state
+    });
+
+    assert.equal(called, false, 'Product with empty category must not match a category rule');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

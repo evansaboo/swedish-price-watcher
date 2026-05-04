@@ -1813,7 +1813,7 @@ function createRuleElement(rule) {
         </div>
         <div class="rule-field">
           <label class="rule-field-label">Categories
-            <span class="rule-hint">Optional · filter to specific categories</span>
+            <span class="rule-hint">Optional · when set, BOTH keyword and category must match</span>
           </label>
           <div class="chip-input-wrap" id="cat-chips-${rule.id}">
             <div class="chip-list"></div>

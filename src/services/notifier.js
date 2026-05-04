@@ -85,7 +85,9 @@ function itemMatchesRule(item, { keywords, categories, maxPriceSek }) {
 
   if (categories.length) {
     const itemCat = String(item.category ?? '').toLowerCase();
-    if (!categories.some((c) => itemCat.includes(c) || c.includes(itemCat))) return false;
+    // Empty itemCat must not match — `c.includes('')` is always true in JS, which would cause
+    // every product with no category to pass any category rule.
+    if (!itemCat || !categories.some((c) => itemCat.includes(c) || c.includes(itemCat))) return false;
   }
 
   return true;
