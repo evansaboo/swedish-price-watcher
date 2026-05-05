@@ -1685,6 +1685,7 @@ const notifModal = {
 // In-memory settings state (loaded from API when modal opens)
 let notifSettings = { notificationsEnabled: true, alertRules: [] };
 let allCategories = []; // populated from /api/outlet-categories
+let allSources = [];   // populated from /api/sources (id+label pairs)
 
 function createEmptyRule() {
   return {
@@ -1693,6 +1694,7 @@ function createEmptyRule() {
     enabled: true,
     keywords: [],
     categories: [],
+    excludedSources: [],
     webhooks: [''],
     maxPriceSek: null
   };
@@ -1823,6 +1825,18 @@ function createRuleElement(rule) {
         </div>
       </div>
       <div class="rule-row">
+        <div class="rule-field rule-field-excluded-sources">
+          <label class="rule-field-label">Exclude sources
+            <span class="rule-hint">Optional · selected sources will never trigger this alert</span>
+          </label>
+          <div class="chip-input-wrap" id="src-chips-${rule.id}">
+            <div class="chip-list"></div>
+            <input type="text" class="chip-text-input" placeholder="Search sources to exclude…" autocomplete="off" />
+            <ul class="kw-cat-dropdown hidden" role="listbox"></ul>
+          </div>
+        </div>
+      </div>
+      <div class="rule-row">
         <div class="rule-field rule-field-webhooks">
           <label class="rule-field-label">Discord webhook(s)
             <span class="rule-hint">All listed webhooks receive the alert</span>
@@ -1877,7 +1891,28 @@ function createRuleElement(rule) {
     allOptions: allCategories
   });
 
-  // Webhooks
+  // Excluded sources chip input — shows source labels, stores source IDs
+  if (!Array.isArray(rule.excludedSources)) rule.excludedSources = [];
+  const sourceLabels = allSources.map((s) => s.label);
+  // Map display label ↔ id for chip storage (we store IDs, show labels)
+  const labelToId = Object.fromEntries(allSources.map((s) => [s.label, s.id]));
+  const idToLabel = Object.fromEntries(allSources.map((s) => [s.id, s.label]));
+  // Build a parallel display array that maps to rule.excludedSources IDs
+  const excludedLabels = rule.excludedSources.map((id) => idToLabel[id] ?? id);
+  wireChipInput({
+    container: li.querySelector(`#src-chips-${rule.id}`),
+    items: excludedLabels,
+    onAdd: (label) => {
+      const id = labelToId[label] ?? label;
+      if (!rule.excludedSources.includes(id)) rule.excludedSources.push(id);
+    },
+    onRemove: (label) => {
+      const id = labelToId[label] ?? label;
+      const idx = rule.excludedSources.indexOf(id);
+      if (idx !== -1) rule.excludedSources.splice(idx, 1);
+    },
+    allOptions: sourceLabels
+  });
   const webhooksList = li.querySelector('.webhooks-list');
   const addWebhookBtn = li.querySelector('.add-webhook-btn');
 
@@ -1946,6 +1981,14 @@ async function openNotifModal() {
       allCategories = cats.map((c) => (typeof c === 'string' ? c : c.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, 'sv-SE'));
     }
   } catch { allCategories = []; }
+
+  // Load sources for the excluded-sources pickers
+  try {
+    const srcs = await fetchJson('/api/sources');
+    if (Array.isArray(srcs)) {
+      allSources = srcs.filter((s) => s.enabled).map((s) => ({ id: s.id, label: s.label }));
+    }
+  } catch { allSources = []; }
 
   if (notifModal.notificationsEnabledToggle) {
     notifModal.notificationsEnabledToggle.checked = notifSettings.notificationsEnabled !== false;

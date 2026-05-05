@@ -63,12 +63,17 @@ function parseRetryDelayMs(response) {
 
 /**
  * Returns true if the item matches all constraints of an alert rule:
+ * - Item sourceId must NOT be in excludedSources (if any are set)
  * - At least one keyword token sequence must appear in item title (if keywords are set)
  * - Item category must match at least one rule category (if categories are set)
  * - Item price must be ≤ maxPriceSek (if set)
  */
-function itemMatchesRule(item, { keywords, categories, maxPriceSek }) {
+function itemMatchesRule(item, { keywords, categories, maxPriceSek, excludedSources }) {
   const price = item.latestPriceSek ?? item.priceSek;
+
+  if (excludedSources && excludedSources.length) {
+    if (excludedSources.includes(item.sourceId)) return false;
+  }
 
   if (typeof maxPriceSek === 'number' && Number.isFinite(maxPriceSek) && price > maxPriceSek) {
     return false;
@@ -147,9 +152,10 @@ export class DiscordNotifier {
 
       const keywords = (rule.keywords ?? []).map((k) => String(k).toLowerCase().trim()).filter(Boolean);
       const categories = (rule.categories ?? []).map((c) => String(c).toLowerCase().trim()).filter(Boolean);
+      const excludedSources = (rule.excludedSources ?? []).map((s) => String(s).trim()).filter(Boolean);
       const maxPriceSek = typeof rule.maxPriceSek === 'number' && Number.isFinite(rule.maxPriceSek) ? rule.maxPriceSek : null;
 
-      const matches = newItems.filter((item) => itemMatchesRule(item, { keywords, categories, maxPriceSek }));
+      const matches = newItems.filter((item) => itemMatchesRule(item, { keywords, categories, maxPriceSek, excludedSources }));
 
       for (const item of matches) {
         const notificationKey = `${item.listingKey}:rule:${rule.id}`;

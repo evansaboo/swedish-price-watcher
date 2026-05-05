@@ -2267,6 +2267,7 @@ tbody tr:hover .row-link-icon { opacity: 1; }
 .rule-row-two-col > .rule-field { flex: 1 1 220px; min-width: 0; }
 .rule-field-webhooks { flex: 1 1 280px; min-width: 0; }
 .rule-field-maxprice { flex: 0 1 160px; min-width: 100px; }
+.rule-field-excluded-sources { flex: 1 1 100%; min-width: 0; }
 
 .rule-field { display: flex; flex-direction: column; gap: 0.4rem; }
 .rule-field-label {

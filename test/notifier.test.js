@@ -370,3 +370,48 @@ test('alert rule with categories does not match products with no category', asyn
     globalThis.fetch = originalFetch;
   }
 });
+
+test('alert rule with excludedSources skips items from excluded sources', async () => {
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_url, init) => {
+    payloads.push(JSON.parse(init.body));
+    return { ok: true, status: 204, statusText: 'No Content' };
+  };
+
+  try {
+    const state = createDefaultState();
+    const notifier = makeNotifier();
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [
+        { ...BASE_ITEM, listingKey: 'elg:1', sourceId: 'elgiganten-outlet', title: 'Sony WH-1000XM5', latestPriceSek: 2490 },
+        { ...BASE_ITEM, listingKey: 'wh:1', sourceId: 'webhallen-fyndware', title: 'Sony WH-1000XM5 fyndware', latestPriceSek: 2390 },
+        { ...BASE_ITEM, listingKey: 'nn:1', sourceId: 'netonnet-outlet', title: 'Sony WH-1000XM5 outlet', latestPriceSek: 2590 }
+      ],
+      sources: [],
+      notificationSettings: {
+        notificationsEnabled: true,
+        alertRules: [{
+          id: 'rule-excl',
+          label: 'Sony Headphones',
+          enabled: true,
+          keywords: ['Sony'],
+          categories: [],
+          excludedSources: ['elgiganten-outlet', 'netonnet-outlet'],
+          webhooks: [MAIN_WEBHOOK]
+        }]
+      },
+      state
+    });
+
+    assert.equal(summary.sent, 1, 'Only the non-excluded source should notify');
+    assert.match(payloads[0].embeds[0].title, /fyndware/i, 'Webhallen item notified');
+    assert.ok(state.notifications['wh:1:rule:rule-excl'], 'Webhallen notification stored');
+    assert.equal(state.notifications['elg:1:rule:rule-excl'], undefined, 'Elgiganten must be excluded');
+    assert.equal(state.notifications['nn:1:rule:rule-excl'], undefined, 'NetOnNet must be excluded');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
