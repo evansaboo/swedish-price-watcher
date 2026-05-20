@@ -10,6 +10,7 @@ import { collectFromNetonnet } from './netonnet.js';
 import { collectFromPower } from './power.js';
 import { collectFromProshop } from './proshop.js';
 import { collectFromRss } from './rss.js';
+import { collectFromSweclockers } from './sweclockers.js';
 import { collectFromWebhallen } from './webhallen.js';
 
 const handlers = {
@@ -27,6 +28,7 @@ const handlers = {
   rss: collectFromRss,
   'html-page': collectFromHtml,
   'html-list': collectFromHtml,
+  'sweclockers-dagensfynd': collectFromSweclockers,
   'webhallen-api': collectFromWebhallen
 };
 
