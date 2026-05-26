@@ -119,7 +119,9 @@ async function triggerScan(trigger, options = {}) {
   if (trigger === 'scheduled') {
     state.stats.lastScheduledRunStartedAt = startedAt;
   }
-  await store.save();
+  // Pre-scan save is best-effort: it just marks the start time.
+  // A slow/hung Apify API must not block the scan from starting.
+  store.save().catch((err) => console.warn(`[scan] Pre-scan save failed (non-fatal): ${err.message}`));
 
   // Aggregate notification summaries from per-source notifications
   const aggregatedNotif = {
@@ -165,14 +167,29 @@ async function triggerScan(trigger, options = {}) {
             collectResult = { status: 'cooling-down', disabledUntil: sourceState.disabledUntil };
           } else {
             scanState.sourceProgress[source.id] = { status: 'running' };
-            const collected = await collectSource({
-              source,
-              fetcher,
-              sourceState,
-              now: startedAt,
-              preferences: state.preferences,
-              signal: scanState.abortController.signal
+            // Per-source hard timeout: prevents a single hanging source from
+            // blocking the entire scan indefinitely.
+            const sourceTimeoutMs = source.sourceTimeoutMs ?? 10 * 60 * 1000; // default 10 min
+            const timeoutPromise = new Promise((_, reject) => {
+              const t = setTimeout(() => {
+                const err = new Error(`Source timed out after ${Math.round(sourceTimeoutMs / 1000)}s`);
+                err.isTimeout = true;
+                reject(err);
+              }, sourceTimeoutMs);
+              // Allow Node to exit even if this timer is pending
+              if (t.unref) t.unref();
             });
+            const collected = await Promise.race([
+              collectSource({
+                source,
+                fetcher,
+                sourceState,
+                now: startedAt,
+                preferences: state.preferences,
+                signal: scanState.abortController.signal
+              }),
+              timeoutPromise
+            ]);
             scanState.sourceProgress[source.id] = { status: 'done', count: collected.length };
             collectResult = { status: 'ok', collected };
           }

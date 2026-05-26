@@ -211,7 +211,8 @@ export class ApifyStore {
         headers: {
           'content-type': 'application/json'
         },
-        body: '{}'
+        body: '{}',
+        signal: AbortSignal.timeout(30_000)
       }
     );
 
@@ -238,7 +239,8 @@ export class ApifyStore {
         method: 'GET',
         headers: {
           accept: 'application/json'
-        }
+        },
+        signal: AbortSignal.timeout(60_000)
       }
     );
 
@@ -259,7 +261,7 @@ export class ApifyStore {
     try {
       const prefResponse = await fetch(
         `${APIFY_API_BASE_URL}/key-value-stores/${encodeURIComponent(storeId)}/records/${encodeURIComponent(this.recordKey + '-preferences')}?token=${encodeURIComponent(this.token)}&disableRedirect=true`,
-        { method: 'GET', headers: { accept: 'application/json' } }
+        { method: 'GET', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(30_000) }
       );
       if (prefResponse.ok) {
         const savedPrefs = await prefResponse.json();
@@ -287,7 +289,8 @@ export class ApifyStore {
         headers: {
           'content-type': 'application/json; charset=utf-8'
         },
-        body: JSON.stringify(stateForSerialization(this.state))
+        body: JSON.stringify(stateForSerialization(this.state)),
+        signal: AbortSignal.timeout(90_000)
       }
     );
 
@@ -304,7 +307,8 @@ export class ApifyStore {
       {
         method: 'PUT',
         headers: { 'content-type': 'application/json; charset=utf-8' },
-        body: JSON.stringify(preferencesForSerialization(this.state))
+        body: JSON.stringify(preferencesForSerialization(this.state)),
+        signal: AbortSignal.timeout(30_000)
       }
     );
 
