@@ -1,0 +1,154 @@
+# Appendix: Design Principles
+
+> A single, comprehensive reference distilled from the **Spark** and **Claude** system prompts.
+
+---
+
+## 0. Purpose & Scope
+
+Provide one authoritative source for product designers and front‑end engineers. Covers philosophy, visual foundations, component patterns, interaction, accessibility, and guidance for advanced 3‑D or data‑heavy experiences.
+
+---
+
+## 1. Core Philosophy
+
+* **Simplicity through Reduction** — Strip UI to the minimum viable set, then refine details.
+* **Material Honesty** — Treat pixels like a tangible medium; embrace native affordances.
+* **Obsessive Detail** — Every 1 px nudge, every 16 ms frame matters; cultivate polish.
+* **Coherent Design Language** — Tokenise colour, type, and spacing for consistency.
+* **Context‑Driven** — Adapt to user locale, device, theme, and environmental cues.
+* **Accessibility by Default** — Comply with WCAG AA; build keyboard paths first.
+* **Performance & Efficiency** — Speed equals usability; design within Core Web Vitals budgets.
+
+---
+
+## 2. Foundations
+
+### 2.1 Layout & Grid
+
+* Fluid, content‑out grids using `minmax()` + `clamp()`.
+* 8‑pt base spacing; snap dimensions to 4 ‑pt increments for icon/text harmony.
+* Use container queries for adaptive component layouts instead of page breakpoints.
+
+### 2.2 Sizing & Spacing Tokens
+
+```
+--size-0: 2px;
+--size-1: 4px;
+--size-2: 8px;
+--size-3: 12px;
+--size-4: 16px;
+--size-5: 24px;
+--size-6: 32px;
+--size-7: 48px;
+--size-8: 64px;
+--size-9: 128px;
+```
+
+* Use logical CSS `block/inline` properties for RTL.
+
+### 2.3 Colour System
+
+* **Core Palette:** HSL wheel in 10 ° steps; neutral greys derived by mixing complements.
+* **Semantic Roles:** `--bg-surface`, `--fg-default`, `--border-muted`, `--accent-positive`, `--accent-danger`.
+* Derive hover/active states with `color-mix(in srgb ...)` — ±6 % lightness.
+* Support dark‑mode via `@media (prefers-color-scheme)` + token swaps.
+
+### 2.4 Typography
+
+* Default stack: *Lexend* (display), *Inter* (body) — swap per‑brand.
+* Scale (rem): 0.75 / 0.875 / 1 / 1.25 / 1.5 / 2 / 2.5.
+* Max line‑length \~75 ch; adjust line‑height for `prefers-reduced-motion` users if scroll‑jacking animations present.
+
+### 2.5 Iconography & Illustration
+
+* 24 × 24 grid, 2 px stroke. Avoid interior fills under 2 px spacing.
+* Use `` sprites; inline for theming (`currentColor`).
+* Illustrations favour minimal line‑art with limited flat fills for faster decoding.
+
+### 2.6 Elevation & Layers
+
+| Tier          | z‑index | Shadow recipe                |
+| ------------- | ------- | ---------------------------- |
+| Base          | 0‑99    | none                         |
+| Sticky Header | 100‑199 | `0 1px 2px rgba(0,0,0,.05)`  |
+| Dropdown      | 600‑699 | `0 2px 4px rgba(0,0,0,.08)`  |
+| Modal         | 800‑899 | `0 4px 16px rgba(0,0,0,.12)` |
+| Overlay       | 999     | backdrop blur + 30 % tint    |
+
+---
+
+## 3. Patterns & Components
+
+### 3.1 Atoms
+
+* **Button** — `size` (xs‑xl), `variant` (primary / secondary / ghost). Min target 44 px.
+* **Input** — Paired with visible label, includes `:focus-visible` outline.
+* **Avatar** — Square grid; fallbacks: initials, emoji, silhouette.
+
+### 3.2 Molecules
+
+* **Form Field** = Input + Label + Help‑Text + Validation.
+* **Card** = Container with optional header, media, body, and actions slots.
+* **Tooltip** = Content wrapper displayed on `mouseenter focus`, closes on `Escape`.
+
+### 3.3 Organisms
+
+* **NavBar** — Horizontal links, collapses to hamburger at 52 ch width.
+* **Product Tile** — Image, price, rating; lazy‑loads below fold.
+* **Data Table** — Column config, virtual scrolling, inline batch actions.
+
+### 3.4 Templates
+
+* **Landing Page** — Hero headline, benefit grid, social proof, CTA.
+* **Dashboard** — Sticky sidebar, card masonry, auto‑refresh widgets.
+* **Checkout** — Stepper, address form, summary sidebar; resume via localStorage.
+
+---
+
+## 4. Interaction & Motion
+
+### 4.1 Feedback States
+
+* `:hover` communicates affordance; avoid on touch‑only.
+* `:focus-visible` outlines use brand accent at 2 px, offset 2 px.
+* `:active` may compress element 2 % for tactile feel.
+
+### 4.2 Motion Principles
+
+* Duration 120‑200 ms for small UI shifts, 300‑500 ms for full‑screen.
+* Prefer transform/opacity; no `top/left` layout thrashing.
+* Default curves: `ease-out` (content entry), `ease-in` (exit), custom `overshoot` for playful UI.
+
+### 4.3 Micro‑Interactions
+
+* Form submit → loading bar at top; 30 ms delay before showing to avoid flash.
+* Copy‑to‑clipboard → icon morph + toast “Copied!”.
+* Empty states animated doodles loop under 3 s; pause on `prefers-reduced-motion`.
+
+### 4.4 Accessible Motion
+
+* Honor `@media (prefers-reduced-motion: reduce)` by disabling parallax, reducing durations to 0.01s, and avoiding auto‑playing video.
+
+---
+
+## 5. Accessibility & Inclusive Design
+
+1. **Semantic HTML first**; ARIA only when structural semantics lacking.
+2. **Keyboard paths**: Tab order follows DOM; include “Skip to main”.
+3. **Contrast**: ≥ 4.5:1 for body, 3:1 for 24 px+ headlines.
+4. **Readable copy**: Target 9th grade reading level; avoid idioms.
+5. **Form UX**: Inline validation, announce errors via `aria-live="polite"`.
+6. **I18n**: Tokens avoid embedding language (e.g., no `--color-success-green`).
+
+---
+
+## 6. Complex Experiences (3‑D, VR, Data‑Heavy)
+
+* Keep **FPS ≥ 60**; budget < 1,000 draw calls/ frame; use `requestAnimationFrame`.
+* Employ **object pooling** for sprites, reuse geometry buffers.
+* **Reduce latency** via WebGL instancing, GPU batching, and culling.
+* Provide **assistive camera controls**: auto‑alignment, snap‑back, or guided tours.
+* Simplify **data grids**: virtual scrolling, column pinning, keyboard navigation.
+
+---

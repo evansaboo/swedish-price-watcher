@@ -3,329 +3,275 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Swedish Price Watcher — Outlet & Deals</title>
+    <title>PriceWatch — Swedish Outlet Deals</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
-    <!-- Apply saved theme before paint to avoid flash -->
     <script>try{const t=localStorage.getItem('spw-theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}</script>
   </head>
   <body>
-    <!-- ===== TOP BAR ===== -->
-    <header class="topbar">
-      <div class="topbar-brand">
-        <button id="sidebar-toggle" type="button" class="menu-btn" aria-label="Toggle filters panel" aria-expanded="false" aria-controls="sidebar">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
-        <div class="topbar-heading">
-          <p class="eyebrow">Swedish outlet monitor</p>
-          <h1>Find the best outlet deals faster</h1>
+    <!-- ===== HEADER ===== -->
+    <header class="header" id="header">
+      <div class="header-inner">
+        <div class="header-left">
+          <a href="/" class="logo" aria-label="PriceWatch home">
+            <svg class="logo-icon" width="28" height="28" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2.5"/><path d="M10 20l4-8 4 5 4-9" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="22" cy="8" r="2.5" fill="var(--accent)"/></svg>
+            <span class="logo-text">PriceWatch</span>
+          </a>
+        </div>
+
+        <div class="header-center">
+          <div class="search-container" id="search-container">
+            <div class="search-box">
+              <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              <input id="search-input" type="search" class="search-input" placeholder="Search products, categories..." autocomplete="off" />
+              <kbd class="search-shortcut" aria-hidden="true">/</kbd>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <div id="scheduler-status" class="scheduler-pill hidden">
+            <span class="scheduler-dot"></span>
+            <span id="scheduler-text"></span>
+          </div>
+          <button id="theme-toggle" type="button" class="header-btn" title="Toggle theme" aria-label="Toggle theme">
+            <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+          <button id="settings-btn" type="button" class="header-btn" title="Settings" aria-label="Settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+          <button id="scan-btn" type="button" class="scan-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+            <span class="scan-btn-label">Scan</span>
+          </button>
+          <button id="cancel-btn" type="button" class="cancel-btn hidden">Cancel</button>
         </div>
       </div>
-      <div class="topbar-actions">
-        <div id="scheduler-next-run" class="topbar-scheduler-status"></div>
-        <button id="refresh-button" type="button">Refresh</button>
-        <button id="theme-toggle-btn" type="button" class="btn-theme-toggle" title="Toggle light/dark theme" aria-label="Toggle theme">🌙</button>
-        <button id="notif-settings-btn" type="button" class="btn-icon" title="Notification settings" aria-label="Notification settings">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-        </button>
-        <button id="scan-button" type="button" class="btn-primary">Scan all</button>
-        <button id="cancel-button" type="button" class="btn-cancel hidden">Cancel</button>
+
+      <!-- Scan progress -->
+      <div id="scan-progress" class="scan-progress hidden">
+        <div id="scan-progress-bar" class="scan-progress-bar"></div>
+        <span id="scan-progress-text" class="scan-progress-text"></span>
       </div>
     </header>
 
-    <!-- ===== NOTIFICATION SETTINGS MODAL ===== -->
-    <div id="notif-settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notif-modal-title">
-      <div class="modal-panel notif-modal-panel">
-        <div class="modal-header">
-          <div class="modal-header-inner">
-            <span class="modal-header-icon">🔔</span>
-            <div>
-              <h2 id="notif-modal-title">Notification Settings</h2>
-              <p class="modal-header-sub">Get Discord alerts when deals match your rules</p>
-            </div>
-          </div>
-          <button id="notif-modal-close" type="button" class="modal-close-btn" aria-label="Close">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-        <div class="modal-tabs" role="tablist">
-          <button type="button" class="modal-tab active" data-tab="alert-rules" role="tab" aria-selected="true">🔔 Alert Rules</button>
-          <button type="button" class="modal-tab" data-tab="scheduler" role="tab" aria-selected="false">⏰ Scheduler</button>
+    <!-- ===== FILTER BAR ===== -->
+    <div class="filter-bar" id="filter-bar">
+      <div class="filter-bar-inner">
+        <div class="filter-pills" id="filter-pills">
+          <button type="button" class="filter-pill" data-filter-preset="all">All</button>
+          <button type="button" class="filter-pill" data-filter-preset="new">✨ New</button>
+          <button type="button" class="filter-pill" data-filter-preset="hot">🔥 Hot deals</button>
+          <button type="button" class="filter-pill" data-filter-preset="discounted">💰 Discounted</button>
+          <button type="button" class="filter-pill" data-filter-preset="matched">🔗 Matched</button>
+          <button type="button" class="filter-pill" data-filter-preset="favorites">⭐ Favorites</button>
         </div>
 
-        <!-- Alert Rules tab -->
-        <div id="tab-alert-rules" class="modal-tab-content">
-          <div class="notif-global-toggle-bar">
-            <label class="notif-master-toggle">
+        <div class="filter-bar-controls">
+          <button id="filter-expand-btn" type="button" class="filter-expand-btn" title="More filters">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            <span>Filters</span>
+            <span id="filter-count-badge" class="filter-count-badge hidden"></span>
+          </button>
+          <div class="view-toggle" role="group" aria-label="View mode">
+            <button id="view-grid" type="button" class="view-btn active" title="Grid view" aria-pressed="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            </button>
+            <button id="view-list" type="button" class="view-btn" title="List view" aria-pressed="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            </button>
+          </div>
+          <select id="sort-select" class="sort-select" aria-label="Sort by">
+            <option value="score-desc">Best deals</option>
+            <option value="discountPercent-desc">Highest discount %</option>
+            <option value="discountSek-desc">Biggest savings</option>
+            <option value="currentPriceSek-asc">Price: low → high</option>
+            <option value="currentPriceSek-desc">Price: high → low</option>
+            <option value="lastSeenAt-desc">Recently seen</option>
+            <option value="title-asc">Name A–Z</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== EXPANDED FILTERS ===== -->
+    <div id="filter-panel" class="filter-panel hidden">
+      <div class="filter-panel-inner">
+        <div class="filter-grid">
+          <div class="filter-field">
+            <label for="category-filter">Category</label>
+            <select id="category-filter" class="filter-select">
+              <option value="">All categories</option>
+            </select>
+          </div>
+          <div class="filter-field">
+            <label for="store-filter">Store</label>
+            <select id="store-filter" class="filter-select">
+              <option value="">All stores</option>
+            </select>
+          </div>
+          <div class="filter-field hidden" id="campaign-filter-group">
+            <label for="campaign-filter">Campaign</label>
+            <select id="campaign-filter" class="filter-select">
+              <option value="">All campaigns</option>
+            </select>
+          </div>
+          <div class="filter-field">
+            <label for="min-discount-filter">Min discount %</label>
+            <input id="min-discount-filter" type="number" class="filter-input" min="0" max="99" step="1" placeholder="e.g. 20" />
+          </div>
+          <div class="filter-field">
+            <label for="min-price-filter">Min price (kr)</label>
+            <input id="min-price-filter" type="number" class="filter-input" min="0" step="1" placeholder="e.g. 500" />
+          </div>
+          <div class="filter-field">
+            <label for="max-price-filter">Max price (kr)</label>
+            <input id="max-price-filter" type="number" class="filter-input" min="0" step="1" placeholder="e.g. 5000" />
+          </div>
+        </div>
+        <div class="filter-toggles">
+          <label class="filter-toggle">
+            <input id="new-only" type="checkbox" />
+            <span>New only</span>
+          </label>
+          <label class="filter-toggle">
+            <input id="discounted-only" type="checkbox" />
+            <span>Discounted</span>
+          </label>
+          <label class="filter-toggle">
+            <input id="favorites-only" type="checkbox" />
+            <span>Favorites</span>
+          </label>
+          <label class="filter-toggle">
+            <input id="reference-only" type="checkbox" />
+            <span>Matched price</span>
+          </label>
+        </div>
+        <div class="filter-panel-actions">
+          <button id="clear-filters-btn" type="button" class="filter-clear-btn">Clear all filters</button>
+          <div id="active-filter-tags" class="active-filter-tags"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== STATS BAR ===== -->
+    <div class="stats-bar" id="stats-bar">
+      <div class="stats-bar-inner">
+        <div id="stats-pills" class="stats-pills"></div>
+        <span id="products-count" class="results-count"></span>
+      </div>
+    </div>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <main class="main-content" id="main-content">
+      <div id="product-grid" class="product-grid"></div>
+      <div id="pagination-area" class="pagination-area"></div>
+      <div id="empty-state" class="empty-state hidden">
+        <div class="empty-state-icon">🔍</div>
+        <h3>No products found</h3>
+        <p>Try adjusting your filters or run a new scan</p>
+      </div>
+    </main>
+
+    <!-- ===== SETTINGS DRAWER ===== -->
+    <div id="settings-overlay" class="drawer-overlay hidden" aria-hidden="true"></div>
+    <aside id="settings-drawer" class="settings-drawer hidden" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="drawer-header">
+        <h2>Settings</h2>
+        <button id="drawer-close" type="button" class="drawer-close-btn" aria-label="Close settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="drawer-body">
+        <!-- Nav tabs -->
+        <div class="drawer-tabs" role="tablist">
+          <button type="button" class="drawer-tab active" data-tab="sources" role="tab" aria-selected="true">Sources</button>
+          <button type="button" class="drawer-tab" data-tab="alerts" role="tab" aria-selected="false">Alerts</button>
+          <button type="button" class="drawer-tab" data-tab="scheduler" role="tab" aria-selected="false">Scheduler</button>
+          <button type="button" class="drawer-tab" data-tab="favorites" role="tab" aria-selected="false">Favorites</button>
+        </div>
+
+        <!-- Sources tab -->
+        <div id="tab-sources" class="drawer-tab-content">
+          <div class="sources-toolbar">
+            <button id="sources-all-on" type="button" class="ghost-btn">All on</button>
+            <button id="sources-all-off" type="button" class="ghost-btn">All off</button>
+          </div>
+          <div id="sources-list" class="sources-list"></div>
+        </div>
+
+        <!-- Alerts tab -->
+        <div id="tab-alerts" class="drawer-tab-content hidden">
+          <div class="alerts-header">
+            <label class="toggle-switch">
               <input id="notifications-enabled-toggle" type="checkbox" checked />
-              <span class="notif-master-toggle-track">
-                <span class="notif-master-toggle-thumb"></span>
-              </span>
-              <span class="notif-master-toggle-text">Discord notifications enabled</span>
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">Discord alerts enabled</span>
             </label>
           </div>
           <div class="rules-toolbar">
-            <div class="rules-toolbar-left">
-              <span class="rules-count-label" id="rules-count-label">Alert rules</span>
-            </div>
-            <button id="add-rule-btn" type="button" class="btn-add-rule">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Add alert
-            </button>
+            <span id="rules-count-label" class="rules-count"></span>
+            <button id="add-rule-btn" type="button" class="add-rule-btn">+ Add alert</button>
           </div>
           <ul id="rules-list" class="rules-list"></ul>
         </div>
 
         <!-- Scheduler tab -->
-        <div id="tab-scheduler" class="modal-tab-content hidden">
-          <div id="modal-scheduler-status" class="modal-scheduler-status"></div>
-          <p class="modal-hint">Configure automatic scans on a recurring interval.</p>
-          <div class="scheduler-grid">
-            <label class="toggle-item">
+        <div id="tab-scheduler" class="drawer-tab-content hidden">
+          <div id="modal-scheduler-status" class="drawer-scheduler-status"></div>
+          <div class="scheduler-form">
+            <label class="toggle-switch">
               <input id="scheduler-enabled" type="checkbox" />
-              <span>Auto-scan enabled</span>
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">Auto-scan enabled</span>
             </label>
-
-            <label class="field-label">
-              Interval (minutes)
-              <input id="scheduler-interval" type="number" min="1" step="1" />
-            </label>
-
-            <label class="toggle-item">
-              <input id="scheduler-window-enabled" type="checkbox" />
-              <span>Active hours only</span>
-            </label>
-
-            <div class="field-row">
-              <label class="field-label">
-                Start (Sweden)
-                <input id="scheduler-window-start" type="time" />
-              </label>
-
-              <label class="field-label">
-                End (Sweden)
-                <input id="scheduler-window-end" type="time" />
-              </label>
+            <div class="form-field">
+              <label for="scheduler-interval">Interval (minutes)</label>
+              <input id="scheduler-interval" type="number" class="filter-input" min="1" step="1" />
             </div>
-
-
+            <label class="toggle-switch">
+              <input id="scheduler-window-enabled" type="checkbox" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">Active hours only</span>
+            </label>
+            <div class="form-row">
+              <div class="form-field">
+                <label for="scheduler-window-start">Start (Sweden)</label>
+                <input id="scheduler-window-start" type="time" class="filter-input" />
+              </div>
+              <div class="form-field">
+                <label for="scheduler-window-end">End (Sweden)</label>
+                <input id="scheduler-window-end" type="time" class="filter-input" />
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="modal-footer">
-          <span id="notif-save-status" class="modal-save-status"></span>
-          <button id="save-notif-settings-btn" type="button" class="btn-primary">Save settings</button>
+        <!-- Favorites tab -->
+        <div id="tab-favorites" class="drawer-tab-content hidden">
+          <div id="favorite-chips" class="favorite-chips"></div>
+          <div class="favorites-search">
+            <input id="favorites-search-input" type="search" class="filter-input" placeholder="Search categories to add..." />
+          </div>
+          <div id="favorites-editor" class="favorites-grid"></div>
         </div>
       </div>
-    </div>
+      <div class="drawer-footer">
+        <span id="drawer-save-status" class="save-status"></span>
+        <button id="save-settings-btn" type="button" class="save-btn">Save changes</button>
+      </div>
+    </aside>
 
-    <!-- ===== NOTICE BANNER ===== -->
-    <div id="notice-banner" class="notice hidden" role="status" aria-live="polite"></div>
+    <!-- ===== TOAST CONTAINER ===== -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-    <!-- ===== SCAN PROGRESS BAR ===== -->
-    <div id="scan-progress-bar" class="scan-progress-bar hidden" role="progressbar" aria-label="Scan progress">
-      <div id="scan-progress-fill" class="scan-progress-fill"></div>
-    </div>
-
-    <!-- ===== APP LAYOUT ===== -->
-    <div class="app-layout">
-
-      <!-- ===== SIDEBAR ===== -->
-      <aside id="sidebar" class="sidebar" aria-label="Filters and settings">
-
-        <!-- Icon rail: visible only when sidebar is collapsed on desktop -->
-        <div class="sidebar-icon-rail" aria-hidden="true">
-          <button class="rail-btn" data-open-section="section-sources" title="Sources" type="button">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-          </button>
-          <button class="rail-btn" data-open-section="section-filters" title="Filters" type="button">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-            <span id="filter-rail-badge" class="rail-badge hidden" aria-hidden="true"></span>
-          </button>
-          <button class="rail-btn" data-open-section="section-favorites" title="Favorite categories" type="button">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          </button>
-          <button class="rail-btn" id="rail-scheduler-btn" title="Scheduler" type="button">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </button>
-          <button class="rail-btn" data-open-section="section-sources" title="Scanners" type="button">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          </button>
-        </div>
-
-        <!-- Expanded content (shown when sidebar is open) -->
-        <div class="sidebar-inner">
-          <!-- Sidebar header -->
-          <div class="sidebar-header">
-            <svg class="sidebar-header-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-            <strong class="sidebar-header-title">Filters &amp; Controls</strong>
-            <button id="sidebar-close" type="button" class="sidebar-collapse-btn" title="Collapse panel" aria-label="Collapse sidebar">
-              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
-            </button>
-          </div>
-
-          <!-- Scrollable sidebar body -->
-          <div class="sidebar-scroll">
-
-          <!-- ── SOURCES ─────────────────────────── -->
-            <section class="sidebar-section" id="section-sources">
-              <div class="sidebar-section-header">
-                <div class="sidebar-section-label">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                  <h2>Sources</h2>
-                </div>
-                <div class="inline-actions">
-                  <button id="sources-all-on-btn" type="button" class="ghost-btn" title="Enable all sources in auto-scan">All on</button>
-                  <button id="sources-all-off-btn" type="button" class="ghost-btn" title="Disable all sources from auto-scan">All off</button>
-                  <button id="scan-all-btn" type="button" class="ghost-btn">Scan all</button>
-                </div>
-              </div>
-              <p class="sources-hint">Toggle = include in auto-scan</p>
-              <div id="sources-list" class="sources-list"></div>
-            </section>
-
-            <div class="sidebar-divider"></div>
-
-            <!-- ── FILTERS ─────────────────────────── -->
-            <section class="sidebar-section" id="section-filters">
-              <div class="sidebar-section-header">
-                <div class="sidebar-section-label">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-                  <h2>Filters</h2>
-                </div>
-                <button id="clear-filters-button" type="button" class="ghost-btn">Clear all</button>
-              </div>
-              <div class="filters-grid">
-                <label class="field-label">
-                  Search
-                  <div class="input-icon-wrap">
-                    <svg class="input-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                    <input id="search-input" type="search" placeholder="Product name or category" />
-                  </div>
-                </label>
-                <label class="field-label">
-                  Category
-                  <select id="category-filter">
-                    <option value="">All categories</option>
-                  </select>
-                </label>
-                <label class="field-label">
-                  Store
-                  <select id="store-filter">
-                    <option value="">All stores</option>
-                  </select>
-                </label>
-                <label class="field-label filter-group hidden" id="campaign-filter-group">
-                  Campaign
-                  <select id="campaign-filter">
-                    <option value="">All campaigns</option>
-                  </select>
-                </label>
-                <div class="field-row">
-                  <label class="field-label">
-                    Min discount %
-                    <input id="min-discount-filter" type="number" min="0" max="99" step="1" placeholder="e.g. 20" />
-                  </label>
-                  <label class="field-label">
-                    Min price (kr)
-                    <input id="min-price-filter" type="number" min="0" step="1" placeholder="e.g. 500" />
-                  </label>
-                  <label class="field-label">
-                    Max price (kr)
-                    <input id="max-price-filter" type="number" min="0" step="1" placeholder="e.g. 5000" />
-                  </label>
-                </div>
-                <div class="toggle-group">
-                  <label class="toggle-item">
-                    <input id="new-only" type="checkbox" />
-                    <span>New products only</span>
-                  </label>
-                  <label class="toggle-item">
-                    <input id="discounted-only" type="checkbox" />
-                    <span>Discounted only</span>
-                  </label>
-                  <label class="toggle-item">
-                    <input id="favorites-only" type="checkbox" />
-                    <span>Favorite categories</span>
-                  </label>
-                  <label class="toggle-item">
-                    <input id="reference-only" type="checkbox" />
-                    <span>Matched new price only</span>
-                  </label>
-                </div>
-              </div>
-              <div class="quick-filters">
-                <span class="quick-filters-label">Quick:</span>
-                <button type="button" class="chip-btn" data-filter-preset="new">New</button>
-                <button type="button" class="chip-btn" data-filter-preset="hot">🔥 Hot deals</button>
-                <button type="button" class="chip-btn" data-filter-preset="discounted">Discounted</button>
-                <button type="button" class="chip-btn" data-filter-preset="matched">Matched</button>
-                <button type="button" class="chip-btn" data-filter-preset="favorites">Favorites</button>
-              </div>
-              <div id="active-filters" class="active-filters"></div>
-            </section>
-
-            <div class="sidebar-divider"></div>
-
-            <!-- ── FAVORITE CATEGORIES ─────────────── -->
-            <section class="sidebar-section" id="section-favorites">
-              <div class="sidebar-section-header">
-                <div class="sidebar-section-label">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                  <h2>Favorite categories</h2>
-                </div>
-                <div class="inline-actions">
-                  <span id="favorites-count" class="badge"></span>
-                  <button id="toggle-favorites-editor" type="button" class="ghost-btn">Manage</button>
-                </div>
-              </div>
-              <div id="favorite-chips" class="favorite-chips"></div>
-              <div id="favorites-editor-wrap" class="favorites-editor-wrap hidden">
-                <label class="field-label">
-                  Search categories
-                  <input id="favorites-search-input" type="search" placeholder="Filter categories…" />
-                </label>
-                <div id="favorites-editor" class="favorites-grid"></div>
-              </div>
-            </section>
-
-            <div class="sidebar-divider"></div>
-
-            <!-- Scheduler moved to Notification settings modal -->
-
-          </div><!-- /.sidebar-scroll -->
-        </div><!-- /.sidebar-inner -->
-      </aside>
-
-      <!-- Mobile backdrop (closes sidebar on tap) -->
-      <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Close panel" tabindex="-1"></button>
-
-      <!-- ===== MAIN CONTENT ===== -->
-      <main class="main-content">
-
-        <section class="panel listing-panel">
-          <div class="listing-header">
-            <div class="listing-header-left">
-              <h2>Outlet products</h2>
-              <span id="products-count" class="badge"></span>
-            </div>
-          </div>
-          <!-- Compact stats + log strip -->
-          <div class="listing-meta">
-            <div id="stats-grid" class="stats-pills"></div>
-            <details class="run-log-toggle">
-              <summary>Log</summary>
-              <pre id="run-summary" class="run-summary"></pre>
-            </details>
-          </div>
-          <div id="products-table"></div>
-        </section>
-      </main>
-
-    </div><!-- /.app-layout -->
+    <!-- ===== LOG DETAILS (hidden toggle) ===== -->
+    <pre id="run-summary" class="run-summary hidden"></pre>
 
     <script type="module" src="/app.js"></script>
   </body>
