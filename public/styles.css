@@ -315,6 +315,11 @@ img { max-width: 100%; height: auto; display: block; }
   gap: 1rem;
 }
 
+/* When filter panel is open, filter bar stacks with it */
+.filter-bar.panel-open {
+  border-bottom: none;
+}
+
 .filter-pills {
   display: flex;
   gap: 0.375rem;
@@ -420,9 +425,13 @@ img { max-width: 100%; height: auto; display: block; }
 
 /* ── FILTER PANEL (expanded) ─────────────────────────────── */
 .filter-panel {
+  position: sticky;
+  top: calc(var(--header-height) + var(--filter-bar-height));
+  z-index: 89;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   animation: slideDown var(--duration-lg) var(--ease);
+  box-shadow: var(--shadow);
 }
 @keyframes slideDown {
   from { opacity: 0; transform: translateY(-8px); }
@@ -644,14 +653,12 @@ img { max-width: 100%; height: auto; display: block; }
   opacity: 0.3;
 }
 
-/* Card badges */
+/* Card badges — positioned over image in grid view */
 .card-badges {
-  position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
+  margin-bottom: 0.375rem;
 }
 .card-badge {
   padding: 0.2rem 0.5rem;
@@ -663,7 +670,7 @@ img { max-width: 100%; height: auto; display: block; }
 }
 .card-badge.new { background: var(--accent); color: #000; }
 .card-badge.hot { background: linear-gradient(135deg, #f97316, #ef4444); color: #fff; }
-.card-badge.store { background: var(--surface); color: var(--text-secondary); border: 1px solid var(--border); backdrop-filter: blur(4px); }
+.card-badge.store { background: var(--surface-hover); color: var(--text-secondary); border: 1px solid var(--border); }
 
 /* Card score indicator */
 .card-score {
@@ -745,31 +752,68 @@ img { max-width: 100%; height: auto; display: block; }
 .list-view .product-card {
   flex-direction: row;
   border-radius: var(--radius);
+  animation: none;
 }
 .list-view .card-image {
-  width: 120px;
-  min-width: 120px;
+  width: 100px;
+  min-width: 100px;
   aspect-ratio: 1;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.list-view .card-image img {
+  padding: 0.5rem;
 }
 .list-view .card-body {
+  flex: 1;
   flex-direction: row;
   align-items: center;
   gap: 1rem;
   padding: 0.75rem 1rem;
+  min-width: 0;
 }
-.list-view .card-info { flex: 1; min-width: 0; }
+.list-view .card-info {
+  flex: 1;
+  min-width: 0;
+}
 .list-view .card-category { margin-bottom: 0.125rem; }
-.list-view .card-title { -webkit-line-clamp: 1; font-size: 0.875rem; }
+.list-view .card-title {
+  -webkit-line-clamp: 1;
+  font-size: 0.875rem;
+}
 .list-view .card-pricing {
   margin-top: 0;
   padding-top: 0;
   border-top: none;
   text-align: right;
-  min-width: 140px;
+  min-width: 150px;
+  flex-shrink: 0;
 }
-.list-view .card-price-row { justify-content: flex-end; }
-.list-view .card-badges { position: static; margin-bottom: 0.25rem; }
-.list-view .card-score { position: static; width: 30px; height: 30px; font-size: 0.65rem; }
+.list-view .card-price-row {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.list-view .card-price {
+  font-size: 1.1rem;
+}
+.list-view .card-meta {
+  justify-content: flex-end;
+}
+.list-view .card-badges {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+.list-view .card-badge {
+  white-space: nowrap;
+}
+.list-view .card-score {
+  position: static;
+  width: 30px;
+  height: 30px;
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
 
 /* ── PAGINATION ──────────────────────────────────────────── */
 .pagination-area {

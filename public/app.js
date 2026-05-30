@@ -552,11 +552,11 @@ function renderProducts(response) {
       <article class="${cardClass}" style="animation-delay:${delay}ms">
         <div class="card-image">
           ${imageHtml}
-          <div class="card-badges">${badges}</div>
           ${score > 0 ? `<div class="card-score ${scoreClass}" title="Deal score: ${score}/100">${score}</div>` : ''}
         </div>
         <div class="card-body">
           <div class="card-info">
+            <div class="card-badges">${badges}</div>
             <span class="card-category" data-filter-category="${escapeHtml(product.category)}">${favoriteSet.has(normalizeCategoryKey(product.category)) ? '★ ' : ''}${escapeHtml(product.category || 'Uncategorized')}</span>
             <h3 class="card-title">${titleLink}</h3>
           </div>
@@ -1335,6 +1335,7 @@ function bindEvents() {
     state.filterPanelOpen = !state.filterPanelOpen;
     el.filterPanel.classList.toggle('hidden', !state.filterPanelOpen);
     el.filterExpandBtn.classList.toggle('active', state.filterPanelOpen);
+    document.getElementById('filter-bar').classList.toggle('panel-open', state.filterPanelOpen);
   });
 
   // Sort
@@ -1402,7 +1403,7 @@ function bindEvents() {
     }
     if (e.key === 'Escape') {
       if (!el.settingsDrawer.classList.contains('hidden')) closeDrawer();
-      else if (state.filterPanelOpen) { state.filterPanelOpen = false; el.filterPanel.classList.add('hidden'); el.filterExpandBtn.classList.remove('active'); }
+      else if (state.filterPanelOpen) { state.filterPanelOpen = false; el.filterPanel.classList.add('hidden'); el.filterExpandBtn.classList.remove('active'); document.getElementById('filter-bar').classList.remove('panel-open'); }
     }
   });
 }
