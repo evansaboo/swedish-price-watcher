@@ -5,10 +5,18 @@ import { fileURLToPath } from 'node:url';
 
 import { buildApp } from '../src/app.js';
 import { createDefaultState } from '../src/lib/store.js';
+import { ProductCache } from '../src/services/productCache.js';
 
 const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
 
+function buildTestCache(state) {
+  const cache = new ProductCache();
+  cache.rebuild(state);
+  return cache;
+}
+
 test('manual run explains when no sources are enabled', async () => {
+  const state = createDefaultState();
   const app = await buildApp({
     config: {
       publicDir,
@@ -16,9 +24,10 @@ test('manual run explains when no sources are enabled', async () => {
     },
     store: {
       getState() {
-        return createDefaultState();
+        return state;
       }
     },
+    productCache: buildTestCache(state),
     scanState: {
       running: false,
       lastError: null
@@ -63,6 +72,7 @@ test('manual run starts in the background when sources are enabled', async () =>
         return createDefaultState();
       }
     },
+    productCache: buildTestCache(createDefaultState()),
     scanState: {
       running: false,
       lastError: null,
@@ -158,6 +168,7 @@ test('returns simplified outlet products and favorite category stats', async () 
       },
       async save() {}
     },
+    productCache: buildTestCache(state),
     scanState: {
       running: false,
       lastError: null,
@@ -238,6 +249,7 @@ test('scheduler settings can be read and updated through API', async () => {
       },
       async save() {}
     },
+    productCache: buildTestCache(state),
     scanState: {
       running: false,
       lastError: null,

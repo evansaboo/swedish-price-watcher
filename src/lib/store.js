@@ -38,7 +38,6 @@ function normalizeState(rawState = {}) {
   state.preferences.favoriteCategories = Array.isArray(state.preferences.favoriteCategories)
     ? state.preferences.favoriteCategories.map((category) => String(category).trim()).filter(Boolean)
     : [];
-  // sourceOverrides: { [sourceId]: { enabled: boolean } }
   const rawOverrides = rawState.preferences?.sourceOverrides;
   state.preferences.sourceOverrides = (rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides))
     ? rawOverrides
@@ -108,9 +107,6 @@ export function reconcileStateWithSources(state, sources) {
 
 /** Return a copy of state safe for serialization — excludes computed deals. */
 function stateForSerialization(state) {
-  // deals are recomputed from items at startup and after each scan,
-  // so there is no need to persist them. Omitting them roughly halves
-  // the state JSON size and reduces peak memory during saves.
   return { ...state, deals: [] };
 }
 
@@ -119,11 +115,28 @@ function preferencesForSerialization(state) {
   return state.preferences ?? {};
 }
 
+/**
+ * Atomic file write: write to temp file then rename. Prevents corruption on crash.
+ */
+async function atomicWriteFile(filePath, data) {
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  await fs.writeFile(tmpPath, data, 'utf8');
+  await fs.rename(tmpPath, filePath);
+}
+
 export class JsonStore {
   constructor(filePath) {
     this.filePath = filePath;
     this.preferencesFilePath = filePath.replace(/(\.[^.]+)?$/, '.preferences$1');
     this.state = createDefaultState();
+    this._saveTimer = null;
+    this._savePromise = null;
+    this._onInvalidate = null; // Callback for cache invalidation
+  }
+
+  /** Register a callback to be called after any save completes (for cache rebuild). */
+  onInvalidate(fn) {
+    this._onInvalidate = fn;
   }
 
   async ensureWritableFilePath() {
@@ -155,8 +168,7 @@ export class JsonStore {
       await this.save();
     }
 
-    // Overlay fast-path preferences file if it exists — it wins over the
-    // stale preferences baked into the main state file.
+    // Overlay fast-path preferences file if it exists
     try {
       const prefFile = await fs.readFile(this.preferencesFilePath, 'utf8');
       const savedPrefs = JSON.parse(prefFile);
@@ -164,7 +176,7 @@ export class JsonStore {
         this.state.preferences = normalizeState({ preferences: savedPrefs }).preferences;
       }
     } catch {
-      // Preferences file doesn't exist yet — use preferences from main state.
+      // Preferences file doesn't exist yet
     }
 
     return this.state;
@@ -174,19 +186,35 @@ export class JsonStore {
     return this.state;
   }
 
+  /** Full state save with atomic write. */
   async save() {
     await this.ensureWritableFilePath();
-    await fs.writeFile(this.filePath, `${JSON.stringify(stateForSerialization(this.state))}\n`, 'utf8');
+    const json = JSON.stringify(stateForSerialization(this.state));
+    await atomicWriteFile(this.filePath, json + '\n');
+    this._onInvalidate?.();
   }
 
   /** Fast save: only writes the small preferences object (~1 KB). */
   async savePreferences() {
     await this.ensureWritableFilePath();
-    await fs.writeFile(
-      this.preferencesFilePath,
-      `${JSON.stringify(preferencesForSerialization(this.state))}\n`,
-      'utf8'
-    );
+    const json = JSON.stringify(preferencesForSerialization(this.state));
+    await atomicWriteFile(this.preferencesFilePath, json + '\n');
+    this._onInvalidate?.();
+  }
+
+  /**
+   * Debounced save — coalesces multiple rapid mutations into a single write.
+   * Returns a promise that resolves when the save completes.
+   */
+  debouncedSave(delayMs = 500) {
+    if (this._saveTimer) clearTimeout(this._saveTimer);
+    this._savePromise = new Promise((resolve, reject) => {
+      this._saveTimer = setTimeout(() => {
+        this._saveTimer = null;
+        this.save().then(resolve).catch(reject);
+      }, delayMs);
+    });
+    return this._savePromise;
   }
 }
 

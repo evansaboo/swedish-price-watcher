@@ -6,6 +6,7 @@ import { buildListingKey, isSourceEnabled } from './lib/utils.js';
 import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
+import { ProductCache } from './services/productCache.js';
 import { DiscordNotifier } from './services/notifier.js';
 import { shouldSkipSourceNotifications } from './services/scanPolicy.js';
 
@@ -26,6 +27,16 @@ reconcileStateWithSources(store.getState(), config.sources);
 const state = store.getState();
 // Recompute deals from loaded items — deals are not persisted to keep state lean.
 state.deals = computeDeals(state, config.thresholds);
+
+// Initialize product cache — materialized view for fast API queries
+const productCache = new ProductCache();
+productCache.rebuild(state);
+
+// Wire store invalidation to rebuild cache on saves
+if (store.onInvalidate) {
+  store.onInvalidate(() => productCache.rebuild(store.getState()));
+}
+
 const configuredInterval = Number.isFinite(config.scanIntervalMinutes) && config.scanIntervalMinutes > 0 ? config.scanIntervalMinutes : 180;
 const existingSchedulerPreference = state.preferences?.scheduler ?? {};
 const parsedSchedulerInterval = Number.parseInt(String(existingSchedulerPreference.intervalMinutes ?? ''), 10);
@@ -67,32 +78,26 @@ async function triggerScan(trigger, options = {}) {
     return store.getState().stats.lastRunSummary;
   }
 
-  // Optional: limit scan to specific source IDs
   const requestedSourceIds = Array.isArray(options.sourceIds) && options.sourceIds.length > 0
     ? new Set(options.sourceIds)
     : null;
 
-  const sourcesToRun = config.sources.filter(
-    (entry) => {
-      // Manual scan with explicit sourceIds: always allow regardless of enabled state
-      if (requestedSourceIds) return requestedSourceIds.has(entry.id);
-      // Scheduled / full scan: respect enabled overrides
-      if (!isSourceEnabled(entry, store.getState())) return false;
-      // Per-source interval: skip sources that were scanned too recently
-      if (trigger === 'scheduled' && Number.isFinite(entry.scanIntervalMinutes) && entry.scanIntervalMinutes > 0) {
-        const srcState = store.getState().sourceStates[entry.id];
-        const lastRun = srcState?.lastSuccessAt ?? srcState?.lastAttemptAt;
-        if (lastRun) {
-          const elapsedMinutes = (Date.now() - Date.parse(lastRun)) / 60_000;
-          if (elapsedMinutes < entry.scanIntervalMinutes) {
-            console.log(`[scheduler] Skipping ${entry.id}: last run ${Math.round(elapsedMinutes)}m ago (interval: ${entry.scanIntervalMinutes}m)`);
-            return false;
-          }
+  const sourcesToRun = config.sources.filter(entry => {
+    if (requestedSourceIds) return requestedSourceIds.has(entry.id);
+    if (!isSourceEnabled(entry, store.getState())) return false;
+    if (trigger === 'scheduled' && Number.isFinite(entry.scanIntervalMinutes) && entry.scanIntervalMinutes > 0) {
+      const srcState = store.getState().sourceStates[entry.id];
+      const lastRun = srcState?.lastSuccessAt ?? srcState?.lastAttemptAt;
+      if (lastRun) {
+        const elapsedMinutes = (Date.now() - Date.parse(lastRun)) / 60_000;
+        if (elapsedMinutes < entry.scanIntervalMinutes) {
+          console.log(`[scheduler] Skipping ${entry.id}: last run ${Math.round(elapsedMinutes)}m ago (interval: ${entry.scanIntervalMinutes}m)`);
+          return false;
         }
       }
-      return true;
     }
-  );
+    return true;
+  });
 
   if (!sourcesToRun.length) {
     throw Object.assign(new Error('No matching enabled sources to run.'), { statusCode: 400 });
@@ -119,11 +124,8 @@ async function triggerScan(trigger, options = {}) {
   if (trigger === 'scheduled') {
     state.stats.lastScheduledRunStartedAt = startedAt;
   }
-  // Pre-scan save is best-effort: it just marks the start time.
-  // A slow/hung Apify API must not block the scan from starting.
-  store.save().catch((err) => console.warn(`[scan] Pre-scan save failed (non-fatal): ${err.message}`));
+  store.save().catch(err => console.warn(`[scan] Pre-scan save failed (non-fatal): ${err.message}`));
 
-  // Aggregate notification summaries from per-source notifications
   const aggregatedNotif = {
     sent: 0, skipped: 0, failed: 0, errors: [],
     alertRules: { sent: 0, skipped: 0, failed: 0, errors: [] }
@@ -138,11 +140,6 @@ async function triggerScan(trigger, options = {}) {
   }
 
   try {
-    // Each source runs concurrently (I/O phase).  As each one finishes, its results
-    // are immediately processed via a serialized mutex chain — so state mutations,
-    // Discord notifications, and store saves happen one source at a time.
-    // This means the products table and Discord are updated incrementally as each
-    // source completes, without waiting for all sources to finish.
     let processingChain = Promise.resolve();
 
     await Promise.all(
@@ -151,15 +148,12 @@ async function triggerScan(trigger, options = {}) {
         state.sourceStates[source.id] = sourceState;
         sourceState.lastAttemptAt = startedAt;
 
-        // Pre-populate known external IDs so scrapers can do incremental/delta scanning.
-        // A scraper can stop pagination early when it's only seeing already-known items.
         sourceState.knownExternalIds = new Set(
           Object.values(state.items)
-            .filter((item) => item.sourceId === source.id)
-            .map((item) => item.externalId)
+            .filter(item => item.sourceId === source.id)
+            .map(item => item.externalId)
         );
 
-        // ── I/O phase: runs concurrently with other sources ─────────────────
         let collectResult;
         try {
           if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
@@ -167,60 +161,39 @@ async function triggerScan(trigger, options = {}) {
             collectResult = { status: 'cooling-down', disabledUntil: sourceState.disabledUntil };
           } else {
             scanState.sourceProgress[source.id] = { status: 'running' };
-            // Per-source hard timeout: prevents a single hanging source from
-            // blocking the entire scan indefinitely.
-            const sourceTimeoutMs = source.sourceTimeoutMs ?? 10 * 60 * 1000; // default 10 min
+            const sourceTimeoutMs = source.sourceTimeoutMs ?? 10 * 60 * 1000;
             const timeoutPromise = new Promise((_, reject) => {
               const t = setTimeout(() => {
                 const err = new Error(`Source timed out after ${Math.round(sourceTimeoutMs / 1000)}s`);
                 err.isTimeout = true;
                 reject(err);
               }, sourceTimeoutMs);
-              // Allow Node to exit even if this timer is pending
               if (t.unref) t.unref();
             });
             const collected = await Promise.race([
-              collectSource({
-                source,
-                fetcher,
-                sourceState,
-                now: startedAt,
-                preferences: state.preferences,
-                signal: scanState.abortController.signal
-              }),
+              collectSource({ source, fetcher, sourceState, now: startedAt, preferences: state.preferences, signal: scanState.abortController.signal }),
               timeoutPromise
             ]);
             scanState.sourceProgress[source.id] = { status: 'done', count: collected.length };
             collectResult = { status: 'ok', collected };
           }
         } catch (error) {
-          const cancelled =
-            scanState.abortController?.signal.aborted ||
-            error?.name === 'AbortError' ||
-            /aborted/i.test(error?.message ?? '');
-
-          scanState.sourceProgress[source.id] = cancelled
-            ? { status: 'cancelled' }
-            : { status: 'error', message: error.message };
+          const cancelled = scanState.abortController?.signal.aborted || error?.name === 'AbortError' || /aborted/i.test(error?.message ?? '');
+          scanState.sourceProgress[source.id] = cancelled ? { status: 'cancelled' } : { status: 'error', message: error.message };
           collectResult = cancelled ? { status: 'cancelled', error } : { status: 'error', error };
         } finally {
           scanState.completedSources += 1;
         }
 
-        // ── Processing phase: serialized via mutex chain ─────────────────────
-        // Setting processingChain is synchronous (no await between read + write),
-        // so there is no race when multiple workers reach this line concurrently.
         processingChain = processingChain.then(async () => {
           if (collectResult.status === 'cooling-down') {
             sourceResults.push({ sourceId: source.id, status: 'cooling-down', disabledUntil: collectResult.disabledUntil });
             return;
           }
-
           if (collectResult.status === 'cancelled') {
             sourceResults.push({ sourceId: source.id, status: 'cancelled' });
             return;
           }
-
           if (collectResult.status === 'error') {
             const { error } = collectResult;
             sourceState.lastError = error.message;
@@ -228,13 +201,11 @@ async function triggerScan(trigger, options = {}) {
               sourceState.disabledUntil = new Date(Date.now() + error.disableHours * 60 * 60 * 1000).toISOString();
             }
             sourceResults.push({ sourceId: source.id, status: 'error', message: error.message, disabledUntil: sourceState.disabledUntil ?? null });
-            // Don't save on per-source error — save at end of full scan to reduce memory pressure
             return;
           }
 
           const { collected } = collectResult;
           const scanCancelled = scanState.cancelling || scanState.abortController?.signal.aborted;
-
           if (scanCancelled && collected.length === 0) {
             sourceResults.push({ sourceId: source.id, status: 'cancelled' });
             return;
@@ -246,13 +217,12 @@ async function triggerScan(trigger, options = {}) {
           priceDrops.push(...mergeResult.priceDrops);
 
           if (collected.length > 0) {
-            const seenKeys = new Set(collected.map((o) => buildListingKey(o.sourceId, o.externalId)));
+            const seenKeys = new Set(collected.map(o => buildListingKey(o.sourceId, o.externalId)));
             let pruned = 0;
             const archiveCutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
             for (const key of Object.keys(state.items)) {
               if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
                 const item = state.items[key];
-                // Archive compact history before pruning so it can be restored on re-appearance
                 if (item.history?.length > 0) {
                   state.itemHistory[key] = {
                     history: item.history,
@@ -262,7 +232,6 @@ async function triggerScan(trigger, options = {}) {
                     archivedAt: new Date().toISOString()
                   };
                 }
-                // Clean up notification records for this item so state.notifications doesn't grow unboundedly
                 for (const notifKey of Object.keys(state.notifications)) {
                   if (notifKey.startsWith(`${key}:`)) delete state.notifications[notifKey];
                 }
@@ -270,7 +239,6 @@ async function triggerScan(trigger, options = {}) {
                 pruned += 1;
               }
             }
-            // Expire archived histories older than 90 days
             for (const key of Object.keys(state.itemHistory ?? {})) {
               const entry = state.itemHistory[key];
               if (!entry?.archivedAt || Date.parse(entry.archivedAt) < archiveCutoff) {
@@ -281,33 +249,24 @@ async function triggerScan(trigger, options = {}) {
           }
 
           const isFirstSuccessfulRun = !sourceState.lastSuccessAt;
-          const skipDiscordNotifications = shouldSkipSourceNotifications({
-            source,
-            state,
-            sourceState,
-            scanState
-          });
+          const skipDiscordNotifications = shouldSkipSourceNotifications({ source, state, sourceState, scanState });
           sourceState.lastSuccessAt = startedAt;
           sourceState.lastError = null;
           sourceState.lastCount = collected.length;
           delete sourceState.disabledUntil;
 
           state.deals = computeDeals(state, config.thresholds);
+          // Rebuild product cache after each source processes
+          productCache.rebuild(state);
 
-          // No per-source save — save once at end of scan to avoid repeated large JSON serialization
           sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
 
           if (skipDiscordNotifications) {
-            if (isFirstSuccessfulRun) {
-              console.log(`[${source.id}] Skipping Discord notifications on first successful run.`);
-            }
-            if (scanState.cancelling || scanState.abortController?.signal.aborted) {
-              console.log(`[${source.id}] Scan cancelled; saved fetched data without Discord notifications.`);
-            }
+            if (isFirstSuccessfulRun) console.log(`[${source.id}] Skipping Discord notifications on first successful run.`);
+            if (scanState.cancelling || scanState.abortController?.signal.aborted) console.log(`[${source.id}] Scan cancelled; saved fetched data without Discord notifications.`);
             return;
           }
 
-          // Send Discord notifications after state is persisted.
           const effectiveNotificationSettings = { ...(state.preferences?.notificationSettings ?? {}) };
           const sourceNotif = await notifier.notifyScan({
             deals: state.deals,
@@ -321,7 +280,6 @@ async function triggerScan(trigger, options = {}) {
           mergeNotif(aggregatedNotif.alertRules, sourceNotif.alertRules);
         });
 
-        // Wait for this source's turn in the processing queue before resolving.
         await processingChain;
       })
     );
@@ -338,7 +296,6 @@ async function triggerScan(trigger, options = {}) {
       priceDrops: priceDrops.length,
       trackedItems: Object.keys(state.items).length,
       deals: state.deals.length,
-      // amazingDeals summary removed
       notificationSummary: aggregatedNotif,
       sourceResults
     };
@@ -393,16 +350,10 @@ const scheduler = createSchedulerController({
 
 async function updateScheduler(nextSettings = {}) {
   const updated = scheduler.update(nextSettings);
-
   state.preferences = {
     ...(state.preferences ?? {}),
-    scheduler: {
-      enabled: updated.enabled,
-      intervalMinutes: updated.intervalMinutes,
-      activeWindow: updated.activeWindow
-    }
+    scheduler: { enabled: updated.enabled, intervalMinutes: updated.intervalMinutes, activeWindow: updated.activeWindow }
   };
-
   await (store.savePreferences ?? store.save).call(store);
   return updated;
 }
@@ -410,24 +361,18 @@ async function updateScheduler(nextSettings = {}) {
 const app = await buildApp({
   config,
   store,
+  productCache,
   scanState,
   triggerScan,
   cancelScan,
-  scheduler: {
-    getState: () => scheduler.getState(),
-    update: updateScheduler
-  }
+  scheduler: { getState: () => scheduler.getState(), update: updateScheduler }
 });
 
-await app.listen({
-  port: config.port,
-  host: config.host
-});
-
+await app.listen({ port: config.port, host: config.host });
 console.log(`Price watcher listening at http://${config.host}:${config.port}`);
 
 if (config.runOnStart) {
-  triggerScan('startup').catch((error) => {
+  triggerScan('startup').catch(error => {
     scanState.lastError = error.message;
     console.error('[startup-scan]', error.message);
   });
@@ -440,16 +385,5 @@ async function shutdown(signal) {
   process.exit(0);
 }
 
-process.on('SIGINT', () => {
-  shutdown('SIGINT').catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-  });
-});
-
-process.on('SIGTERM', () => {
-  shutdown('SIGTERM').catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-  });
-});
+process.on('SIGINT', () => shutdown('SIGINT').catch(e => { console.error(e.message); process.exit(1); }));
+process.on('SIGTERM', () => shutdown('SIGTERM').catch(e => { console.error(e.message); process.exit(1); }));
