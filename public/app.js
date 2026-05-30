@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// PriceWatch — Modern Ecommerce Frontend
+// PriceWatch — Nordic Ink Frontend
 // ═══════════════════════════════════════════════════════════════
 
 const sekFormatter = new Intl.NumberFormat('sv-SE', {
@@ -110,7 +110,8 @@ const el = {
   drawerSaveStatus: $('#drawer-save-status'),
   toastContainer: $('#toast-container'),
   runSummary: $('#run-summary'),
-  themeToggle: $('#theme-toggle')
+  themeToggle: $('#theme-toggle'),
+  scanLine: $('#scan-line')
 };
 
 let scanPollTimer = null;
@@ -507,37 +508,27 @@ function renderProducts(response) {
   const cards = products.map((product, idx) => {
     const isNew = isNewProduct(product);
     const hasDiscount = Number.isFinite(product.discountPercent) && product.discountPercent > 0;
-    const isHot = (product.score ?? 0) >= 75 || (hasDiscount && product.discountPercent >= 30);
     const score = product.score ?? 0;
 
     // Score class
-    let scoreClass = 'neutral';
-    if (score >= 75) scoreClass = 'fire';
-    else if (score >= 55) scoreClass = 'hot';
-    else if (score >= 30) scoreClass = 'warm';
+    let scoreClass = 's-low';
+    if (score >= 75) scoreClass = 's-great';
+    else if (score >= 55) scoreClass = 's-good';
+    else if (score >= 30) scoreClass = 's-ok';
 
     // Badges
-    let badges = '';
-    if (isNew) badges += '<span class="card-badge new">New</span>';
-    if (isHot) badges += '<span class="card-badge hot">Hot</span>';
-    if (product.sourceLabel) badges += `<span class="card-badge store">${escapeHtml(product.sourceLabel)}</span>`;
+    let badgesLeft = '';
+    if (isNew) badgesLeft += '<span class="badge badge-new">New</span>';
+    if (hasDiscount && product.discountPercent >= 20) badgesLeft += `<span class="badge badge-discount">-${product.discountPercent}%</span>`;
+    if (score >= 75) badgesLeft += '<span class="badge badge-hot">Hot</span>';
+    const condition = product.conditionLabel && product.conditionLabel !== 'Outlet' ? product.conditionLabel : '';
+    if (condition) badgesLeft += `<span class="badge badge-condition">${escapeHtml(condition)}</span>`;
 
     // Image
     const imgSrc = product.imageUrl;
     const imageHtml = imgSrc
       ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" />`
-      : `<div class="card-image-placeholder">📦</div>`;
-
-    // Price
-    const priceHtml = formatSek(product.currentPriceSek);
-    const origPrice = Number.isFinite(product.initialPriceSek)
-      ? `<span class="card-price-original">${formatSek(product.initialPriceSek)}</span>` : '';
-    const discountHtml = hasDiscount
-      ? `<span class="card-discount">-${product.discountPercent}%</span>` : '';
-
-    // Meta
-    const seenText = timeAgo(product.lastSeenAt) ?? '';
-    const condition = product.conditionLabel && product.conditionLabel !== 'Outlet' ? product.conditionLabel : '';
+      : `<span class="card-no-image">No image</span>`;
 
     // URL
     const url = product.url ? escapeHtml(product.url) : '';
@@ -545,33 +536,52 @@ function renderProducts(response) {
       ? `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(product.title)}</a>`
       : escapeHtml(product.title);
 
+    // Reference price
+    let refHtml = '';
+    if (Number.isFinite(product.initialPriceSek) && product.initialPriceSek > product.currentPriceSek) {
+      refHtml = `
+        <div class="card-price-ref">
+          <span class="card-price-was">${formatSek(product.initialPriceSek)}</span>
+          ${Number.isFinite(product.discountSek) && product.discountSek > 0 ? `<span class="card-price-save">Save ${formatSek(product.discountSek)}</span>` : ''}
+        </div>`;
+    }
+
+    // Availability
+    const seenText = timeAgo(product.lastSeenAt) ?? '';
+    let availDot = 'out';
+    let availLabel = 'Unknown';
+    if (product.availability === 'in_stock' || product.availability === 'InStock') {
+      availDot = 'in-stock'; availLabel = 'In stock';
+    } else if (product.availability === 'few_left' || product.availability === 'limited') {
+      availDot = 'limited'; availLabel = 'Few left';
+    } else if (seenText) {
+      availLabel = seenText;
+    }
+
     const cardClass = `product-card${isNew ? ' is-new' : ''}`;
-    const delay = Math.min(idx * 30, 300);
+    const delay = Math.min(idx * 25, 300);
 
     return `
       <article class="${cardClass}" style="animation-delay:${delay}ms">
         <div class="card-image">
           ${imageHtml}
-          ${score > 0 ? `<div class="card-score ${scoreClass}" title="Deal score: ${score}/100">${score}</div>` : ''}
+          <div class="card-badges">
+            <div class="card-badges-left">${badgesLeft}</div>
+            ${score > 0 ? `<div class="score-ring ${scoreClass}" title="Deal score: ${score}/100">${score}</div>` : ''}
+          </div>
         </div>
         <div class="card-body">
-          <div class="card-info">
-            <div class="card-badges">${badges}</div>
-            <span class="card-category" data-filter-category="${escapeHtml(product.category)}">${favoriteSet.has(normalizeCategoryKey(product.category)) ? '★ ' : ''}${escapeHtml(product.category || 'Uncategorized')}</span>
-            <h3 class="card-title">${titleLink}</h3>
-          </div>
+          <span class="card-store">${escapeHtml(product.sourceLabel ?? '')}</span>
+          <h3 class="card-title">${titleLink}</h3>
+          <span class="card-category" data-filter-category="${escapeHtml(product.category)}">${favoriteSet.has(normalizeCategoryKey(product.category)) ? '★ ' : ''}${escapeHtml(product.category || 'Uncategorized')}</span>
           <div class="card-pricing">
-            <div class="card-price-row">
-              <span class="card-price">${priceHtml}</span>
-              ${origPrice}
-              ${discountHtml}
-            </div>
-            <div class="card-meta">
-              ${condition ? `<span>${escapeHtml(condition)}</span><span class="card-meta-dot"></span>` : ''}
-              ${seenText ? `<span>${escapeHtml(seenText)}</span>` : ''}
-              ${Number.isFinite(product.discountSek) && product.discountSek > 0 ? `<span class="card-meta-dot"></span><span>Save ${formatSek(product.discountSek)}</span>` : ''}
-            </div>
+            <span class="card-price-main">${formatSek(product.currentPriceSek)}</span>
+            ${refHtml}
           </div>
+        </div>
+        <div class="card-footer">
+          <span class="card-availability"><span class="avail-dot ${availDot}"></span>${escapeHtml(availLabel)}</span>
+          ${seenText && availDot !== 'out' ? `<span>${escapeHtml(seenText)}</span>` : ''}
         </div>
       </article>
     `;
@@ -826,6 +836,7 @@ function syncScanUI(status) {
     el.scanBtn.querySelector('.scan-btn-label').textContent = 'Scan';
     el.cancelBtn.classList.add('hidden');
     el.scanProgress.classList.add('hidden');
+    el.scanLine?.classList.add('hidden');
     return;
   }
 
@@ -842,6 +853,7 @@ function syncScanUI(status) {
   el.scanProgress.classList.remove('hidden');
   el.scanProgressBar.style.width = `${pct}%`;
   el.scanProgressText.textContent = total ? `Scanning ${completed}/${total} sources` : 'Starting scan...';
+  el.scanLine?.classList.remove('hidden');
 }
 
 function clearScanPoll() {
