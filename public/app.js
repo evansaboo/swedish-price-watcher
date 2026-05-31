@@ -533,8 +533,8 @@ function renderProducts(response) {
     // Image
     const imgSrc = product.imageUrl;
     const imageHtml = imgSrc
-      ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" />`
-      : `<span class="card-no-image">No image</span>`;
+      ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder-img\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'" />`
+      : `<div class="card-placeholder-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
 
     // URL
     const url = product.url ? escapeHtml(product.url) : '';

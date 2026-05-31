@@ -118,7 +118,7 @@ export function mergeObservations(state, observations, maxHistoryEntries = 60) {
     currentItem.feesEstimateSek = observation.feesEstimateSek ?? 0;
     currentItem.availability = observation.availability ?? 'unknown';
     currentItem.description = observation.description ?? null;
-    currentItem.imageUrl = observation.imageUrl ?? null;
+    currentItem.imageUrl = observation.imageUrl || currentItem.imageUrl || null;
     currentItem.notes = observation.notes ?? null;
     currentItem.conditionLabel = observation.conditionLabel ?? currentItem.conditionLabel ?? null;
     // GG.deals-specific fields (stored for all sources; null for non-GG.deals items).

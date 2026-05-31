@@ -115,7 +115,13 @@ function parseProshopPage(html, source, now, seen) {
     const origPriceText =
       $(el).find('span.site-currency-oldprice, .site-currency-old, .oldprice, .site-currency-before').first().text().trim();
 
-    // ProShop images are behind Cloudflare and return 403 to external requests.
+    // Extract image URL — the browser can load these even though backend can't (CF blocks backend IPs).
+    const imgEl = $(el).find('img').first();
+    const rawImg = imgEl.attr('data-src') || imgEl.attr('src') || imgEl.attr('data-lazy-src') || '';
+    const imageUrl = rawImg && !rawImg.includes('data:image')
+      ? (rawImg.startsWith('http') ? rawImg : rawImg.startsWith('//') ? `https:${rawImg}` : `${BASE_URL}${rawImg}`)
+      : null;
+
     if (!name || !priceText) return;
     const price = parseSekValue(priceText);
     if (price == null) return;
@@ -135,7 +141,7 @@ function parseProshopPage(html, source, now, seen) {
       priceSek: price,
       referencePriceSek: parseSekValue(origPriceText) || null,
       marketValueSek: parseSekValue(origPriceText) || null,
-      imageUrl: null,
+      imageUrl,
       category: category || 'outlet',
       condition: 'outlet',
       conditionLabel: 'Outlet',
@@ -218,7 +224,8 @@ export async function collectFromProshop({ source, sourceState, now }) {
 
       // Count items that are genuinely new (not seen in previous scan).
       const newOnPage = pageObservations.filter((o) => !knownIds.has(o.externalId)).length;
-      console.log(`[proshop] ${path} page ${page}: ${pageObservations.length} items, ${newOnPage} new`);
+      const withImages = pageObservations.filter((o) => o.imageUrl).length;
+      console.log(`[proshop] ${path} page ${page}: ${pageObservations.length} items, ${newOnPage} new, ${withImages} with images`);
 
       if (pageObservations.length === 0) break; // Page is empty — end of listing
 
