@@ -148,7 +148,7 @@ export class ProductCache {
         if (!byStore.has(item.sourceId)) byStore.set(item.sourceId, []);
         byStore.get(item.sourceId).push(idx);
         if (!sourceMap.has(item.sourceId)) {
-          sourceMap.set(item.sourceId, item.sourceLabel ?? item.sourceId);
+          sourceMap.set(item.sourceId, (labelOverrides && labelOverrides.get(item.sourceId)) || item.sourceLabel || item.sourceId);
         }
       }
 
