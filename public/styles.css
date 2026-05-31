@@ -878,43 +878,54 @@ select { cursor: pointer; }
 }
 .list-view .product-card.is-new { border-left-width: 3px; }
 .list-view .card-image {
-  width: 120px;
-  min-width: 120px;
+  width: 100px;
+  min-width: 100px;
   aspect-ratio: unset;
   height: auto;
-  min-height: 100px;
+  min-height: 80px;
   border-bottom: none;
   border-right: 1px solid var(--border-light);
 }
-.list-view .card-image img { padding: 10px; }
-.list-view .card-badges { position: static; flex-direction: column; gap: 3px; padding: 6px; }
-.list-view .card-badges-left { flex-direction: column; }
-.list-view .score-ring { width: 30px; height: 30px; font-size: 10px; }
+.list-view .card-image img { padding: 8px; }
+.list-view .card-badges {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  padding: 0;
+}
+.list-view .card-badges-left { flex-direction: row; gap: 3px; }
+.list-view .badge { font-size: 9px; padding: 2px 5px; }
+.list-view .score-ring { width: 26px; height: 26px; font-size: 9px; }
 .list-view .card-body {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 12px 16px;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
   flex: 1;
   min-width: 0;
-  justify-content: center;
+}
+.list-view .card-store {
+  margin-bottom: 0;
+  min-width: 100px;
+  flex-shrink: 0;
 }
 .list-view .card-title {
   margin-bottom: 0;
   font-size: 13.5px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   -webkit-line-clamp: 1;
 }
-.list-view .card-store { margin-bottom: 0; }
-.list-view .card-category { margin-bottom: 0; }
+.list-view .card-category { margin-bottom: 0; flex-shrink: 0; }
 .list-view .card-pricing {
-  margin-top: 4px;
+  margin-top: 0;
   flex-direction: row;
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
 }
-.list-view .card-price-main { font-size: 17px; }
+.list-view .card-price-main { font-size: 16px; }
 .list-view .card-price-ref { flex-direction: row; gap: 8px; align-items: center; }
 .list-view .card-footer {
   border-top: none;
@@ -1521,6 +1532,14 @@ select { cursor: pointer; }
 
   /* List view on tablet/mobile */
   .list-view .card-image { width: 80px; min-width: 80px; }
+  .list-view .card-body {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .list-view .card-store { min-width: unset; }
+  .list-view .card-title { width: 100%; }
+  .list-view .card-pricing { margin-top: 2px; }
   .list-view .card-footer { min-width: 70px; padding: 8px; }
   .list-view .card-price-main { font-size: 15px; }
 
