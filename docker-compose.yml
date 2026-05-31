@@ -3,15 +3,14 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "3000:3000"
     environment:
       - PORT=3000
+      - HOST=0.0.0.0
       - FLARESOLVERR_URL=http://flaresolverr:8191
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
       - APIFY_TOKEN=${APIFY_TOKEN:-}
-      - SCRAPERAPI_KEY=${SCRAPERAPI_KEY:-}
       - SCRAPFLY_API_KEY=${SCRAPFLY_API_KEY:-}
-      - GG_DEALS_API_KEY=${GG_DEALS_API_KEY:-}
       - RUN_ON_START=${RUN_ON_START:-true}
       - SCAN_INTERVAL_MINUTES=${SCAN_INTERVAL_MINUTES:-180}
       - MINIMUM_DISCOUNT_PERCENT=${MINIMUM_DISCOUNT_PERCENT:-10}
@@ -21,13 +20,18 @@ services:
       - ./data:/app/data
       - ./config:/app/config
     depends_on:
-      - flaresolverr
+      flaresolverr:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
@@ -36,3 +40,22 @@ services:
       - LOG_LEVEL=info
       - LOG_HTML=false
       - CAPTCHA_SOLVER=none
+      - TZ=Europe/Stockholm
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      app:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128m

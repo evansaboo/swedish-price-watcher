@@ -1,6 +1,6 @@
 # Swedish Price Watcher
 
-A production outlet price tracker for Swedish electronics stores. Runs on Railway, scrapes six sources via Apify, and sends incremental Discord notifications as each scan completes.
+A production outlet price tracker for Swedish electronics stores. Runs on a Raspberry Pi 4 with Docker, uses FlareSolverr for Cloudflare bypass, and sends Discord notifications as each scan completes. Public access via Cloudflare Tunnel.
 
 ## Active sources
 
@@ -10,8 +10,9 @@ A production outlet price tracker for Swedish electronics stores. Runs on Railwa
 | **NetOnNet** | Outlet/clearance | Direct Next.js HTML scraping |
 | **Webhallen** | Fyndvara (outlet) | Webhallen internal API |
 | **Komplett** | B-grade / demovaror | `apify/cheerio-scraper` (Cloudflare bypass) |
-| **ProShop** | Mega Outlet | `apify/cheerio-scraper` (Cloudflare bypass) |
+| **ProShop** | Mega Outlet + Demo | FlareSolverr (Cloudflare bypass, free) |
 | **Power** | Erbjudanden (deals) | `apify/playwright-scraper` (Angular SPA) |
+| **Inet** | Fyndhörnan (bargains) | Direct HTTP + hydrate JSON parsing |
 
 ## What it does
 
@@ -38,69 +39,118 @@ Open `http://127.0.0.1:3030`.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `APIFY_TOKEN` | Yes | Apify API token for all Apify-backed sources |
-| `APIFY_TOKEN_2`, `APIFY_TOKEN_3` | No | Extra tokens for Elgiganten round-robin |
+| `APIFY_TOKEN` | No | Apify API token (for Komplett, Power scrapers) |
 | `DISCORD_WEBHOOK_URL` | No | Discord channel webhook for notifications |
-| `SCAN_INTERVAL_MINUTES` | No | Initial scheduler interval (default: 30) |
+| `CLOUDFLARE_TUNNEL_TOKEN` | No | Token for Cloudflare Tunnel (public HTTPS access) |
+| `SCAN_INTERVAL_MINUTES` | No | Initial scheduler interval (default: 180) |
 | `RUN_ON_START` | No | Set `true` to scan immediately on boot |
-| `SCRAPERAPI_KEY` | No | ScraperAPI key for ProShop (5000 free credits/mo) |
-| `SCRAPFLY_API_KEY` | No | Scrapfly key for ProShop fallback (1000 free credits/mo) |
-| `FLARESOLVERR_URL` | No | Self-hosted FlareSolverr URL — zero per-request cost (see below) |
-| `GG_DEALS_API_KEY` | No | GG.deals API key for game price tracking (generate at gg.deals/settings/) |
+| `SCRAPFLY_API_KEY` | No | Scrapfly key (optional ProShop fallback, 1000 free credits/mo) |
+| `FLARESOLVERR_URL` | Auto | Set by docker-compose to `http://flaresolverr:8191` |
 
-### ProShop — Cloudflare bypass options
+### ProShop — Cloudflare bypass
 
-ProShop is behind Cloudflare Bot Management. Three backends are supported (first configured wins):
+ProShop is behind Cloudflare Bot Management. FlareSolverr handles this automatically
+(included in docker-compose). No paid API keys needed.
 
-1. **ScraperAPI** (`SCRAPERAPI_KEY`) — 5000 free credits/month; render=true = 5 credits/page.
-2. **Scrapfly** (`SCRAPFLY_API_KEY`) — 1000 free credits/month; ~10 credits/page.
-3. **FlareSolverr** (`FLARESOLVERR_URL`) — self-hosted real-browser bypass; zero per-request cost.
+ProShop uses **incremental scanning** — on repeat scans it stops pagination as soon as it sees
+pages full of already-known items, cutting scan time significantly.
 
-**ProShop uses incremental scanning** — on repeat scans it stops pagination as soon as it sees
-pages full of already-known items, cutting credit usage by up to 97%.
-**`scanIntervalMinutes: 240`** means scheduled scans skip ProShop if it ran within the last 4 hours.
-Manual scans (via dashboard button) always run immediately regardless of interval.
+## Raspberry Pi 4 deployment
 
-#### FlareSolverr on Railway (recommended for production)
+### Prerequisites
 
-1. In your Railway project, add a new service → **Deploy from image** → `ghcr.io/flaresolverr/flaresolverr:latest`
-2. Name it `flaresolverr`, set env var `PORT=8191`.
-3. In your main `swedish-price-watcher` service, set `FLARESOLVERR_URL=http://flaresolverr.railway.internal:8191`
-   (Railway private networking — no public internet exposure needed).
-
-#### FlareSolverr locally (for development)
+On your Pi (Raspberry Pi OS 64-bit):
 
 ```bash
-docker compose -f docker-compose.flaresolverr.yml up -d
-# Then in .env:
-# FLARESOLVERR_URL=http://localhost:8191
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+# Log out and back in
+
+# Install Docker Compose plugin
+sudo apt-get install docker-compose-plugin
 ```
 
-## Railway deployment
-
-This repo is Railway-ready via `railway.json`. Project: `distinguished-vibrancy`.
-
-1. Create a Railway project from this GitHub repo.
-2. Set the environment variables above.
-3. Deploy — the server binds to `0.0.0.0:$PORT` automatically.
-
-State persists via Apify KV store when `APIFY_TOKEN` is set.
-
-### Railway CLI
+### 1. Clone and configure
 
 ```bash
-# Link to the project (one-time)
-railway link
-
-# Check logs
-railway logs --tail 50
-
-# Test production health
-railway run curl -s https://swedish-price-watcher-production.up.railway.app/health
-
-# Trigger a manual scan in production
-railway run curl -s -X POST https://swedish-price-watcher-production.up.railway.app/api/scan
+git clone https://github.com/evansaboo/swedish-price-watcher.git
+cd swedish-price-watcher
+cp .env.example .env
+# Edit .env with your tokens:
+nano .env
 ```
+
+### 2. Set up Cloudflare Tunnel
+
+```bash
+# Install cloudflared on your Pi (or just use the Docker container)
+# Go to https://one.dash.cloudflare.com → Networks → Tunnels → Create a tunnel
+# Name it "price-watcher", copy the tunnel token
+# Then add a public hostname:
+#   Subdomain: price-watcher
+#   Domain: evansaboo.com
+#   Service: http://app:3000
+```
+
+Add the token to your `.env`:
+```
+CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoiYWJjLi4uIiwidCI6Ii4uLiIsInMiOiIuLi4ifQ==
+```
+
+### 3. Build and start
+
+```bash
+docker compose up -d --build
+```
+
+First build takes ~10 minutes on RPi 4. Subsequent starts are instant.
+
+### 4. Verify
+
+```bash
+# Check all containers are running
+docker compose ps
+
+# Check app health
+curl http://localhost:3000/health
+
+# Check public access
+curl https://price-watcher.evansaboo.com/health
+
+# View logs
+docker compose logs -f app --tail 50
+```
+
+### Useful commands
+
+```bash
+# Restart after code changes
+git pull && docker compose up -d --build
+
+# Trigger a manual scan
+curl -X POST http://localhost:3000/api/run
+
+# View FlareSolverr logs (useful for ProShop debugging)
+docker compose logs flaresolverr --tail 20
+
+# Check resource usage
+docker stats --no-stream
+
+# Stop everything
+docker compose down
+```
+
+### Memory usage (8GB Pi)
+
+| Container | Limit | Typical |
+|-----------|-------|---------|
+| app | 1 GB | 200–400 MB |
+| flaresolverr | 2 GB | 300–800 MB (during CF bypass) |
+| cloudflared | 128 MB | 20–30 MB |
+| **Total** | ~3.1 GB | ~1 GB idle |
+
+Leaves plenty of headroom for the OS and other services.
 
 ## Run a scan manually (local)
 

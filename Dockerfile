@@ -1,6 +1,6 @@
 FROM node:20-bookworm-slim
 
-# Install Chromium system dependencies (Playwright needs these at runtime)
+# Install Chromium system deps for Playwright (ARM64 compatible)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libnss3 \
@@ -24,17 +24,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-6 \
     libxcb1 \
     libxext6 \
+    # Chromium itself (system package — avoids Playwright's x86 binary)
+    chromium \
     && rm -rf /var/lib/apt/lists/*
+
+# Tell Playwright to use system Chromium instead of downloading its own
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 WORKDIR /app
 
 COPY package*.json ./
 
-# npm ci runs postinstall which downloads Chromium headless shell (~92 MB)
-RUN npm ci
+# Skip postinstall (playwright-core install chromium) since we use system chromium
+RUN npm ci --ignore-scripts
 
 COPY . .
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+# Constrain memory for RPi (leave room for FlareSolverr + OS)
+CMD ["node", "--max-old-space-size=512", "src/index.js"]

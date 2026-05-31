@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-category', 'komplett-sitemap', 'apify-elgiganten', 'apify-komplett', 'elgiganten-algolia', 'elgiganten-campaigns', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals', 'gg-deals-games', 'blocket', 'sweclockers-dagensfynd', 'inet-fyndhornan']);
 const supportedNotificationModes = new Set(['new-listings', 'favorite-events', 'none']);
-const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+const isContainerRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.DOCKER === '1' || process.env.container);
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -117,7 +117,7 @@ export async function loadConfig() {
     dataFile: path.resolve(rootDir, process.env.DATA_FILE ?? 'data/store.json'),
     sourcesFile,
     port: parsePositiveInt(process.env.PORT, 3030),
-    host: isRailwayRuntime ? '0.0.0.0' : process.env.HOST ?? '127.0.0.1',
+    host: isContainerRuntime ? '0.0.0.0' : process.env.HOST ?? '127.0.0.1',
     scanIntervalMinutes: parsePositiveInt(process.env.SCAN_INTERVAL_MINUTES, 180),
     hostDelayMs: parsePositiveInt(process.env.HOST_DELAY_MS, 8000),
     requestTimeoutMs: parsePositiveInt(process.env.REQUEST_TIMEOUT_MS, 20000),
