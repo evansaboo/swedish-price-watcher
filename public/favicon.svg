@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Swedish Price Watcher"><title>Swedish Price Watcher</title><rect width="24" height="24" rx="4" fill="#0ea5a1"/><path d="M6.5 11.5L11 7l6 6-4.5 4.5L6.5 11.5z" fill="#fff"/><circle cx="9.5" cy="8.5" r="1.2" fill="#0ea5a1"/><text x="15.5" y="16.5" font-size="5.2" fill="#fff" font-family="Arial, Helvetica, sans-serif" text-anchor="middle">kr</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="PriceWatch">
+  <title>PriceWatch</title>
+  <rect width="32" height="32" rx="6" fill="#C41E3A"/>
+  <path d="M16 5 L27 16 L16 27 L5 16 Z" fill="white" opacity="0.9"/>
+  <path d="M16 9 L23 16 L16 23 L9 16 Z" fill="#C41E3A"/>
+</svg>

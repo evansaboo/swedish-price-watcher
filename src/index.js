@@ -30,11 +30,12 @@ state.deals = computeDeals(state, config.thresholds);
 
 // Initialize product cache — materialized view for fast API queries
 const productCache = new ProductCache();
-productCache.rebuild(state);
+const sourceLabelMap = new Map(config.sources.map(s => [s.id, s.label || s.id]));
+productCache.rebuild(state, sourceLabelMap);
 
 // Wire store invalidation to rebuild cache on saves
 if (store.onInvalidate) {
-  store.onInvalidate(() => productCache.rebuild(store.getState()));
+  store.onInvalidate(() => productCache.rebuild(store.getState(), sourceLabelMap));
 }
 
 const configuredInterval = Number.isFinite(config.scanIntervalMinutes) && config.scanIntervalMinutes > 0 ? config.scanIntervalMinutes : 180;
@@ -257,7 +258,7 @@ async function triggerScan(trigger, options = {}) {
 
           state.deals = computeDeals(state, config.thresholds);
           // Rebuild product cache after each source processes
-          productCache.rebuild(state);
+          productCache.rebuild(state, sourceLabelMap);
 
           sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
 

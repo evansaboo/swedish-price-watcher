@@ -63,9 +63,11 @@ export class ProductCache {
   get campaigns() { return this._campaigns; }
 
   // Rebuild the entire cache from raw state. Call after scan completes or state loads.
-  rebuild(state) {
+  // sourceLabelMap: optional Map(sourceId → label) from config for label overrides
+  rebuild(state, sourceLabelMap) {
     const items = state.items;
     const deals = state.deals ?? [];
+    const labelOverrides = sourceLabelMap instanceof Map ? sourceLabelMap : null;
     const scoreByKey = new Map(deals.map(d => [d.listingKey, d.score ?? 0]));
 
     // Build products
@@ -99,7 +101,7 @@ export class ProductCache {
         condition: item.condition,
         conditionLabel: item.conditionLabel ?? null,
         sourceId: item.sourceId,
-        sourceLabel: item.sourceLabel,
+        sourceLabel: (labelOverrides && labelOverrides.get(item.sourceId)) || item.sourceLabel || item.sourceId,
         currentPriceSek: item.latestPriceSek,
         initialPriceSek,
         discountSek,

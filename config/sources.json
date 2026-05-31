@@ -204,6 +204,7 @@
       "id": "sweclockers-dagensfynd",
       "type": "sweclockers-dagensfynd",
       "enabled": true,
+      "label": "SweClockers Deals",
       "category": "electronics",
       "condition": "deal",
       "notes": "Community-submitted deals from sweclockers.com/dagensfynd. Each row is a member-posted deal with title, store, price, category, and community upvote score. Requires a Cloudflare bypass backend: FLARESOLVERR_URL (preferred, free self-hosted), SCRAPFLY_API_KEY, or SCRAPERAPI_KEY. No Apify token required. Set enabled=true and deploy FlareSolverr (ghcr.io/flaresolverr/flaresolverr:latest) to use."
