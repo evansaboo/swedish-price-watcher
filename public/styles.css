@@ -1523,8 +1523,9 @@ select { cursor: pointer; }
     padding-top: 6px;
     padding-bottom: 6px;
     gap: 6px;
+    overflow: hidden;
   }
-  .filter-pills { flex: 1; min-width: 0; }
+  .filter-pills { flex: 1; min-width: 0; overflow-x: auto; }
   .filter-bar-right { flex-shrink: 1; gap: 6px; }
   .sort-select { max-width: 120px; font-size: 11.5px; padding-left: 6px; }
 
@@ -1596,7 +1597,7 @@ select { cursor: pointer; }
 /* ── WISHLIST BUTTON ─────────────────────────────────────────── */
 .wishlist-btn {
   position: absolute;
-  top: 8px;
+  bottom: 8px;
   right: 8px;
   width: 32px;
   height: 32px;
@@ -1611,7 +1612,7 @@ select { cursor: pointer; }
   justify-content: center;
   transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
   color: var(--text-tertiary);
-  z-index: 2;
+  z-index: 3;
   opacity: 0;
 }
 .product-card:hover .wishlist-btn,

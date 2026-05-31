@@ -1,157 +1,168 @@
 // ═══════════════════════════════════════════════════════════════
-// Inet Fyndhörnan (Bargain Corner) — Apify cheerio-scraper
-// Server-rendered React with hydrate JSON in script tags.
+// Inet Fyndhörnan (Bargain Corner) — Direct HTML fetch + parse
+// Server-rendered React with hydrate JSON embedded in script tags.
+// No Apify needed — just fetch HTML and extract the JSON payload.
 // ═══════════════════════════════════════════════════════════════
 
-import { ApifyClient } from 'apify-client';
-
 const BASE_URL = 'https://www.inet.se/fyndhornan';
-const MAX_PAGES = 10;
+const IMAGE_BASE = 'https://www.inet.se/img/product-picture/standard/';
+const PRODUCT_BASE = 'https://www.inet.se/produkt/';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-// Page function extracts product JSON from the hydrate call
-const PAGE_FN = `async function pageFunction(context) {
-  const { $, request } = context;
-  const results = [];
+function extractProducts(html) {
+  // Find: hydrate("BargainPage", JSON.parse("..."), ...)
+  const marker = 'hydrate("BargainPage"';
+  const markerIdx = html.indexOf(marker);
+  if (markerIdx === -1) return [];
 
-  // Find the hydrate script containing BargainPage data
-  $('script').each((_, el) => {
-    const text = $(el).html() || '';
-    const match = text.match(/hydrate\\("BargainPage",\\s*JSON\\.parse\\("(.+?)"\\)\\)/s);
-    if (!match) return;
+  // Find the first JSON.parse(" after the marker
+  const parseMarker = 'JSON.parse("';
+  const parseIdx = html.indexOf(parseMarker, markerIdx);
+  if (parseIdx === -1) return [];
 
-    let json;
+  const contentStart = parseIdx + parseMarker.length;
+  // Find closing ") — the end of the JSON string argument
+  const closingIdx = html.indexOf('")', contentStart);
+  if (closingIdx === -1) return [];
+
+  const rawJsonStr = html.substring(contentStart, closingIdx);
+
+  // Decode escaped JSON: \" → " and \\ → \
+  const decoded = rawJsonStr.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+
+  let data;
+  try {
+    data = JSON.parse(decoded);
+  } catch {
+    return [];
+  }
+
+  const vm = data.productListWithDynamicFilterViewModel;
+  if (!vm || !vm.products) return [];
+
+  // products is a dict keyed by product ID
+  const productsDict = vm.products;
+  return Object.values(productsDict);
+}
+
+function totalQty(qtyObj) {
+  if (!qtyObj || typeof qtyObj !== 'object') return null;
+  let total = 0;
+  for (const warehouse of Object.values(qtyObj)) {
+    if (warehouse && typeof warehouse.qty === 'number' && !warehouse.blocked) {
+      total += warehouse.qty;
+    }
+  }
+  return total;
+}
+
+export async function collectFromInet({ source, fetcher, sourceState, now }) {
+  const maxPages = source.maxPages ?? 7;
+  const allProducts = [];
+  const seen = new Set();
+
+  for (let page = 1; page <= maxPages; page++) {
+    const url = page === 1 ? BASE_URL : `${BASE_URL}?page=${page}`;
+    console.log(`[inet] Fetching page ${page}/${maxPages}: ${url}`);
+
+    let html;
     try {
-      // The JSON is escaped inside a string literal
-      const unescaped = match[1].replace(/\\\\"/g, '"').replace(/\\\\\\\\/g, '\\\\');
-      json = JSON.parse(unescaped);
-    } catch (e) {
-      // Try alternate unescape
-      try {
-        json = JSON.parse(JSON.parse('"' + match[1] + '"'));
-      } catch (e2) { return; }
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'sv-SE,sv;q=0.9,en;q=0.8',
+        }
+      });
+      if (!response.ok) {
+        console.warn(`[inet] Page ${page} returned ${response.status}, stopping.`);
+        break;
+      }
+      html = await response.text();
+    } catch (err) {
+      console.warn(`[inet] Page ${page} fetch failed: ${err.message}`);
+      break;
     }
 
-    const products = json?.productListWithDynamicFilterViewModel?.products
-      || json?.products
-      || [];
+    const products = extractProducts(html);
+    if (products.length === 0) {
+      console.log(`[inet] Page ${page}: no products found, stopping.`);
+      break;
+    }
 
     for (const p of products) {
-      const id = p.id || p.templateId || p.urlName;
-      if (!id) continue;
-
-      const price = p.price?.price ?? p.price ?? null;
-      const listPrice = p.price?.listPrice ?? p.listPrice ?? null;
-      const title = p.name || p.title || '';
-      const urlName = p.urlName || p.url || '';
-      const image = p.image || p.imageUrl || '';
-      const qty = p.qty ?? p.stock ?? null;
-      const condition = p.sellingPoint || p.condition || 'Fyndhörnan';
-      const categoryName = p.categoryName || p.category || '';
-
-      results.push({
-        id: String(id),
-        title,
-        url: urlName.startsWith('http') ? urlName : 'https://www.inet.se/produkt/' + urlName,
-        price: typeof price === 'number' ? price : null,
-        listPrice: typeof listPrice === 'number' ? listPrice : null,
-        image: image.startsWith('http') ? image : (image ? 'https://www.inet.se' + image : ''),
-        qty,
-        condition,
-        category: categoryName
-      });
+      if (!p.id || seen.has(p.id)) continue;
+      seen.add(p.id);
+      allProducts.push(p);
     }
-  });
 
-  // Fallback: parse product cards from HTML if hydrate extraction failed
-  if (results.length === 0) {
-    $('.product-list-item, [data-product-id], .bargain-item').each((_, el) => {
-      const $el = $(el);
-      const title = $el.find('.product-title, h3, .name').first().text().trim();
-      const link = $el.find('a[href*="/produkt/"]').first().attr('href') || '';
-      const priceText = $el.find('.product-price, .price, .current-price').first().text().replace(/[^\\d]/g, '');
-      const listPriceText = $el.find('.list-price, .old-price, .before-price').first().text().replace(/[^\\d]/g, '');
-      const img = $el.find('img').first().attr('src') || $el.find('img').first().attr('data-src') || '';
-      const id = $el.attr('data-product-id') || link.split('/produkt/')[1]?.split('/')[0] || '';
+    console.log(`[inet] Page ${page}: ${products.length} products (total: ${allProducts.length})`);
 
-      if (title && id) {
-        results.push({
-          id,
-          title,
-          url: link.startsWith('http') ? link : 'https://www.inet.se' + link,
-          price: priceText ? parseInt(priceText) : null,
-          listPrice: listPriceText ? parseInt(listPriceText) : null,
-          image: img.startsWith('http') ? img : (img ? 'https://www.inet.se' + img : ''),
-          qty: null,
-          condition: 'Fyndhörnan',
-          category: ''
-        });
-      }
-    });
+    // Polite delay between pages
+    if (page < maxPages) {
+      await new Promise(r => setTimeout(r, 1500));
+    }
   }
 
-  return results;
-}`;
+  console.log(`[inet] Total collected: ${allProducts.length} products`);
 
-export async function collectFromInet({ source, sourceState, now }) {
-  const token = process.env.APIFY_TOKEN?.trim();
-  if (!token) throw new Error('APIFY_TOKEN env var required for Inet scraper');
-
-  const client = new ApifyClient({ token });
-  const maxPages = source.maxPages ?? MAX_PAGES;
-
-  // Build start URLs for all pages
-  const startUrls = [];
-  for (let page = 1; page <= maxPages; page++) {
-    startUrls.push({ url: page === 1 ? BASE_URL : `${BASE_URL}?page=${page}` });
-  }
-
-  console.log(`[inet] Starting Apify cheerio-scraper for ${startUrls.length} pages...`);
-
-  const run = await client.actor('apify/cheerio-scraper').call({
-    startUrls,
-    pageFunction: PAGE_FN,
-    proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
-    maxRequestsPerCrawl: maxPages + 2,
-    maxConcurrency: 3,
-    requestHandlerTimeoutSecs: 30,
-    additionalMimeTypes: ['text/html'],
-  }, { timeout: Math.floor((source.actorTimeoutMs ?? 180_000) / 1000) });
-
-  const { items } = await client.dataset(run.defaultDatasetId).listItems();
-  const products = items.flat().filter(p => p && p.id && p.price);
-
-  console.log(`[inet] Collected ${products.length} products from Fyndhörnan`);
-
-  // Deduplicate by ID
-  const seen = new Set();
+  // Map to observations
   const observations = [];
+  for (const p of allProducts) {
+    const price = p.price?.price ?? null;
+    if (!price || typeof price !== 'number') continue;
 
-  for (const p of products) {
-    const externalId = String(p.id);
-    if (seen.has(externalId)) continue;
-    seen.add(externalId);
+    const listPrice = p.price?.listPrice ?? null;
+    const qty = totalQty(p.qty);
+    const availability = qty === null ? 'unknown'
+      : qty > 5 ? 'in_stock'
+      : qty > 0 ? 'few_left'
+      : 'out_of_stock';
 
-    const availability = p.qty != null
-      ? (p.qty > 5 ? 'in_stock' : p.qty > 0 ? 'few_left' : 'out_of_stock')
-      : 'unknown';
+    const imageUrl = p.image
+      ? `${IMAGE_BASE}${p.image}`
+      : null;
 
     observations.push({
       sourceId: source.id,
       sourceLabel: source.label || 'Inet Fyndhörnan',
       sourceType: source.type,
-      externalId,
-      title: p.title,
-      url: p.url,
-      priceSek: p.price,
-      referencePriceSek: p.listPrice && p.listPrice > p.price ? p.listPrice : null,
-      category: p.category || 'Övrigt',
+      externalId: String(p.id),
+      title: p.name || '',
+      url: p.urlName ? `${PRODUCT_BASE}${p.id}/${p.urlName}` : `${PRODUCT_BASE}${p.id}`,
+      priceSek: price,
+      referencePriceSek: listPrice && listPrice > price ? listPrice : null,
+      category: mapCategory(p.categoryId) || 'Övrigt',
       condition: 'outlet',
-      conditionLabel: p.condition || 'Fyndhörnan',
+      conditionLabel: p.sellingPoint || 'Fyndhörnan',
       availability,
-      imageUrl: p.image || null,
+      imageUrl,
       seenAt: now
     });
   }
 
   return observations;
+}
+
+// Basic category mapping from Inet categoryIds
+function mapCategory(categoryId) {
+  const map = {
+    30: 'Bildskärmar',
+    27: 'Datorer',
+    34: 'Komponenter',
+    31: 'Kringutrustning',
+    32: 'Nätverk',
+    33: 'Lagring',
+    35: 'Ljud & Bild',
+    36: 'Foto & Video',
+    37: 'Mobiltelefoner',
+    38: 'Surfplattor',
+    39: 'Gaming',
+    40: 'Smarta hem',
+    41: 'Kablar',
+    1079: 'Kylning',
+    1324: 'Begagnade datorer',
+    1365: 'Begagnade mobiler',
+  };
+  return map[categoryId] || null;
 }
