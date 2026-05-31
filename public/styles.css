@@ -359,6 +359,7 @@ select { cursor: pointer; }
   z-index: 90;
   background: var(--bg-page);
   border-bottom: 1px solid var(--border-light);
+  overflow: hidden;
 }
 .filter-bar.panel-open { border-bottom: none; }
 .filter-bar-inner {
