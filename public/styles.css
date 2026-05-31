@@ -58,6 +58,9 @@
 
   --transition-fast: 150ms ease;
   --transition-base: 250ms ease;
+
+  --clr-success: #1B7A4A;
+  --clr-danger: #C41E3A;
   --transition-slow: 400ms ease;
 }
 
@@ -99,6 +102,9 @@
   --shadow-md: 0 2px 8px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.12);
   --shadow-lg: 0 8px 24px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.15);
   --shadow-lift: 0 12px 32px rgba(0,0,0,0.40), 0 4px 8px rgba(0,0,0,0.20);
+
+  --clr-success: #3CB371;
+  --clr-danger: #E85D75;
 }
 
 /* ── RESET ─────────────────────────────────────────────────────── */
@@ -1586,3 +1592,145 @@ select { cursor: pointer; }
   .card-image { aspect-ratio: 3/2; }
   .card-price-main { font-size: 19px; }
 }
+
+/* ── WISHLIST BUTTON ─────────────────────────────────────────── */
+.wishlist-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+  color: var(--text-tertiary);
+  z-index: 2;
+  opacity: 0;
+}
+.product-card:hover .wishlist-btn,
+.product-card.is-wishlisted .wishlist-btn { opacity: 1; }
+.wishlist-btn:hover { transform: scale(1.15); background: var(--accent-soft); color: var(--accent); }
+.wishlist-btn.active { color: var(--accent); opacity: 1; }
+
+/* ── SPARKLINE ───────────────────────────────────────────────── */
+.card-sparkline {
+  margin-top: 6px;
+  cursor: pointer;
+  padding: 4px 0;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+.card-sparkline:hover { background: var(--bg-inset); }
+.sparkline {
+  width: 60px;
+  height: 20px;
+  display: block;
+}
+
+/* ── PRICE HISTORY MODAL ─────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-overlay);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 150ms ease;
+}
+.modal-overlay.hidden { display: none; }
+
+.modal-dialog {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lift);
+  width: 100%;
+  max-width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  animation: slideUp 200ms ease;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-light);
+}
+.modal-header h3 {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal-close {
+  border: none;
+  background: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+.modal-close:hover { background: var(--bg-inset); }
+
+.modal-body { padding: 20px; }
+
+.ph-chart-container { width: 100%; margin-bottom: 16px; }
+.ph-chart { width: 100%; height: auto; }
+.ph-chart .chart-label {
+  font-size: 9px;
+  fill: var(--text-tertiary);
+  font-family: var(--font-body);
+}
+.ph-chart .chart-grid {
+  stroke: var(--border-light);
+  stroke-width: 0.5;
+  stroke-dasharray: 3 3;
+}
+
+.ph-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 10px;
+}
+.ph-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-sm);
+}
+.ph-stat-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.ph-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ph-stat-good .ph-stat-value { color: var(--clr-success); }
+.ph-stat-bad .ph-stat-value { color: var(--clr-danger); }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── LIST VIEW SPARKLINE ─────────────────────────────────────── */
+.list-view .card-sparkline { margin-top: 0; margin-left: auto; }
+.list-view .wishlist-btn { opacity: 1; position: static; width: 28px; height: 28px; font-size: 16px; }

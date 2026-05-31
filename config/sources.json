@@ -208,6 +208,18 @@
       "category": "electronics",
       "condition": "deal",
       "notes": "Community-submitted deals from sweclockers.com/dagensfynd. Each row is a member-posted deal with title, store, price, category, and community upvote score. Requires a Cloudflare bypass backend: FLARESOLVERR_URL (preferred, free self-hosted), SCRAPFLY_API_KEY, or SCRAPERAPI_KEY. No Apify token required. Set enabled=true and deploy FlareSolverr (ghcr.io/flaresolverr/flaresolverr:latest) to use."
+    },
+    {
+      "id": "inet-fyndhornan",
+      "type": "inet-fyndhornan",
+      "enabled": true,
+      "label": "Inet Fyndhörnan",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxPages": 7,
+      "actorTimeoutMs": 180000,
+      "scanIntervalMinutes": 120,
+      "notes": "Scrapes inet.se/fyndhornan (Bargain Corner) via Apify cheerio-scraper. Server-rendered React with embedded hydrate JSON. ~400 outlet/refurb products across 7 pages. Requires APIFY_TOKEN. Uses RESIDENTIAL proxy to avoid Cloudflare challenges."
     }
   ]
 }

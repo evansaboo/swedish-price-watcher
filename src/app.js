@@ -206,6 +206,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   app.get('/api/outlet-products', async (request) => {
     const state = store.getState();
     const favSet = getFavoriteCategorySet(state);
+    const wishlistSet = new Set(state.preferences?.wishlist ?? []);
     const q = request.query;
 
     return productCache.query({
@@ -218,6 +219,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       referenceOnly: q.referenceOnly === 'true',
       newOnly: q.newOnly === 'true',
       hotOnly: q.hotOnly === 'true',
+      wishlistOnly: q.wishlistOnly === 'true',
       minDiscountPercent: Number.parseInt(q.minDiscountPercent ?? '', 10),
       minPriceSek: Number.parseInt(q.minPriceSek ?? q.minPrice ?? '', 10),
       maxPriceSek: Number.parseInt(q.maxPriceSek ?? q.maxPrice ?? '', 10),
@@ -225,7 +227,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       sortDir: q.sortDir,
       page: Number.parseInt(q.page ?? '1', 10),
       pageSize: Number.parseInt(q.pageSize ?? '50', 10),
-    }, favSet, state.stats.lastRunStartedAt);
+    }, favSet, state.stats.lastRunStartedAt, wishlistSet);
   });
 
   // ── Outlet Categories (from cache) ─────────────────────────────
@@ -373,6 +375,72 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
 
     return { id: sourceId, label: source.label, enabled: request.body.enabled };
+  });
+
+  // ── Price History ───────────────────────────────────────────────
+  app.get('/api/price-history/:listingKey', async (request, reply) => {
+    const { listingKey } = request.params;
+    const state = store.getState();
+    const item = state.items[listingKey];
+    if (!item) {
+      // Check archived history
+      const archived = state.itemHistory?.[listingKey];
+      if (archived) return { listingKey, history: archived.history ?? [], archived: true };
+      reply.code(404);
+      return { message: 'Product not found.' };
+    }
+    return {
+      listingKey,
+      title: item.title,
+      currentPriceSek: item.latestPriceSek,
+      lowestPriceSek: item.lowestPriceSek,
+      highestPriceSek: item.highestPriceSek,
+      history: item.history ?? []
+    };
+  });
+
+  // ── Wishlist ──────────────────────────────────────────────────
+  app.get('/api/wishlist', async () => {
+    const state = store.getState();
+    return { items: state.preferences?.wishlist ?? [] };
+  });
+
+  app.post('/api/wishlist/:listingKey', async (request, reply) => {
+    const { listingKey } = request.params;
+    const state = store.getState();
+    const item = state.items[listingKey];
+    if (!item) { reply.code(404); return { message: 'Product not found.' }; }
+
+    state.preferences = state.preferences ?? {};
+    const wishlist = state.preferences.wishlist ?? [];
+    if (!wishlist.includes(listingKey)) {
+      wishlist.push(listingKey);
+      state.preferences.wishlist = wishlist;
+      if (typeof store.savePreferences === 'function') {
+        await store.savePreferences();
+      } else {
+        await store.save();
+      }
+    }
+    return { ok: true, listingKey, wishlisted: true };
+  });
+
+  app.delete('/api/wishlist/:listingKey', async (request, reply) => {
+    const { listingKey } = request.params;
+    const state = store.getState();
+    state.preferences = state.preferences ?? {};
+    const wishlist = state.preferences.wishlist ?? [];
+    const idx = wishlist.indexOf(listingKey);
+    if (idx !== -1) {
+      wishlist.splice(idx, 1);
+      state.preferences.wishlist = wishlist;
+      if (typeof store.savePreferences === 'function') {
+        await store.savePreferences();
+      } else {
+        await store.save();
+      }
+    }
+    return { ok: true, listingKey, wishlisted: false };
   });
 
   // ── Scan Control ───────────────────────────────────────────────

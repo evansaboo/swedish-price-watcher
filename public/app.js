@@ -19,6 +19,7 @@ const state = {
   newOnly: false,
   referenceOnly: false,
   hotOnly: false,
+  wishlistOnly: false,
   minDiscountPercent: '',
   minPriceSek: '',
   maxPriceSek: '',
@@ -31,6 +32,8 @@ const state = {
   viewMode: 'grid', // 'grid' or 'list'
   filterPanelOpen: false,
   activePreset: 'all',
+  // Wishlist
+  wishlist: new Set(),
   // Scheduler
   schedulerEnabled: true,
   schedulerIntervalMinutes: 180,
@@ -307,6 +310,7 @@ function buildProductsQuery() {
   if (state.discountedOnly) params.set('discountedOnly', 'true');
   if (state.newOnly) params.set('newOnly', 'true');
   if (state.referenceOnly) params.set('referenceOnly', 'true');
+  if (state.wishlistOnly) params.set('wishlistOnly', 'true');
   if (minDiscount) params.set('minDiscountPercent', String(minDiscount));
   if (minPrice) params.set('minPriceSek', String(minPrice));
   if (maxPrice) params.set('maxPriceSek', String(maxPrice));
@@ -361,12 +365,14 @@ function applyPreset(preset) {
   state.discountedOnly = false;
   state.referenceOnly = false;
   state.favoritesOnly = false;
+  state.wishlistOnly = false;
 
   if (preset === 'new') state.newOnly = true;
   else if (preset === 'hot') state.hotOnly = true;
   else if (preset === 'discounted') state.discountedOnly = true;
   else if (preset === 'matched') state.referenceOnly = true;
   else if (preset === 'favorites') state.favoritesOnly = true;
+  else if (preset === 'wishlist') state.wishlistOnly = true;
 
   state.activePreset = preset;
   el.newOnly.checked = state.newOnly;
@@ -558,17 +564,34 @@ function renderProducts(response) {
       availLabel = seenText;
     }
 
-    const cardClass = `product-card${isNew ? ' is-new' : ''}`;
+    const cardClass = `product-card${isNew ? ' is-new' : ''}${product.wishlisted ? ' is-wishlisted' : ''}`;
     const delay = Math.min(idx * 25, 300);
+    const wishlistIcon = product.wishlisted ? '♥' : '♡';
+    const wishlistClass = product.wishlisted ? 'wishlist-btn active' : 'wishlist-btn';
+
+    // Mini sparkline from history (last 10 points)
+    const historyPoints = product.historyPreview ?? [];
+    let sparklineHtml = '';
+    if (historyPoints.length >= 2) {
+      const prices = historyPoints.map(h => h.priceSek);
+      const minP = Math.min(...prices);
+      const maxP = Math.max(...prices);
+      const range = maxP - minP || 1;
+      const w = 60, h2 = 20;
+      const points = prices.map((p, i) => `${(i / (prices.length - 1)) * w},${h2 - ((p - minP) / range) * h2}`).join(' ');
+      const trendColor = prices[prices.length - 1] <= prices[0] ? 'var(--clr-success)' : 'var(--clr-danger)';
+      sparklineHtml = `<svg class="sparkline" viewBox="0 0 ${w} ${h2}" preserveAspectRatio="none"><polyline points="${points}" fill="none" stroke="${trendColor}" stroke-width="1.5"/></svg>`;
+    }
 
     return `
-      <article class="${cardClass}" style="animation-delay:${delay}ms">
+      <article class="${cardClass}" style="animation-delay:${delay}ms" data-listing-key="${escapeHtml(product.listingKey)}">
         <div class="card-image">
           ${imageHtml}
           <div class="card-badges">
             <div class="card-badges-left">${badgesLeft}</div>
             ${score > 0 ? `<div class="score-ring ${scoreClass}" title="Deal score: ${score}/100">${score}</div>` : ''}
           </div>
+          <button type="button" class="${wishlistClass}" data-listing-key="${escapeHtml(product.listingKey)}" title="${product.wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}">${wishlistIcon}</button>
         </div>
         <div class="card-body">
           <span class="card-store">${escapeHtml(product.sourceLabel ?? '')}</span>
@@ -578,6 +601,7 @@ function renderProducts(response) {
             <span class="card-price-main">${formatSek(product.currentPriceSek)}</span>
             ${refHtml}
           </div>
+          ${sparklineHtml ? `<div class="card-sparkline" data-listing-key="${escapeHtml(product.listingKey)}" title="Click for price history">${sparklineHtml}</div>` : ''}
         </div>
         <div class="card-footer">
           <span class="card-availability"><span class="avail-dot ${availDot}"></span>${escapeHtml(availLabel)}</span>
@@ -596,6 +620,21 @@ function renderProducts(response) {
       const match = state.categories.find(c => normalizeCategoryKey(c.name) === normalizeCategoryKey(catName));
       el.categoryFilter.value = match ? match.key : normalizeCategoryKey(catName);
       updateFilters();
+    });
+  }
+
+  // Wire wishlist buttons
+  for (const btn of el.productGrid.querySelectorAll('.wishlist-btn')) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleWishlist(btn.getAttribute('data-listing-key'), btn);
+    });
+  }
+
+  // Wire sparkline click → open price history modal
+  for (const spark of el.productGrid.querySelectorAll('.card-sparkline')) {
+    spark.addEventListener('click', () => {
+      openPriceHistoryModal(spark.getAttribute('data-listing-key'));
     });
   }
 
@@ -638,6 +677,135 @@ function renderPagination(response) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }
+}
+
+// ── WISHLIST ────────────────────────────────────────────────────
+async function toggleWishlist(listingKey, btnEl) {
+  if (!listingKey) return;
+  const isWishlisted = state.wishlist.has(listingKey);
+  const method = isWishlisted ? 'DELETE' : 'POST';
+
+  try {
+    await fetch(`/api/wishlist/${encodeURIComponent(listingKey)}`, { method });
+    if (isWishlisted) {
+      state.wishlist.delete(listingKey);
+      btnEl.classList.remove('active');
+      btnEl.textContent = '♡';
+      btnEl.title = 'Add to wishlist';
+      btnEl.closest('.product-card')?.classList.remove('is-wishlisted');
+    } else {
+      state.wishlist.add(listingKey);
+      btnEl.classList.add('active');
+      btnEl.textContent = '♥';
+      btnEl.title = 'Remove from wishlist';
+      btnEl.closest('.product-card')?.classList.add('is-wishlisted');
+    }
+  } catch (err) {
+    showToast('Failed to update wishlist', 'error');
+  }
+}
+
+async function loadWishlist() {
+  try {
+    const { items } = await fetchJson('/api/wishlist');
+    state.wishlist = new Set(items ?? []);
+  } catch { state.wishlist = new Set(); }
+}
+
+// ── PRICE HISTORY MODAL ─────────────────────────────────────────
+async function openPriceHistoryModal(listingKey) {
+  const modal = document.getElementById('price-history-modal');
+  const titleEl = document.getElementById('ph-modal-title');
+  const chartContainer = document.getElementById('ph-chart-container');
+  const statsEl = document.getElementById('ph-stats');
+
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+  chartContainer.innerHTML = '<p style="text-align:center;opacity:0.6">Loading...</p>';
+  statsEl.innerHTML = '';
+  titleEl.textContent = 'Price History';
+
+  try {
+    const data = await fetchJson(`/api/price-history/${encodeURIComponent(listingKey)}`);
+    titleEl.textContent = data.title ? `${data.title.slice(0, 60)}${data.title.length > 60 ? '…' : ''}` : 'Price History';
+
+    const history = data.history ?? [];
+    if (history.length < 2) {
+      chartContainer.innerHTML = '<p style="text-align:center;opacity:0.6">Not enough data points yet</p>';
+      return;
+    }
+
+    // Render full SVG chart
+    const prices = history.map(h => h.priceSek);
+    const dates = history.map(h => new Date(h.seenAt));
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const priceRange = maxPrice - minPrice || 1;
+
+    const chartW = 500, chartH = 200, pad = 40;
+    const plotW = chartW - pad * 2, plotH = chartH - pad * 2;
+
+    const points = prices.map((p, i) => {
+      const x = pad + (i / (prices.length - 1)) * plotW;
+      const y = pad + plotH - ((p - minPrice) / priceRange) * plotH;
+      return `${x},${y}`;
+    });
+
+    // Y-axis labels
+    const ySteps = 4;
+    let yLabels = '';
+    for (let i = 0; i <= ySteps; i++) {
+      const val = minPrice + (i / ySteps) * priceRange;
+      const y = pad + plotH - (i / ySteps) * plotH;
+      yLabels += `<text x="${pad - 5}" y="${y + 4}" text-anchor="end" class="chart-label">${formatSek(val)}</text>`;
+      yLabels += `<line x1="${pad}" y1="${y}" x2="${chartW - pad}" y2="${y}" class="chart-grid"/>`;
+    }
+
+    // X-axis labels (first, mid, last)
+    const xLabels = [0, Math.floor(dates.length / 2), dates.length - 1]
+      .map(i => {
+        const x = pad + (i / (dates.length - 1)) * plotW;
+        const d = dates[i];
+        return `<text x="${x}" y="${chartH - 5}" text-anchor="middle" class="chart-label">${d.toLocaleDateString('sv-SE', { month: 'short', day: 'numeric' })}</text>`;
+      }).join('');
+
+    const trendColor = prices[prices.length - 1] <= prices[0] ? 'var(--clr-success)' : 'var(--clr-danger)';
+
+    // Area fill
+    const areaPoints = `${pad},${pad + plotH} ${points.join(' ')} ${chartW - pad},${pad + plotH}`;
+
+    chartContainer.innerHTML = `
+      <svg class="ph-chart" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet">
+        ${yLabels}
+        ${xLabels}
+        <polygon points="${areaPoints}" fill="${trendColor}" opacity="0.1"/>
+        <polyline points="${points.join(' ')}" fill="none" stroke="${trendColor}" stroke-width="2" stroke-linejoin="round"/>
+        <circle cx="${points[points.length - 1].split(',')[0]}" cy="${points[points.length - 1].split(',')[1]}" r="4" fill="${trendColor}"/>
+      </svg>
+    `;
+
+    // Stats
+    const currentPrice = prices[prices.length - 1];
+    const priceChange = currentPrice - prices[0];
+    const changePercent = prices[0] > 0 ? Math.round((priceChange / prices[0]) * 100) : 0;
+    const changeClass = priceChange <= 0 ? 'ph-stat-good' : 'ph-stat-bad';
+
+    statsEl.innerHTML = `
+      <div class="ph-stat"><span class="ph-stat-label">Current</span><span class="ph-stat-value">${formatSek(currentPrice)}</span></div>
+      <div class="ph-stat"><span class="ph-stat-label">Lowest</span><span class="ph-stat-value">${formatSek(data.lowestPriceSek)}</span></div>
+      <div class="ph-stat"><span class="ph-stat-label">Highest</span><span class="ph-stat-value">${formatSek(data.highestPriceSek)}</span></div>
+      <div class="ph-stat ${changeClass}"><span class="ph-stat-label">Change</span><span class="ph-stat-value">${priceChange <= 0 ? '' : '+'}${formatSek(priceChange)} (${changePercent}%)</span></div>
+      <div class="ph-stat"><span class="ph-stat-label">Data points</span><span class="ph-stat-value">${history.length}</span></div>
+    `;
+  } catch (err) {
+    chartContainer.innerHTML = `<p style="text-align:center;color:var(--clr-danger)">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function closePriceHistoryModal() {
+  const modal = document.getElementById('price-history-modal');
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden', 'true');
 }
 
 // ── RENDER: FILTERS ─────────────────────────────────────────────
@@ -927,6 +1095,7 @@ function resetFilters() {
   state.newOnly = false;
   state.hotOnly = false;
   state.referenceOnly = false;
+  state.wishlistOnly = false;
   state.minDiscountPercent = '';
   state.minPriceSek = '';
   state.maxPriceSek = '';
@@ -1414,9 +1583,17 @@ function bindEvents() {
       el.searchInput.focus();
     }
     if (e.key === 'Escape') {
+      const phModal = document.getElementById('price-history-modal');
+      if (!phModal.classList.contains('hidden')) { closePriceHistoryModal(); return; }
       if (!el.settingsDrawer.classList.contains('hidden')) closeDrawer();
       else if (state.filterPanelOpen) { state.filterPanelOpen = false; el.filterPanel.classList.add('hidden'); el.filterExpandBtn.classList.remove('active'); document.getElementById('filter-bar').classList.remove('panel-open'); }
     }
+  });
+
+  // Price history modal
+  document.getElementById('ph-modal-close')?.addEventListener('click', closePriceHistoryModal);
+  document.getElementById('price-history-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'price-history-modal') closePriceHistoryModal();
   });
 }
 
@@ -1424,4 +1601,4 @@ function bindEvents() {
 initTheme();
 hydratePrefs();
 bindEvents();
-loadDashboard().catch(err => showToast(err.message, 'error'));
+loadWishlist().then(() => loadDashboard()).catch(err => showToast(err.message, 'error'));

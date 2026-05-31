@@ -118,6 +118,10 @@ export class ProductCache {
         keyshopPriceSek: item.keyshopPriceSek ?? null,
         historicalKeyshopPriceSek: item.historicalKeyshopPriceSek ?? null,
         steamAppId: item.steamAppId ?? null,
+        // Last 10 history entries for sparkline
+        historyPreview: Array.isArray(item.history) && item.history.length >= 2
+          ? item.history.slice(-10).map(h => ({ priceSek: h.priceSek, seenAt: h.seenAt }))
+          : [],
       };
 
       const idx = products.length;
@@ -181,7 +185,7 @@ export class ProductCache {
   }
 
   // Fast filtered + sorted + paginated query
-  query(params, favoriteCategorySet, latestRunStartedAt) {
+  query(params, favoriteCategorySet, latestRunStartedAt, wishlistSet) {
     const {
       search = '',
       category = '',
@@ -192,6 +196,7 @@ export class ProductCache {
       referenceOnly = false,
       newOnly = false,
       hotOnly = false,
+      wishlistOnly = false,
       minDiscountPercent = NaN,
       minPriceSek = NaN,
       maxPriceSek = NaN,
@@ -264,6 +269,9 @@ export class ProductCache {
       // Hot filter
       if (hotOnly && !((product.score ?? 0) >= 50 || (Number.isFinite(product.discountPercent) && product.discountPercent >= 20))) continue;
 
+      // Wishlist filter
+      if (wishlistOnly && !(wishlistSet && wishlistSet.has(product.listingKey))) continue;
+
       // Min discount
       if (Number.isFinite(minDiscountPercent) && minDiscountPercent > 0) {
         if (!(Number.isFinite(product.discountPercent) && product.discountPercent >= minDiscountPercent)) continue;
@@ -325,8 +333,16 @@ export class ProductCache {
     const clampedPage = Math.min(Math.max(1, page), totalPages);
     const offset = (clampedPage - 1) * clampedPageSize;
 
+    const items = filtered.slice(offset, offset + clampedPageSize);
+    // Annotate with wishlist status
+    if (wishlistSet && wishlistSet.size > 0) {
+      for (const item of items) {
+        item.wishlisted = wishlistSet.has(item.listingKey);
+      }
+    }
+
     return {
-      items: filtered.slice(offset, offset + clampedPageSize),
+      items,
       total: totalFiltered,
       page: clampedPage,
       pageSize: clampedPageSize,

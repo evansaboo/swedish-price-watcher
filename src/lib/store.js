@@ -13,7 +13,8 @@ export function createDefaultState() {
     sourceStates: {},
     itemHistory: {},
     preferences: {
-      favoriteCategories: []
+      favoriteCategories: [],
+      wishlist: []
     },
     stats: {
       lastRunStartedAt: null,
@@ -42,6 +43,9 @@ function normalizeState(rawState = {}) {
   state.preferences.sourceOverrides = (rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides))
     ? rawOverrides
     : {};
+  state.preferences.wishlist = Array.isArray(state.preferences.wishlist)
+    ? state.preferences.wishlist.filter(k => typeof k === 'string' && k)
+    : [];
   if (Object.prototype.hasOwnProperty.call(rawState.preferences ?? {}, 'scheduler')) {
     const schedulerEnabled = state.preferences.scheduler?.enabled;
     const schedulerIntervalMinutes = Number.parseInt(String(state.preferences.scheduler?.intervalMinutes ?? ''), 10);

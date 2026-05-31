@@ -5,6 +5,7 @@ import { collectFromElgiganten } from './elgiganten.js';
 import { collectFromElgigantenCampaigns } from './elgigantenCampaigns.js';
 import { collectFromGgDeals } from './ggdeals.js';
 import { collectFromHtml } from './html.js';
+import { collectFromInet } from './inet.js';
 import { collectFromKomplettCategory, collectFromKomplettSitemap } from './komplett.js';
 import { collectFromNetonnet } from './netonnet.js';
 import { collectFromPower } from './power.js';
@@ -20,6 +21,7 @@ const handlers = {
   'elgiganten-algolia': collectFromElgiganten,
   'elgiganten-campaigns': collectFromElgigantenCampaigns,
   'gg-deals-games': collectFromGgDeals,
+  'inet-fyndhornan': collectFromInet,
   'komplett-category': collectFromKomplettCategory,
   'komplett-sitemap': collectFromKomplettSitemap,
   'netonnet-outlet': collectFromNetonnet,

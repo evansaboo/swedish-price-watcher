@@ -67,6 +67,7 @@
           <button type="button" class="filter-pill" data-filter-preset="discounted">Discounted</button>
           <button type="button" class="filter-pill" data-filter-preset="matched">Matched</button>
           <button type="button" class="filter-pill" data-filter-preset="favorites">★ Favorites</button>
+          <button type="button" class="filter-pill" data-filter-preset="wishlist">♡ Wishlist</button>
         </div>
 
         <div class="filter-bar-right">
@@ -246,6 +247,20 @@
         <button id="save-settings-btn" type="button" class="save-btn">Save changes</button>
       </div>
     </aside>
+
+    <!-- ===== PRICE HISTORY MODAL ===== -->
+    <div id="price-history-modal" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 id="ph-modal-title">Price History</h3>
+          <button id="ph-modal-close" type="button" class="modal-close" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="ph-chart-container" class="ph-chart-container"></div>
+          <div id="ph-stats" class="ph-stats"></div>
+        </div>
+      </div>
+    </div>
 
     <!-- ===== TOASTS ===== -->
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
