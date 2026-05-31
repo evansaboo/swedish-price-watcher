@@ -95,35 +95,11 @@ async function scrapeViaFlaresolverr(url, flareSolverrUrl) {
   return data.solution?.response ?? '';
 }
 
-function parseProshopPage(html, source, now, seen, debugFirstItem = false) {
+function parseProshopPage(html, source, now, seen) {
   const $ = load(html);
   const observations = [];
-  let debugged = false;
 
   $('li.site-productlist-item').each((_, el) => {
-    // Debug: log the first item's HTML to understand image structure
-    if (!debugged && debugFirstItem) {
-      debugged = true;
-      const itemHtml = $(el).html() || '';
-      console.log(`[proshop-debug] First item HTML (${itemHtml.length} chars):\n${itemHtml.slice(0, 2000)}`);
-      // Log all img tags
-      const imgs = $(el).find('img');
-      console.log(`[proshop-debug] Found ${imgs.length} img elements`);
-      imgs.each((i, img) => {
-        const attrs = Object.entries($(img).attr() || {}).map(([k,v]) => `${k}="${(v||'').slice(0, 100)}"`).join(' ');
-        console.log(`[proshop-debug]   img[${i}]: ${attrs}`);
-      });
-      // Check for picture/source elements
-      const pictures = $(el).find('picture');
-      console.log(`[proshop-debug] Found ${pictures.length} picture elements`);
-      pictures.each((i, pic) => {
-        const sources = $(pic).find('source');
-        sources.each((j, src) => {
-          console.log(`[proshop-debug]   picture[${i}] source[${j}]: srcset="${($(src).attr('srcset')||'').slice(0,150)}"`);
-        });
-      });
-    }
-
     const linkEl = $(el).find('a.site-product-link, a').first();
     const href = linkEl.attr('href') || '';
     const segments = href.split('/').filter(Boolean);
@@ -139,9 +115,10 @@ function parseProshopPage(html, source, now, seen, debugFirstItem = false) {
     const origPriceText =
       $(el).find('span.site-currency-oldprice, .site-currency-old, .oldprice, .site-currency-before').first().text().trim();
 
-    // Extract image URL — the browser can load these even though backend can't (CF blocks backend IPs).
-    const imgEl = $(el).find('img').first();
-    const rawImg = imgEl.attr('data-src') || imgEl.attr('src') || imgEl.attr('data-lazy-src') || '';
+    // Extract image URL from the product listing img tag.
+    // ProShop uses relative paths like /Images/174x116/{id}_{hash}.png
+    const imgEl = $(el).find('img[src]').first();
+    const rawImg = imgEl.attr('data-src') || imgEl.attr('src') || '';
     const imageUrl = rawImg && !rawImg.includes('data:image')
       ? (rawImg.startsWith('http') ? rawImg : rawImg.startsWith('//') ? `https:${rawImg}` : `${BASE_URL}${rawImg}`)
       : null;
@@ -243,8 +220,7 @@ export async function collectFromProshop({ source, sourceState, now }) {
         break;
       }
 
-      const debugFirst = (page === 1 && observations.length === 0);
-      const pageObservations = parseProshopPage(html, source, now, seen, debugFirst);
+      const pageObservations = parseProshopPage(html, source, now, seen);
       observations.push(...pageObservations);
 
       // Count items that are genuinely new (not seen in previous scan).
