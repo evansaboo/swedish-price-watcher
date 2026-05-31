@@ -733,7 +733,16 @@ select { cursor: pointer; }
 .badge-new { background: var(--gold); color: #fff; }
 .badge-discount { background: var(--accent); color: #fff; }
 .badge-hot { background: #E86833; color: #fff; }
-.badge-condition { background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-secondary); text-transform: none; font-weight: 500; }
+.badge-condition {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  text-transform: none;
+  font-weight: 500;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Score indicator */
 .score-ring {
@@ -872,7 +881,8 @@ select { cursor: pointer; }
   width: 120px;
   min-width: 120px;
   aspect-ratio: unset;
-  height: 100%;
+  height: auto;
+  min-height: 100px;
   border-bottom: none;
   border-right: 1px solid var(--border-light);
 }
@@ -880,14 +890,42 @@ select { cursor: pointer; }
 .list-view .card-badges { position: static; flex-direction: column; gap: 3px; padding: 6px; }
 .list-view .card-badges-left { flex-direction: column; }
 .list-view .score-ring { width: 30px; height: 30px; font-size: 10px; }
-.list-view .card-body { flex-direction: row; align-items: center; gap: 12px; padding: 10px 16px; flex: 1; min-width: 0; }
-.list-view .card-title { margin-bottom: 0; font-size: 13.5px; flex: 1; min-width: 0; -webkit-line-clamp: 1; }
+.list-view .card-body {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 16px;
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+}
+.list-view .card-title {
+  margin-bottom: 0;
+  font-size: 13.5px;
+  width: 100%;
+  -webkit-line-clamp: 1;
+}
 .list-view .card-store { margin-bottom: 0; }
 .list-view .card-category { margin-bottom: 0; }
-.list-view .card-pricing { flex-direction: row; align-items: center; gap: 12px; flex-shrink: 0; }
+.list-view .card-pricing {
+  margin-top: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
 .list-view .card-price-main { font-size: 17px; }
 .list-view .card-price-ref { flex-direction: row; gap: 8px; align-items: center; }
-.list-view .card-footer { border-top: none; border-left: 1px solid var(--border-light); flex-direction: column; padding: 8px 12px; gap: 4px; justify-content: center; min-width: 100px; }
+.list-view .card-footer {
+  border-top: none;
+  border-left: 1px solid var(--border-light);
+  flex-direction: column;
+  padding: 8px 12px;
+  gap: 4px;
+  justify-content: center;
+  min-width: 90px;
+  flex-shrink: 0;
+}
 
 /* ── PAGINATION ────────────────────────────────────────────────── */
 .pagination {
@@ -1460,7 +1498,19 @@ select { cursor: pointer; }
   .search-wrap { max-width: 100%; }
   .search-shortcut { display: none; }
 
-  .filter-bar-inner { padding: 0 14px; }
+  .filter-bar-inner {
+    padding: 0 14px;
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--filter-bar-height);
+    padding-top: 6px;
+    padding-bottom: 6px;
+    gap: 6px;
+  }
+  .filter-pills { flex: 1; min-width: 0; }
+  .filter-bar-right { flex-shrink: 1; gap: 6px; }
+  .sort-select { max-width: 120px; font-size: 11.5px; padding-left: 6px; }
+
   .filter-panel-inner { padding: 16px 14px; }
   .filter-grid { grid-template-columns: 1fr 1fr; }
 
@@ -1468,22 +1518,52 @@ select { cursor: pointer; }
 
   .main { padding: 12px 14px 48px; }
   .product-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
-  .list-view .card-image { width: 80px; min-width: 80px; }
-  .list-view .card-body { flex-wrap: wrap; }
 
-  .sort-select { max-width: 140px; }
+  /* List view on tablet/mobile */
+  .list-view .card-image { width: 80px; min-width: 80px; }
+  .list-view .card-footer { min-width: 70px; padding: 8px; }
+  .list-view .card-price-main { font-size: 15px; }
 
   .drawer { width: min(400px, 95vw); }
   .rule-row-two-col { grid-template-columns: 1fr; }
 
   .scheduler-pill { display: none; }
+
+  .badge-condition { max-width: 140px; }
 }
 
 @media (max-width: 480px) {
   .product-grid { grid-template-columns: 1fr; }
   .filter-grid { grid-template-columns: 1fr; }
-  .header-actions { gap: 6px; }
+  .header-actions { gap: 5px; }
   .scan-btn-label { display: none; }
   .fav-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
+
+  /* Filter bar: stack pills and right on narrow screens */
+  .filter-bar-inner { flex-wrap: wrap; }
+  .filter-pills { order: 1; flex-basis: 100%; overflow-x: auto; }
+  .filter-bar-right { order: 2; width: 100%; justify-content: space-between; }
+  .sort-select { flex: 1; max-width: none; }
+
+  /* List view on phone */
+  .list-view .product-card { flex-wrap: wrap; }
+  .list-view .card-image { width: 60px; min-width: 60px; min-height: 60px; }
+  .list-view .card-body { padding: 8px 12px; }
+  .list-view .card-footer {
+    border-left: none;
+    border-top: 1px solid var(--border-light);
+    flex-direction: row;
+    width: 100%;
+    min-width: unset;
+    padding: 6px 12px;
+  }
+  .list-view .card-pricing { gap: 8px; }
+  .list-view .card-price-main { font-size: 14px; }
+
+  .badge-condition { max-width: 120px; }
+
+  /* Card grid mobile tweaks */
+  .card-image { aspect-ratio: 3/2; }
+  .card-price-main { font-size: 19px; }
 }
