@@ -156,6 +156,30 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   // ── Health ─────────────────────────────────────────────────────
   app.get('/health', async () => ({ ok: true }));
 
+  // ── Debug: ProShop HTML inspection (temporary) ─────────────────
+  app.get('/api/debug/proshop-html', async () => {
+    const { load } = await import('cheerio');
+    const scrapflyKey = process.env.SCRAPFLY_API_KEY?.trim() || '';
+    if (!scrapflyKey) return { error: 'No SCRAPFLY_API_KEY' };
+    const params = new URLSearchParams({ key: scrapflyKey, url: 'https://www.proshop.se/Outlet', asp: 'true', country: 'se', render_js: 'true' });
+    const resp = await fetch(`https://api.scrapfly.io/scrape?${params}`, { signal: AbortSignal.timeout(60000) });
+    const data = await resp.json();
+    const html = data.result?.content ?? '';
+    const $ = load(html);
+    const items = $('li.site-productlist-item');
+    const firstItemHtml = items.first().html()?.slice(0, 3000) || 'NO ITEMS FOUND';
+    const imgInfo = [];
+    items.slice(0, 3).each((i, el) => {
+      const imgs = $(el).find('img');
+      const pictures = $(el).find('picture source');
+      const info = { itemIndex: i, imgCount: imgs.length, pictureSourceCount: pictures.length, imgs: [], pictureSources: [] };
+      imgs.each((_, img) => info.imgs.push(Object.fromEntries(Object.entries($(img).attr() || {}).map(([k,v]) => [k, (v||'').slice(0, 150)]))));
+      pictures.each((_, src) => info.pictureSources.push({ srcset: ($(src).attr('srcset') || '').slice(0, 150), type: $(src).attr('type') || '' }));
+      imgInfo.push(info);
+    });
+    return { totalItems: items.length, firstItemHtml, imgInfo };
+  });
+
   // ── Status ─────────────────────────────────────────────────────
   app.get('/api/status', async () => {
     const state = store.getState();
