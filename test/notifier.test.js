@@ -373,7 +373,7 @@ test('alert rule with categories does not match products with no category', asyn
   }
 });
 
-test('alert rule with excludedSources skips items from excluded sources', async () => {
+test('sourceFilterMode=exclude skips items from listed sources (backward compat with excludedSources)', async () => {
   const payloads = [];
   const originalFetch = globalThis.fetch;
 
@@ -401,6 +401,7 @@ test('alert rule with excludedSources skips items from excluded sources', async 
           enabled: true,
           keywords: ['Sony'],
           categories: [],
+          // old excludedSources field — should be auto-migrated to exclude mode
           excludedSources: ['elgiganten-outlet', 'netonnet-outlet'],
           webhooks: [MAIN_WEBHOOK]
         }]
@@ -413,6 +414,52 @@ test('alert rule with excludedSources skips items from excluded sources', async 
     assert.ok(state.notifications['wh:1:rule:rule-excl'], 'Webhallen notification stored');
     assert.equal(state.notifications['elg:1:rule:rule-excl'], undefined, 'Elgiganten must be excluded');
     assert.equal(state.notifications['nn:1:rule:rule-excl'], undefined, 'NetOnNet must be excluded');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('sourceFilterMode=include only notifies from listed sources', async () => {
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_url, init) => {
+    payloads.push(JSON.parse(init.body));
+    return { ok: true, status: 204, statusText: 'No Content' };
+  };
+
+  try {
+    const state = createDefaultState();
+    const notifier = makeNotifier();
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [
+        { ...BASE_ITEM, listingKey: 'elg:1', sourceId: 'elgiganten-outlet', title: 'RTX 4070', latestPriceSek: 4500 },
+        { ...BASE_ITEM, listingKey: 'wh:1', sourceId: 'webhallen-fyndware', title: 'RTX 4070 fyndware', latestPriceSek: 4400 },
+        { ...BASE_ITEM, listingKey: 'nn:1', sourceId: 'netonnet-outlet', title: 'RTX 4070 outlet', latestPriceSek: 4600 }
+      ],
+      sources: [],
+      notificationSettings: {
+        notificationsEnabled: true,
+        alertRules: [{
+          id: 'rule-incl',
+          label: 'GPU - Webhallen only',
+          enabled: true,
+          keywords: ['RTX'],
+          categories: [],
+          filteredSources: ['webhallen-fyndware'],
+          sourceFilterMode: 'include',
+          webhooks: [MAIN_WEBHOOK]
+        }]
+      },
+      state
+    });
+
+    assert.equal(summary.sent, 1, 'Only the included source should notify');
+    assert.match(payloads[0].embeds[0].title, /fyndware/i, 'Webhallen item notified');
+    assert.ok(state.notifications['wh:1:rule:rule-incl'], 'Webhallen notification stored');
+    assert.equal(state.notifications['elg:1:rule:rule-incl'], undefined, 'Elgiganten not in include list');
+    assert.equal(state.notifications['nn:1:rule:rule-incl'], undefined, 'NetOnNet not in include list');
   } finally {
     globalThis.fetch = originalFetch;
   }

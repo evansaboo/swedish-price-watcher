@@ -1232,7 +1232,8 @@ function createEmptyRule() {
     enabled: true,
     keywords: [],
     categories: [],
-    excludedSources: [],
+    filteredSources: [],
+    sourceFilterMode: 'exclude',
     webhooks: [''],
     minDiscountPercent: null
   };
@@ -1330,10 +1331,18 @@ function createRuleElement(rule) {
           <div class="chip-input-wrap" id="cat-chips-${rule.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="Search…" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
         </div>
       </div>
-      <div class="rule-row">
-        <div class="rule-field">
-          <label class="rule-field-label">Exclude sources <span class="rule-hint">Optional</span></label>
-          <div class="chip-input-wrap" id="src-chips-${rule.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="Search…" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
+      <div class="rule-row rule-row-source-filter">
+        <div class="rule-field rule-field-source-filter">
+          <label class="rule-field-label">Source filter
+            <span class="rule-hint">Optional</span>
+          </label>
+          <div class="source-filter-wrap">
+            <div class="source-filter-mode-toggle">
+              <button type="button" class="source-mode-btn ${rule.sourceFilterMode !== 'include' ? 'active' : ''}" data-mode="exclude">Exclude</button>
+              <button type="button" class="source-mode-btn ${rule.sourceFilterMode === 'include' ? 'active' : ''}" data-mode="include">Include only</button>
+            </div>
+            <div class="chip-input-wrap" id="src-chips-${rule.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="Search sources…" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
+          </div>
         </div>
       </div>
       <div class="rule-row">
@@ -1361,18 +1370,33 @@ function createRuleElement(rule) {
   wireChipInput({ container: li.querySelector(`#kw-chips-${rule.id}`), items: rule.keywords, onAdd: () => {}, onRemove: () => {}, allOptions: null });
   wireChipInput({ container: li.querySelector(`#cat-chips-${rule.id}`), items: rule.categories, onAdd: () => {}, onRemove: () => {}, allOptions: allCategories });
 
-  // Excluded sources
-  if (!Array.isArray(rule.excludedSources)) rule.excludedSources = [];
+  // Source filter — include/exclude mode toggle + chip input
+  // Migrate old excludedSources to new model
+  if (!Array.isArray(rule.filteredSources)) {
+    rule.filteredSources = Array.isArray(rule.excludedSources) ? rule.excludedSources : [];
+    delete rule.excludedSources;
+  }
+  if (!rule.sourceFilterMode) rule.sourceFilterMode = 'exclude';
+
   const sourceLabels = allSources.map(s => s.label);
   const labelToId = Object.fromEntries(allSources.map(s => [s.label, s.id]));
   const idToLabel = Object.fromEntries(allSources.map(s => [s.id, s.label]));
-  const excludedLabels = rule.excludedSources.map(id => idToLabel[id] ?? id);
+  const filteredLabels = rule.filteredSources.map(id => idToLabel[id] ?? id);
+
   wireChipInput({
     container: li.querySelector(`#src-chips-${rule.id}`),
-    items: excludedLabels,
-    onAdd: label => { const id = labelToId[label] ?? label; if (!rule.excludedSources.includes(id)) rule.excludedSources.push(id); },
-    onRemove: label => { const id = labelToId[label] ?? label; const idx = rule.excludedSources.indexOf(id); if (idx !== -1) rule.excludedSources.splice(idx, 1); },
+    items: filteredLabels,
+    onAdd: label => { const id = labelToId[label] ?? label; if (!rule.filteredSources.includes(id)) rule.filteredSources.push(id); },
+    onRemove: label => { const id = labelToId[label] ?? label; const idx = rule.filteredSources.indexOf(id); if (idx !== -1) rule.filteredSources.splice(idx, 1); },
     allOptions: sourceLabels
+  });
+
+  // Mode toggle buttons
+  li.querySelectorAll('.source-mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      rule.sourceFilterMode = btn.dataset.mode;
+      li.querySelectorAll('.source-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === rule.sourceFilterMode));
+    });
   });
 
   // Webhooks

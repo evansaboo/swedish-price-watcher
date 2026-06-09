@@ -296,12 +296,15 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           const keywords = (Array.isArray(r.keywords) ? r.keywords : []).filter(k => typeof k === 'string' && k.trim()).map(k => k.trim());
           const categories = (Array.isArray(r.categories) ? r.categories : []).filter(c => typeof c === 'string' && c.trim()).map(c => c.trim());
           const webhooks = (Array.isArray(r.webhooks) ? r.webhooks : []).filter(w => typeof w === 'string' && w.trim()).map(w => w.trim());
-          const excludedSources = (Array.isArray(r.excludedSources) ? r.excludedSources : []).filter(s => typeof s === 'string' && s.trim()).map(s => s.trim());
+          // Migrate old excludedSources → filteredSources with mode='exclude'
+          const rawFiltered = Array.isArray(r.filteredSources) ? r.filteredSources : (Array.isArray(r.excludedSources) ? r.excludedSources : []);
+          const filteredSources = rawFiltered.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim());
+          const sourceFilterMode = r.sourceFilterMode === 'include' ? 'include' : 'exclude';
           return {
             id: typeof r.id === 'string' && r.id ? r.id : `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             label: typeof r.label === 'string' ? r.label.trim() : '',
             enabled: r.enabled !== false,
-            keywords, categories, webhooks, excludedSources,
+            keywords, categories, webhooks, filteredSources, sourceFilterMode,
             ...(typeof r.minDiscountPercent === 'number' && Number.isFinite(r.minDiscountPercent) && r.minDiscountPercent > 0 ? { minDiscountPercent: r.minDiscountPercent } : {})
           };
         })

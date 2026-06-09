@@ -63,14 +63,17 @@ function parseRetryDelayMs(response) {
 
 /**
  * Returns true if the item matches all constraints of an alert rule:
- * - Item sourceId must NOT be in excludedSources (if any are set)
+ * - Source filter: item sourceId must pass the include/exclude source list (if set)
  * - At least one keyword token sequence must appear in item title (if keywords are set)
  * - Item category must match at least one rule category (if categories are set)
  * - Item discount % must be ≥ minDiscountPercent (if set)
  */
-function itemMatchesRule(item, { keywords, categories, minDiscountPercent, excludedSources }) {
-  if (excludedSources && excludedSources.length) {
-    if (excludedSources.includes(item.sourceId)) return false;
+function itemMatchesRule(item, { keywords, categories, minDiscountPercent, filteredSources, sourceFilterMode }) {
+  // Source filter — support both include and exclude modes
+  if (filteredSources && filteredSources.length) {
+    const inList = filteredSources.includes(item.sourceId);
+    if (sourceFilterMode === 'include' && !inList) return false;
+    if (sourceFilterMode !== 'include' && inList) return false;
   }
 
   if (typeof minDiscountPercent === 'number' && Number.isFinite(minDiscountPercent) && minDiscountPercent > 0) {
@@ -131,6 +134,8 @@ export class DiscordNotifier {
   /**
    * Send Discord notifications for each enabled alert rule.
    * A rule fires when a new item matches all its constraints:
+   *   - Source filter: sourceFilterMode='include' → only listed sources;
+   *                    sourceFilterMode='exclude' (default) → all except listed
    *   - At least one keyword matches item title (if keywords are set; empty = any)
    *   - Item category matches a rule category (if categories are set; empty = any)
    *   - Item discount % ≥ minDiscountPercent (if set)
@@ -153,10 +158,12 @@ export class DiscordNotifier {
 
       const keywords = (rule.keywords ?? []).map((k) => String(k).toLowerCase().trim()).filter(Boolean);
       const categories = (rule.categories ?? []).map((c) => String(c).toLowerCase().trim()).filter(Boolean);
-      const excludedSources = (rule.excludedSources ?? []).map((s) => String(s).trim()).filter(Boolean);
+      // Backward compat: old rules used excludedSources; new rules use filteredSources + sourceFilterMode
+      const filteredSources = (rule.filteredSources ?? rule.excludedSources ?? []).map((s) => String(s).trim()).filter(Boolean);
+      const sourceFilterMode = rule.sourceFilterMode === 'include' ? 'include' : 'exclude';
       const minDiscountPercent = typeof rule.minDiscountPercent === 'number' && Number.isFinite(rule.minDiscountPercent) ? rule.minDiscountPercent : null;
 
-      const matches = newItems.filter((item) => itemMatchesRule(item, { keywords, categories, minDiscountPercent, excludedSources }));
+      const matches = newItems.filter((item) => itemMatchesRule(item, { keywords, categories, minDiscountPercent, filteredSources, sourceFilterMode }));
 
       for (const item of matches) {
         const notificationKey = `${item.listingKey}:rule:${rule.id}`;

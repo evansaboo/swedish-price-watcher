@@ -1285,6 +1285,22 @@ select { cursor: pointer; }
 .rule-body { display: flex; flex-direction: column; gap: 12px; }
 .rule-row { display: flex; flex-direction: column; gap: 10px; }
 .rule-row-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rule-row-source-filter .rule-field-source-filter { flex: 1 1 100%; }
+.source-filter-wrap { display: flex; flex-direction: column; gap: 6px; }
+.source-filter-mode-toggle { display: flex; gap: 4px; }
+.source-mode-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1.5px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.source-mode-btn:hover { border-color: var(--accent); color: var(--accent); }
+.source-mode-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .rule-field-label {
   display: block;
   font-size: 11px;
