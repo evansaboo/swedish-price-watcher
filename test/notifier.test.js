@@ -216,7 +216,7 @@ test('Discord 429 does not fail whole notification summary', async () => {
   }
 });
 
-test('maxPriceSek threshold skips items above the limit', async () => {
+test('minDiscountPercent threshold skips items below the minimum discount', async () => {
   const payloads = [];
   const originalFetch = globalThis.fetch;
 
@@ -231,21 +231,23 @@ test('maxPriceSek threshold skips items above the limit', async () => {
     await notifier.notifyScan({
       deals: [],
       newItems: [
-        { ...BASE_ITEM, listingKey: 'src:cheap', title: 'Cheap item', latestPriceSek: 499 },
-        { ...BASE_ITEM, listingKey: 'src:expensive', title: 'Expensive item', latestPriceSek: 3999 }
+        // 50% off (1000 ref, 500 price) — should match ≥20%
+        { ...BASE_ITEM, listingKey: 'src:big-discount', title: 'Big discount item', latestPriceSek: 500, referencePriceSek: 1000 },
+        // 5% off — should NOT match ≥20%
+        { ...BASE_ITEM, listingKey: 'src:tiny-discount', title: 'Tiny discount item', latestPriceSek: 950, referencePriceSek: 1000 }
       ],
       sources: [],
       notificationSettings: {
         notificationsEnabled: true,
-        alertRules: [{ id: 'rule-price', label: 'Under 1k', enabled: true, keywords: [], categories: [], maxPriceSek: 1000, webhooks: [MAIN_WEBHOOK] }]
+        alertRules: [{ id: 'rule-discount', label: 'Min 20% off', enabled: true, keywords: [], categories: [], minDiscountPercent: 20, webhooks: [MAIN_WEBHOOK] }]
       },
       state
     });
 
     assert.equal(payloads.length, 1);
-    assert.match(payloads[0].embeds[0].title, /Cheap/i);
-    assert.ok(state.notifications['src:cheap:rule:rule-price']);
-    assert.equal(state.notifications['src:expensive:rule:rule-price'], undefined);
+    assert.match(payloads[0].embeds[0].title, /Big discount/i);
+    assert.ok(state.notifications['src:big-discount:rule:rule-discount']);
+    assert.equal(state.notifications['src:tiny-discount:rule:rule-discount'], undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

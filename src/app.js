@@ -302,7 +302,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
             label: typeof r.label === 'string' ? r.label.trim() : '',
             enabled: r.enabled !== false,
             keywords, categories, webhooks, excludedSources,
-            ...(typeof r.maxPriceSek === 'number' && Number.isFinite(r.maxPriceSek) ? { maxPriceSek: r.maxPriceSek } : {})
+            ...(typeof r.minDiscountPercent === 'number' && Number.isFinite(r.minDiscountPercent) && r.minDiscountPercent > 0 ? { minDiscountPercent: r.minDiscountPercent } : {})
           };
         })
       : [];

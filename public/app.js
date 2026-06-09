@@ -1234,7 +1234,7 @@ function createEmptyRule() {
     categories: [],
     excludedSources: [],
     webhooks: [''],
-    maxPriceSek: null
+    minDiscountPercent: null
   };
 }
 
@@ -1343,8 +1343,8 @@ function createRuleElement(rule) {
           <button type="button" class="ghost-btn add-webhook-btn" style="margin-top:0.375rem">+ Add webhook</button>
         </div>
         <div class="rule-field">
-          <label class="rule-field-label">Max price (SEK)</label>
-          <input type="number" class="modal-input rule-maxprice-input" placeholder="e.g. 5000" min="0" step="100" value="${rule.maxPriceSek != null ? rule.maxPriceSek : ''}" />
+          <label class="rule-field-label">Min discount %</label>
+          <input type="number" class="modal-input rule-mindiscount-input" placeholder="e.g. 20" min="0" max="100" step="1" value="${rule.minDiscountPercent != null ? rule.minDiscountPercent : ''}" />
         </div>
       </div>
     </div>`;
@@ -1394,10 +1394,10 @@ function createRuleElement(rule) {
   });
   syncWebhooks();
 
-  // Max price
-  li.querySelector('.rule-maxprice-input').addEventListener('input', e => {
+  // Min discount %
+  li.querySelector('.rule-mindiscount-input').addEventListener('input', e => {
     const v = Number(e.target.value);
-    rule.maxPriceSek = e.target.value.trim() === '' ? null : (Number.isFinite(v) && v >= 0 ? v : null);
+    rule.minDiscountPercent = e.target.value.trim() === '' ? null : (Number.isFinite(v) && v >= 0 ? v : null);
   });
 
   return li;

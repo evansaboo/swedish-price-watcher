@@ -66,17 +66,18 @@ function parseRetryDelayMs(response) {
  * - Item sourceId must NOT be in excludedSources (if any are set)
  * - At least one keyword token sequence must appear in item title (if keywords are set)
  * - Item category must match at least one rule category (if categories are set)
- * - Item price must be ≤ maxPriceSek (if set)
+ * - Item discount % must be ≥ minDiscountPercent (if set)
  */
-function itemMatchesRule(item, { keywords, categories, maxPriceSek, excludedSources }) {
-  const price = item.latestPriceSek ?? item.priceSek;
-
+function itemMatchesRule(item, { keywords, categories, minDiscountPercent, excludedSources }) {
   if (excludedSources && excludedSources.length) {
     if (excludedSources.includes(item.sourceId)) return false;
   }
 
-  if (typeof maxPriceSek === 'number' && Number.isFinite(maxPriceSek) && price > maxPriceSek) {
-    return false;
+  if (typeof minDiscountPercent === 'number' && Number.isFinite(minDiscountPercent) && minDiscountPercent > 0) {
+    const price = item.latestPriceSek ?? item.priceSek;
+    const refPrice = item.referencePriceSek ?? item.marketValueSek;
+    const discountPct = refPrice && refPrice > price ? Math.round((1 - price / refPrice) * 100) : 0;
+    if (discountPct < minDiscountPercent) return false;
   }
 
   if (keywords.length) {
@@ -132,7 +133,7 @@ export class DiscordNotifier {
    * A rule fires when a new item matches all its constraints:
    *   - At least one keyword matches item title (if keywords are set; empty = any)
    *   - Item category matches a rule category (if categories are set; empty = any)
-   *   - Item price ≤ maxPriceSek (if set)
+   *   - Item discount % ≥ minDiscountPercent (if set)
    * Sends to all webhooks listed on the rule.
    */
   async notifyAlertRules({ newItems, state, alertRules }) {
@@ -153,9 +154,9 @@ export class DiscordNotifier {
       const keywords = (rule.keywords ?? []).map((k) => String(k).toLowerCase().trim()).filter(Boolean);
       const categories = (rule.categories ?? []).map((c) => String(c).toLowerCase().trim()).filter(Boolean);
       const excludedSources = (rule.excludedSources ?? []).map((s) => String(s).trim()).filter(Boolean);
-      const maxPriceSek = typeof rule.maxPriceSek === 'number' && Number.isFinite(rule.maxPriceSek) ? rule.maxPriceSek : null;
+      const minDiscountPercent = typeof rule.minDiscountPercent === 'number' && Number.isFinite(rule.minDiscountPercent) ? rule.minDiscountPercent : null;
 
-      const matches = newItems.filter((item) => itemMatchesRule(item, { keywords, categories, maxPriceSek, excludedSources }));
+      const matches = newItems.filter((item) => itemMatchesRule(item, { keywords, categories, minDiscountPercent, excludedSources }));
 
       for (const item of matches) {
         const notificationKey = `${item.listingKey}:rule:${rule.id}`;
