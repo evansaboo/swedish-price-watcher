@@ -860,6 +860,17 @@ select { cursor: pointer; }
   color: var(--accent);
 }
 
+/* Cross-store price comparison */
+.card-cross-store {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--clr-danger, #c0392b);
+}
+.card-cross-store.is-best {
+  color: var(--clr-success, #1e8e4e);
+}
+
 /* Card footer */
 .card-footer {
   display: flex;
@@ -1234,6 +1245,13 @@ select { cursor: pointer; }
   margin-bottom: 14px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border-light);
+}
+.digest-section {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-secondary, transparent);
 }
 .rules-toolbar {
   display: flex;

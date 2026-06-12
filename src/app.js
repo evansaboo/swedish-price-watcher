@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import Fastify from 'fastify';
+import fastifyCompress from '@fastify/compress';
 import fastifyStatic from '@fastify/static';
 import { isSourceEnabled } from './lib/utils.js';
 import { buildProductSummaries } from './services/dealEngine.js';
@@ -147,6 +148,10 @@ function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
 export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler }) {
   const app = Fastify({ logger: false });
 
+  // Gzip/brotli for JSON + static responses — product payloads run to hundreds
+  // of KB and the app is typically served from a Pi over a Cloudflare tunnel.
+  await app.register(fastifyCompress, { global: true, threshold: 1024 });
+
   try {
     await app.register(fastifyStatic, { root: config.publicDir, index: ['index.html'] });
   } catch (error) {
@@ -230,6 +235,49 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }, favSet, state.stats.lastRunStartedAt, wishlistSet);
   });
 
+  // ── CSV Export (same filters as /api/outlet-products) ──────────
+  app.get('/api/export.csv', async (request, reply) => {
+    const state = store.getState();
+    const q = request.query;
+    const rows = productCache.exportRows({
+      search: q.search,
+      category: q.category,
+      store: q.store,
+      campaign: q.campaign,
+      favoritesOnly: q.favoritesOnly === 'true',
+      discountedOnly: q.discountedOnly === 'true',
+      referenceOnly: q.referenceOnly === 'true',
+      newOnly: q.newOnly === 'true',
+      hotOnly: q.hotOnly === 'true',
+      wishlistOnly: q.wishlistOnly === 'true',
+      minDiscountPercent: Number.parseInt(q.minDiscountPercent ?? '', 10),
+      minPriceSek: Number.parseInt(q.minPriceSek ?? q.minPrice ?? '', 10),
+      maxPriceSek: Number.parseInt(q.maxPriceSek ?? q.maxPrice ?? '', 10),
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+    }, getFavoriteCategorySet(state), state.stats.lastRunStartedAt, new Set(state.preferences?.wishlist ?? []));
+
+    const esc = (v) => {
+      const s = String(v ?? '');
+      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = ['title', 'store', 'category', 'condition', 'price_sek', 'reference_price_sek', 'discount_sek', 'discount_percent', 'availability', 'first_seen', 'last_seen', 'url'];
+    const lines = [header.join(',')];
+    for (const p of rows) {
+      lines.push([
+        esc(p.title), esc(p.sourceLabel), esc(p.category), esc(p.conditionLabel ?? p.condition),
+        p.currentPriceSek ?? '', p.initialPriceSek ?? '', p.discountSek ?? '', p.discountPercent ?? '',
+        esc(p.availability), p.firstSeenAt ?? '', p.lastSeenAt ?? '', esc(p.url)
+      ].join(','));
+    }
+
+    reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="pricewatch-export-${new Date().toISOString().slice(0, 10)}.csv"`);
+    // BOM so Excel opens Swedish characters correctly
+    return `﻿${lines.join('\n')}\n`;
+  });
+
   // ── Outlet Categories (from cache) ─────────────────────────────
   app.get('/api/outlet-categories', async () => {
     const state = store.getState();
@@ -280,10 +328,10 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         if (!cw?.pattern || !cw?.webhook) continue;
         rules.push({ id: cw.id ?? `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, label: cw.label || cw.pattern, enabled: true, keywords: [], categories: [cw.pattern], webhooks: [cw.webhook] });
       }
-      return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: rules };
+      return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: rules, digest: settings.digest ?? null };
     }
 
-    return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: settings.alertRules };
+    return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: settings.alertRules, digest: settings.digest ?? null };
   });
 
   app.put('/api/notification-settings', async (request, reply) => {
@@ -305,12 +353,25 @@ export async function buildApp({ config, store, productCache, scanState, trigger
             label: typeof r.label === 'string' ? r.label.trim() : '',
             enabled: r.enabled !== false,
             keywords, categories, webhooks, filteredSources, sourceFilterMode,
-            ...(typeof r.minDiscountPercent === 'number' && Number.isFinite(r.minDiscountPercent) && r.minDiscountPercent > 0 ? { minDiscountPercent: r.minDiscountPercent } : {})
+            notifyPriceDrops: r.notifyPriceDrops !== false,
+            ...(typeof r.minDiscountPercent === 'number' && Number.isFinite(r.minDiscountPercent) && r.minDiscountPercent > 0 ? { minDiscountPercent: r.minDiscountPercent } : {}),
+            ...(typeof r.minPriceDropPercent === 'number' && Number.isFinite(r.minPriceDropPercent) && r.minPriceDropPercent >= 0 ? { minPriceDropPercent: r.minPriceDropPercent } : {})
           };
         })
       : [];
 
-    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules } };
+    const rawDigest = body.digest;
+    const digest = rawDigest && typeof rawDigest === 'object' && !Array.isArray(rawDigest)
+      ? {
+          enabled: rawDigest.enabled === true,
+          time: TIME_OF_DAY_PATTERN.test(String(rawDigest.time ?? '').trim()) ? String(rawDigest.time).trim() : '08:00',
+          webhook: typeof rawDigest.webhook === 'string' ? rawDigest.webhook.trim() : '',
+          ...(Number.isFinite(Number(rawDigest.minScore)) && Number(rawDigest.minScore) > 0 ? { minScore: Number(rawDigest.minScore) } : {}),
+          ...(Number.isFinite(Number(rawDigest.maxItems)) && Number(rawDigest.maxItems) > 0 ? { maxItems: Math.min(25, Number(rawDigest.maxItems)) } : {})
+        }
+      : null;
+
+    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules, ...(digest ? { digest } : {}) } };
 
     if (typeof store.savePreferences === 'function') {
       await store.savePreferences();
@@ -318,7 +379,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       await store.save();
     }
 
-    return { notificationsEnabled, alertRules };
+    return { notificationsEnabled, alertRules, digest };
   });
 
   // ── Scheduler ──────────────────────────────────────────────────

@@ -75,7 +75,7 @@ async function fetchBrands(fetcher) {
 }
 
 /** Paginate all outlet products for a single brand. */
-async function fetchBrandProducts(fetcher, brand) {
+async function fetchBrandProducts(fetcher, brand, stats) {
   const brandFilter = `${OUTLET_FILTER} AND brand:"${brand.replace(/"/g, '\\"')}"`;
   const hits = [];
   let page = 0;
@@ -88,7 +88,9 @@ async function fetchBrandProducts(fetcher, brand) {
       });
       result = payload?.results?.[0];
     } catch (err) {
-      // Partial is fine — a single brand failure is not fatal
+      // Partial is fine — a single brand failure is not fatal, but record it
+      // so the scan engine knows this snapshot may be incomplete.
+      if (stats) stats.failedBrands += 1;
       break;
     }
 
@@ -248,11 +250,12 @@ export async function collectFromElgiganten({ source, sourceState, fetcher, now 
   }
 
   const brandList = [...brands.keys()];
+  const stats = { failedBrands: 0 };
 
   // Step 2: fetch products per brand in small parallel batches
   for (let i = 0; i < brandList.length && rawHits.length < maxProducts; i += BRAND_QUERY_CONCURRENCY) {
     const batch = brandList.slice(i, i + BRAND_QUERY_CONCURRENCY);
-    const results = await Promise.all(batch.map((brand) => fetchBrandProducts(fetcher, brand)));
+    const results = await Promise.all(batch.map((brand) => fetchBrandProducts(fetcher, brand, stats)));
 
     for (const hits of results) {
       for (const hit of hits) {
@@ -274,6 +277,10 @@ export async function collectFromElgiganten({ source, sourceState, fetcher, now 
     .filter(Boolean);
 
   sourceState.lastDiscoveryCount = observations.length;
+  sourceState.lastScanPartial = stats.failedBrands > 0 || rawHits.length >= maxProducts;
+  if (stats.failedBrands > 0) {
+    console.warn(`[${source.id}] ${stats.failedBrands} brand quer${stats.failedBrands === 1 ? 'y' : 'ies'} failed — snapshot may be partial.`);
+  }
   return observations;
 }
 

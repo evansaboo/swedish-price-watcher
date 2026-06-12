@@ -1,5 +1,7 @@
 import { load } from 'cheerio';
+import { resolveIncrementalMode } from '../lib/incremental.js';
 import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js';
+import { resolveBypassBackend } from '../lib/bypassFetch.js';
 
 /**
  * ProShop Outlet + Demo scraper.
@@ -28,72 +30,6 @@ import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js'
  */
 
 const BASE_URL = 'https://www.proshop.se';
-
-function buildScraperApiUrl(targetUrl, apiKey, premium) {
-  const params = new URLSearchParams({
-    api_key: apiKey,
-    url: targetUrl,
-    render: 'true',
-    country_code: 'se',
-  });
-  if (premium) params.set('premium', 'true');
-  return `http://api.scraperapi.com?${params}`;
-}
-
-function buildScrapflyUrl(targetUrl, apiKey, renderJs) {
-  const params = new URLSearchParams({
-    key: apiKey,
-    url: targetUrl,
-    asp: 'true',
-    country: 'se',
-  });
-  if (renderJs) params.set('render_js', 'true');
-  return `https://api.scrapfly.io/scrape?${params}`;
-}
-
-async function scrapeViaScraperApi(url, apiKey, premium) {
-  const apiUrl = buildScraperApiUrl(url, apiKey, premium);
-  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`ScraperAPI HTTP ${response.status}: ${body.slice(0, 200)}`);
-  }
-  return response.text();
-}
-
-async function scrapeViaScrapfly(url, apiKey, renderJs) {
-  const apiUrl = buildScrapflyUrl(url, apiKey, renderJs);
-  const response = await fetch(apiUrl, { signal: AbortSignal.timeout(90_000) });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`Scrapfly HTTP ${response.status}: ${body.slice(0, 200)}`);
-  }
-  const data = await response.json();
-  const result = data.result ?? data;
-  if (result.status === 'ERROR' || (result.error && result.error !== null)) {
-    const reason = result.error?.description ?? result.error ?? 'unknown error';
-    throw new Error(`Scrapfly error: ${reason}`);
-  }
-  return result.content ?? '';
-}
-
-async function scrapeViaFlaresolverr(url, flareSolverrUrl) {
-  const response = await fetch(`${flareSolverrUrl}/v1`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cmd: 'request.get', url, maxTimeout: 90_000 }),
-    signal: AbortSignal.timeout(120_000),
-  });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`FlareSolverr HTTP ${response.status}: ${body.slice(0, 200)}`);
-  }
-  const data = await response.json();
-  if (data.status !== 'ok') {
-    throw new Error(`FlareSolverr error: ${JSON.stringify(data).slice(0, 300)}`);
-  }
-  return data.solution?.response ?? '';
-}
 
 function parseProshopPage(html, source, now, seen) {
   const $ = load(html);
@@ -155,45 +91,19 @@ function parseProshopPage(html, source, now, seen) {
 }
 
 export async function collectFromProshop({ source, sourceState, now }) {
-  // Priority: FlareSolverr (free, self-hosted) → ScraperAPI → Scrapfly
-  // FlareSolverr is preferred when configured — it has zero per-request cost.
-  // Paid services act as fallbacks for when FlareSolverr is unavailable.
-  const flareSolverrUrl = process.env.FLARESOLVERR_URL?.trim() || '';
-  const scraperApiKey =
-    (source.apiTokenEnvVar === 'SCRAPERAPI_KEY' ? process.env.SCRAPERAPI_KEY : null)?.trim() ||
-    process.env.SCRAPERAPI_KEY?.trim() ||
-    '';
-  const scrapflyKey =
-    (source.apiTokenEnvVar === 'SCRAPFLY_API_KEY' ? process.env.SCRAPFLY_API_KEY : null)?.trim() ||
-    process.env.SCRAPFLY_API_KEY?.trim() ||
-    '';
-
-  const useFlaresolverr = Boolean(flareSolverrUrl);
-  const useScraperApi = !useFlaresolverr && Boolean(scraperApiKey);
-  const useScrapfly = !useFlaresolverr && !useScraperApi && Boolean(scrapflyKey);
-
-  if (!useScraperApi && !useScrapfly && !useFlaresolverr) {
-    throw new Error(
-      `No scraping backend for ${source.label ?? source.id}. ` +
-        `Set one of: SCRAPERAPI_KEY (scraperapi.com, 5000 free credits/mo), ` +
-        `SCRAPFLY_API_KEY (scrapfly.io, 1000 free credits/mo), ` +
-        `or FLARESOLVERR_URL (self-hosted, free — deploy ghcr.io/flaresolverr/flaresolverr:latest).`
-    );
-  }
+  // Priority: FlareSolverr (free, self-hosted) → ScraperAPI → Scrapfly.
+  const backend = resolveBypassBackend(source, {
+    premium: source.premiumProxy === true,
+    renderJs: source.renderJs !== false,
+  });
 
   const pageDelayMs = source.pageDelayMs ?? 1500;
-  const premium = source.premiumProxy === true;
-  const renderJs = source.renderJs !== false;
-  // How many consecutive all-known pages before stopping (incremental mode).
-  const incrementalStopPages = source.incrementalStopPages ?? 2;
+  // Incremental on by default for ProShop (credit-limited backends); every
+  // incrementalFullScanEvery-th scan runs full so stale items can be pruned.
+  const incremental = resolveIncrementalMode(source, sourceState, { defaultStopPages: 2 });
+  const knownIds = incremental.knownIds;
 
-  // Known IDs from the previous scan — used for incremental/delta pagination.
-  const knownIds = sourceState.knownExternalIds instanceof Set
-    ? sourceState.knownExternalIds
-    : new Set();
-
-  const backendLabel = useScraperApi ? 'ScraperAPI' : useScrapfly ? 'Scrapfly' : 'FlareSolverr';
-  console.log(`[proshop] Using ${backendLabel}; known IDs: ${knownIds.size}`);
+  console.log(`[proshop] Using ${backend.label}; known IDs: ${knownIds.size}${incremental.active ? '' : ' (full scan)'}`);
 
   const sections = [
     { path: '/Outlet', maxPages: source.maxOutletPages ?? 40 },
@@ -202,6 +112,7 @@ export async function collectFromProshop({ source, sourceState, now }) {
 
   const seen = new Set();
   const observations = [];
+  let stoppedEarly = false;
 
   for (const { path, maxPages } of sections) {
     let consecutiveKnownPages = 0;
@@ -212,11 +123,10 @@ export async function collectFromProshop({ source, sourceState, now }) {
 
       let html;
       try {
-        if (useScraperApi) html = await scrapeViaScraperApi(url, scraperApiKey, premium);
-        else if (useScrapfly) html = await scrapeViaScrapfly(url, scrapflyKey, renderJs);
-        else html = await scrapeViaFlaresolverr(url, flareSolverrUrl);
+        html = await backend.fetchPage(url);
       } catch (err) {
         console.warn(`[proshop] ${path} page ${page} failed: ${err.message}`);
+        stoppedEarly = true;
         break;
       }
 
@@ -232,10 +142,11 @@ export async function collectFromProshop({ source, sourceState, now }) {
 
       // Incremental stop: if the entire page consists of already-known items,
       // we've caught up to where the previous scan left off.
-      if (knownIds.size > 0 && newOnPage === 0) {
+      if (incremental.active && newOnPage === 0) {
         consecutiveKnownPages += 1;
-        if (consecutiveKnownPages >= incrementalStopPages) {
+        if (consecutiveKnownPages >= incremental.stopPages) {
           console.log(`[proshop] ${path}: ${consecutiveKnownPages} consecutive fully-known pages — stopping early (incremental mode)`);
+          stoppedEarly = true;
           break;
         }
       } else {
@@ -247,6 +158,9 @@ export async function collectFromProshop({ source, sourceState, now }) {
   }
 
   sourceState.lastDiscoveryCount = observations.length;
-  console.log(`[proshop] Total: ${observations.length} products`);
+  // Incremental early-stop means deeper pages were never visited — the result is a
+  // partial snapshot, and the scan engine must not prune items missing from it.
+  sourceState.lastScanPartial = stoppedEarly;
+  console.log(`[proshop] Total: ${observations.length} products${stoppedEarly ? ' (partial — incremental stop)' : ''}`);
   return observations;
 }

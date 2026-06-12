@@ -6,13 +6,17 @@ A production outlet price tracker for Swedish electronics stores. Runs on a Rasp
 
 | Store | What it tracks | Method |
 |-------|---------------|--------|
-| **Elgiganten** | Outlet products | Direct Algolia API (brand-split pagination) |
+| **Elgiganten** | Outlet products + weekly campaigns | Direct Algolia API (brand-split pagination) |
 | **NetOnNet** | Outlet/clearance | Direct Next.js HTML scraping |
-| **Webhallen** | Fyndvara (outlet) | Webhallen internal API |
+| **Webhallen** | Fyndvara (outlet) + deals toplist | Webhallen internal API |
 | **Komplett** | B-grade / demovaror | `apify/cheerio-scraper` (Cloudflare bypass) |
 | **ProShop** | Mega Outlet + Demo | FlareSolverr (Cloudflare bypass, free) |
-| **Power** | Erbjudanden (deals) | `apify/playwright-scraper` (Angular SPA) |
+| **Power** | Outlet + campaign markdowns | Direct REST API (`o=true` outlet / `o=false` campaigns) |
 | **Inet** | Fyndhörnan (bargains) | Direct HTTP + hydrate JSON parsing |
+| **Kjell & Company** | Outlet (A/B grade) | Direct JSON API (XHR headers, ~3 300 products) |
+| **Dustin** | Fyndvaror (clearance) | FlareSolverr + embedded JSON (disabled until verified on the Pi) |
+| **Blocket** | Second-hand electronics | Internal BFF JSON API (keyword search) |
+| **SweClockers** | Community deals (Dagens fynd) | FlareSolverr (Cloudflare bypass) |
 
 ## What it does
 
@@ -23,7 +27,13 @@ A production outlet price tracker for Swedish electronics stores. Runs on a Rasp
 - Lets you mark favorite categories and filter/sort by them
 - Cancel button to abort stuck scans
 - Scheduled scans with configurable interval and active-hour windows (Swedish time)
-- Discord alerts for: new discounted listings, price drops in favorite categories
+- Discord alert rules fire on **new matches** and **price drops** (per-rule toggle + min-drop %)
+- **Daily digest**: top new deals by score posted once per day at a configured Stockholm time (Settings → Alerts)
+- **Cross-store matching**: the same product is linked across stores via GTIN/EAN and manufacturer part numbers (with normalized-title fallback); cards show "Cheaper at X" / "Best price of N stores"
+- **Incremental scanning** for ProShop, Kjell, and NetOnNet — pagination stops once consecutive pages contain only known items; every 5th scan runs full so stale items still get pruned
+- CSV export of the current filtered product list (`/api/export.csv` or the button in the filter panel)
+- Partial-scan protection: cancelled scans and incremental early-stops never prune items that simply weren't revisited
+- Gzip/brotli compression on all API and static responses
 
 ## Setup
 
@@ -46,14 +56,31 @@ Open `http://127.0.0.1:3030`.
 | `RUN_ON_START` | No | Set `true` to scan immediately on boot |
 | `SCRAPFLY_API_KEY` | No | Scrapfly key (optional ProShop fallback, 1000 free credits/mo) |
 | `FLARESOLVERR_URL` | Auto | Set by docker-compose to `http://flaresolverr:8191` |
+| `ARCHIVE_RETENTION_DAYS` | No | How long pruned items keep their price history (default: 90) |
+| `MAX_HISTORY_ENTRIES` | No | Price-history points kept per item (default: 20) |
 
-### ProShop — Cloudflare bypass
+### ProShop / Dustin / SweClockers — Cloudflare bypass
 
-ProShop is behind Cloudflare Bot Management. FlareSolverr handles this automatically
+These stores sit behind Cloudflare Bot Management. FlareSolverr handles this automatically
 (included in docker-compose). No paid API keys needed.
 
-ProShop uses **incremental scanning** — on repeat scans it stops pagination as soon as it sees
-pages full of already-known items, cutting scan time significantly.
+ProShop, Kjell, and NetOnNet use **incremental scanning** — on repeat scans, pagination stops
+as soon as consecutive pages contain only already-known items. Every 5th scan
+(`incrementalFullScanEvery`) runs a full pass so removed listings still get pruned.
+
+### Enabling Dustin (first time)
+
+The `dustin-fyndvaror` source ships **disabled** — it was written against an archived
+page capture and needs one verification pass on the Pi where FlareSolverr runs:
+
+```bash
+# 1. Enable the source via the dashboard (Settings → Sources) or set enabled=true in config/sources.json
+# 2. Run a single-source scan:
+curl -X POST localhost:3000/api/run -H 'content-type: application/json' -d '{"sourceIds":["dustin-fyndvaror"]}'
+# 3. Check the logs: docker compose logs app --tail 30
+#    Expect "[dustin-fyndvaror] /group/ovrigt/fyndvaror page 1: N new products" with N > 0,
+#    and page 2 also yielding products (verifies ?page= pagination).
+```
 
 ## Raspberry Pi 4 deployment
 
@@ -169,12 +196,18 @@ npm run scan
 
 Discord sends happen **per source as it finishes**, so you see results incrementally rather than waiting for all sources. Each message includes price context and discount %.
 
+Alert rules (Settings → Alerts) control what gets posted. Each rule has keywords,
+categories, a source include/exclude filter, min discount %, one or more webhooks,
+and a **price-drop toggle**: when enabled (default), the rule also fires when a
+tracked item matching the rule drops in price by at least `Min drop %` (default 5%).
+Drop alerts are rate-limited to one per item per rule per cooldown window
+(`NOTIFICATION_COOLDOWN_HOURS`, default 24 h).
+
 Notification modes per source (set in `config/sources.json`):
 
 | Mode | When it fires |
 |------|---------------|
 | `favorite-events` | New discounted item or price drop in a favorite category |
-
 | `new-listings` | Every first-seen listing |
 | `none` | Silent |
 

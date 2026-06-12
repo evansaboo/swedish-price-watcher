@@ -48,6 +48,71 @@ function currentPrices(items) {
     .filter((value) => Number.isFinite(value));
 }
 
+// ── Cross-store identity grouping ──────────────────────────────
+// Items are linked when they share any hard identifier (GTIN/EAN,
+// manufacturer part number) or the normalized-title productKey.
+// Union-find keeps it transitive: A(gtin+mpn) links B(mpn only).
+
+function normalizeGtin(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  return digits.length >= 8 && digits.length <= 14 ? digits : null;
+}
+
+function normalizeMpn(value) {
+  const token = String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // Too-short or all-letter/all-digit tokens collide across unrelated products.
+  if (token.length < 4 || !/[A-Z]/.test(token) || !/\d/.test(token)) return null;
+  return token;
+}
+
+function identityTokens(item) {
+  const tokens = [];
+  const gtin = normalizeGtin(item.gtin);
+  if (gtin) tokens.push(`gtin:${gtin}`);
+  for (const mpnField of [item.manufacturerArticleNumber, item.altArticleNumber]) {
+    const mpn = normalizeMpn(mpnField);
+    if (mpn) tokens.push(`mpn:${mpn}`);
+  }
+  if (item.productKey) tokens.push(`key:${item.productKey}`);
+  return tokens;
+}
+
+/**
+ * Group items by shared identity. Returns Map<groupRoot, item[]>.
+ * Equivalent to the old productKey grouping when no hard identifiers exist.
+ */
+export function buildIdentityGroups(items) {
+  const parent = new Map();
+  const find = (x) => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root);
+    // Path compression
+    while (parent.get(x) !== root) { const next = parent.get(x); parent.set(x, root); x = next; }
+    return root;
+  };
+  const union = (a, b) => {
+    if (!parent.has(a)) parent.set(a, a);
+    if (!parent.has(b)) parent.set(b, b);
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  for (const item of items) {
+    const node = `item:${item.listingKey}`;
+    if (!parent.has(node)) parent.set(node, node);
+    for (const token of identityTokens(item)) union(node, token);
+  }
+
+  const groups = new Map();
+  for (const item of items) {
+    const root = find(`item:${item.listingKey}`);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(item);
+  }
+  return groups;
+}
+
 function historyPrices(items) {
   return items.flatMap((item) => item.history.map((entry) => entry.priceSek).filter((value) => Number.isFinite(value)));
 }
@@ -168,29 +233,34 @@ export function mergeObservations(state, observations, maxHistoryEntries = 60) {
 
 export function computeDeals(state, thresholds) {
   const items = Object.values(state.items).filter((item) => Number.isFinite(item.latestPriceSek));
-  const groupedItems = new Map();
+  // Identity-based grouping: GTIN / manufacturer part number link the same
+  // product across stores; falls back to productKey when neither exists.
+  const groupedItems = buildIdentityGroups(items);
 
-  for (const item of items) {
-    if (!groupedItems.has(item.productKey)) {
-      groupedItems.set(item.productKey, []);
-    }
-
-    groupedItems.get(item.productKey).push(item);
+  // Precompute per-group price stats once — recomputing medians per item makes
+  // large groups quadratic, and computeDeals runs after every source in a scan.
+  const statsByListingKey = new Map();
+  for (const peers of groupedItems.values()) {
+    const peerCurrentPrices = currentPrices(peers);
+    const stats = {
+      currentMedian: median(peerCurrentPrices),
+      historyMedian: median(historyPrices(peers)),
+      bestCurrentSek: peerCurrentPrices.length ? Math.min(...peerCurrentPrices) : null
+    };
+    for (const peer of peers) statsByListingKey.set(peer.listingKey, stats);
   }
 
   return items
     .map((item) => {
-      const peers = groupedItems.get(item.productKey) ?? [item];
-      const peerCurrentPrices = currentPrices(peers);
-      const peerHistoryPrices = historyPrices(peers);
+      const stats = statsByListingKey.get(item.listingKey) ?? { currentMedian: null, historyMedian: null, bestCurrentSek: null };
       const comparisonPriceSek = firstFinite(
         item.marketValueSek,
         item.referencePriceSek,
-        median(peerCurrentPrices),
-        median(peerHistoryPrices),
+        stats.currentMedian,
+        stats.historyMedian,
         item.latestPriceSek
       );
-      const bestCurrentSek = peerCurrentPrices.length ? Math.min(...peerCurrentPrices) : item.latestPriceSek;
+      const bestCurrentSek = stats.bestCurrentSek ?? item.latestPriceSek;
       const estimatedPrivateSaleSek =
         item.resaleEstimateSek ?? Math.round(comparisonPriceSek * resaleFactorForCondition(item.condition));
       const totalCostSek = item.latestPriceSek + (item.shippingEstimateSek ?? 0) + (item.feesEstimateSek ?? 0);

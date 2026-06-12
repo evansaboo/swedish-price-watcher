@@ -15,6 +15,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@fastify/compress": "^9.0.0",
     "@fastify/static": "^9.1.1",
     "apify-client": "^2.23.0",
     "cheerio": "^1.2.0",

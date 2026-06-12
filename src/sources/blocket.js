@@ -165,10 +165,11 @@ async function waitOrAbort(milliseconds, signal) {
  * Paginates up to maxPagesPerKeyword pages for each search keyword.
  * Keywords are merged from: source config + enabled keyword alerts + favorite categories + category webhook patterns.
  */
-export async function collectFromBlocket({ source, fetcher, preferences, now, signal }) {
+export async function collectFromBlocket({ source, fetcher, sourceState, preferences, now, signal }) {
   const keywords = buildKeywords(source, preferences);
   const maxPagesPerKeyword = source.maxPagesPerKeyword ?? 3;
   const maxProducts = source.maxProducts ?? 2000;
+  if (sourceState) sourceState.lastScanPartial = false;
 
   console.log(`[${source.id}] Searching ${keywords.length} keywords (maxPages=${maxPagesPerKeyword}, maxProducts=${maxProducts})`);
 
@@ -200,10 +201,12 @@ export async function collectFromBlocket({ source, fetcher, preferences, now, si
         data = JSON.parse(result.body);
       } catch (err) {
         if (signal?.aborted || /aborted/i.test(err?.message ?? '')) {
+          if (sourceState) sourceState.lastScanPartial = true;
           return observations;
         }
 
         console.warn(`[${source.id}] Fetch/parse error for keyword="${keyword}" page=${page}: ${err.message}`);
+        if (sourceState) sourceState.lastScanPartial = true;
         break; // non-fatal — skip remaining pages for this keyword
       }
 

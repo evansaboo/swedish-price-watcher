@@ -419,6 +419,131 @@ test('sourceFilterMode=exclude skips items from listed sources (backward compat 
   }
 });
 
+test('alert rule fires on price drops meeting the minimum drop percent', async () => {
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_url, init) => {
+    payloads.push(JSON.parse(init.body));
+    return { ok: true, status: 204, statusText: 'No Content' };
+  };
+
+  try {
+    const state = createDefaultState();
+    state.items['src:drop-1'] = { ...BASE_ITEM, listingKey: 'src:drop-1', latestPriceSek: 1500 };
+    state.items['src:drop-2'] = { ...BASE_ITEM, listingKey: 'src:drop-2', title: 'Tiny drop item', latestPriceSek: 1930 };
+
+    const notifier = makeNotifier();
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [],
+      priceDrops: [
+        // 25% drop — should notify
+        { listingKey: 'src:drop-1', sourceId: 'elgiganten-outlet', sourceLabel: 'Elgiganten Outlet', title: BASE_ITEM.title, url: BASE_ITEM.url, category: BASE_ITEM.category, condition: 'outlet', previousPriceSek: 2000, newPriceSek: 1500, dropSek: 500, dropPercent: 25, seenAt: '2026-06-12T08:00:00.000Z' },
+        // 1% drop — below default 5% threshold
+        { listingKey: 'src:drop-2', sourceId: 'elgiganten-outlet', sourceLabel: 'Elgiganten Outlet', title: 'Tiny drop item', url: BASE_ITEM.url, category: BASE_ITEM.category, condition: 'outlet', previousPriceSek: 1949, newPriceSek: 1930, dropSek: 19, dropPercent: 1, seenAt: '2026-06-12T08:00:00.000Z' }
+      ],
+      sources: [],
+      notificationSettings: {
+        notificationsEnabled: true,
+        alertRules: [{ id: 'rule-drop', label: 'Drops', enabled: true, keywords: [], categories: [], webhooks: [MAIN_WEBHOOK] }]
+      },
+      state
+    });
+
+    assert.equal(summary.sent, 1, 'Only the ≥5% drop should notify');
+    assert.match(payloads[0].content, /price drop/i);
+    assert.match(payloads[0].embeds[0].fields[0].value, /2[\s ]?000/, 'Was-price shown');
+    assert.ok(state.notifications['src:drop-1:rule:rule-drop:drop']);
+    assert.equal(state.notifications['src:drop-2:rule:rule-drop:drop'], undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('price drop alerts respect notifyPriceDrops=false and rule constraints', async () => {
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_url, init) => {
+    payloads.push(JSON.parse(init.body));
+    return { ok: true, status: 204, statusText: 'No Content' };
+  };
+
+  try {
+    const state = createDefaultState();
+    state.items['src:drop-gpu'] = { ...BASE_ITEM, listingKey: 'src:drop-gpu', title: 'RTX 5070 Gaming OC', category: 'Grafikkort', latestPriceSek: 6999 };
+
+    const drop = { listingKey: 'src:drop-gpu', sourceId: 'elgiganten-outlet', sourceLabel: 'Elgiganten Outlet', title: 'RTX 5070 Gaming OC', url: BASE_ITEM.url, category: 'Grafikkort', condition: 'outlet', previousPriceSek: 8999, newPriceSek: 6999, dropSek: 2000, dropPercent: 22, seenAt: '2026-06-12T08:00:00.000Z' };
+
+    const notifier = makeNotifier();
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [],
+      priceDrops: [drop],
+      sources: [],
+      notificationSettings: {
+        notificationsEnabled: true,
+        alertRules: [
+          // disabled drops — must not fire
+          { id: 'rule-no-drops', label: 'No drops', enabled: true, keywords: [], categories: [], notifyPriceDrops: false, webhooks: [MAIN_WEBHOOK] },
+          // keyword mismatch — must not fire
+          { id: 'rule-other-kw', label: 'Other', enabled: true, keywords: ['macbook'], categories: [], webhooks: [MAIN_WEBHOOK] },
+          // keyword match — fires
+          { id: 'rule-gpu-drop', label: 'GPU drops', enabled: true, keywords: ['rtx 5070'], categories: [], webhooks: [MAIN_WEBHOOK] }
+        ]
+      },
+      state
+    });
+
+    assert.equal(summary.sent, 1);
+    assert.equal(payloads.length, 1);
+    assert.match(payloads[0].content, /GPU drops/i);
+    assert.ok(state.notifications['src:drop-gpu:rule:rule-gpu-drop:drop']);
+    assert.equal(state.notifications['src:drop-gpu:rule:rule-no-drops:drop'], undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('price drop alerts honour the cooldown per item and rule', async () => {
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_url, init) => {
+    payloads.push(JSON.parse(init.body));
+    return { ok: true, status: 204, statusText: 'No Content' };
+  };
+
+  try {
+    const state = createDefaultState();
+    state.items['src:drop-cd'] = { ...BASE_ITEM, listingKey: 'src:drop-cd', latestPriceSek: 1500 };
+    // Sent 1 hour ago with a 24h cooldown — must be skipped
+    state.notifications['src:drop-cd:rule:rule-cd:drop'] = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    const notifier = makeNotifier();
+    const summary = await notifier.notifyScan({
+      deals: [],
+      newItems: [],
+      priceDrops: [
+        { listingKey: 'src:drop-cd', sourceId: 'elgiganten-outlet', sourceLabel: 'Elgiganten Outlet', title: BASE_ITEM.title, url: BASE_ITEM.url, category: BASE_ITEM.category, condition: 'outlet', previousPriceSek: 2000, newPriceSek: 1500, dropSek: 500, dropPercent: 25, seenAt: '2026-06-12T08:00:00.000Z' }
+      ],
+      sources: [],
+      notificationSettings: {
+        notificationsEnabled: true,
+        alertRules: [{ id: 'rule-cd', label: 'Cooldown', enabled: true, keywords: [], categories: [], webhooks: [MAIN_WEBHOOK] }]
+      },
+      state
+    });
+
+    assert.equal(summary.sent, 0);
+    assert.equal(summary.skipped, 1);
+    assert.equal(payloads.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('sourceFilterMode=include only notifies from listed sources', async () => {
   const payloads = [];
   const originalFetch = globalThis.fetch;
