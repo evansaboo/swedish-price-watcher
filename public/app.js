@@ -121,6 +121,7 @@ let scanPollTimer = null;
 let filterApplyTimer = null;
 let latestProducts = {};
 let lastCompletedSources = 0;
+let lastStatus = null; // cached /api/status for product-only refreshes
 
 // Notification settings
 let notifSettings = { notificationsEnabled: true, alertRules: [] };
@@ -552,6 +553,15 @@ function renderProducts(response) {
         </div>`;
     }
 
+    // Cross-store comparison (same product matched at other stores)
+    let crossStoreHtml = '';
+    if (product.crossStore) {
+      const cs = product.crossStore;
+      crossStoreHtml = cs.isCheapest
+        ? `<div class="card-cross-store is-best" title="Matched at ${cs.stores} stores via GTIN/part number/title">✓ Best price of ${cs.stores} stores</div>`
+        : `<div class="card-cross-store" title="Matched at ${cs.stores} stores via GTIN/part number/title">Cheaper at ${escapeHtml(cs.bestSourceLabel)}: ${formatSek(cs.bestPriceSek)}</div>`;
+    }
+
     // Availability
     const seenText = timeAgo(product.lastSeenAt) ?? '';
     let availDot = 'out';
@@ -601,6 +611,7 @@ function renderProducts(response) {
             <span class="card-price-main">${formatSek(product.currentPriceSek)}</span>
             ${refHtml}
           </div>
+          ${crossStoreHtml}
           ${sparklineHtml ? `<div class="card-sparkline" data-listing-key="${escapeHtml(product.listingKey)}" title="Click for price history">${sparklineHtml}</div>` : ''}
         </div>
         <div class="card-footer">
@@ -673,7 +684,7 @@ function renderPagination(response) {
       const target = Number(btn.getAttribute('data-page'));
       if (!Number.isFinite(target) || target < 1) return;
       state.currentPage = target;
-      loadDashboard().catch(err => showToast(err.message, 'error'));
+      loadProducts().catch(err => showToast(err.message, 'error'));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }
@@ -1078,7 +1089,7 @@ function applyCurrentFilters() {
   state.maxPriceSek = el.maxPriceFilter.value.trim();
 
   // Determine active preset
-  const presetMap = { new: state.newOnly, hot: state.hotOnly, discounted: state.discountedOnly, matched: state.referenceOnly, favorites: state.favoritesOnly };
+  const presetMap = { new: state.newOnly, hot: state.hotOnly, discounted: state.discountedOnly, matched: state.referenceOnly, favorites: state.favoritesOnly, wishlist: state.wishlistOnly };
   const activePresets = Object.entries(presetMap).filter(([, v]) => v);
   state.activePreset = activePresets.length === 1 ? activePresets[0][0] : (activePresets.length === 0 ? 'all' : '');
   syncFilterPresets();
@@ -1123,14 +1134,27 @@ function updateFilters({ debounce = false } = {}) {
     if (filterApplyTimer) clearTimeout(filterApplyTimer);
     filterApplyTimer = setTimeout(() => {
       filterApplyTimer = null;
-      loadDashboard().catch(err => showToast(err.message, 'error'));
+      loadProducts().catch(err => showToast(err.message, 'error'));
     }, 250);
     return;
   }
-  loadDashboard().catch(err => showToast(err.message, 'error'));
+  loadProducts().catch(err => showToast(err.message, 'error'));
 }
 
 // ── MAIN LOAD ───────────────────────────────────────────────────
+// Lightweight refresh: only re-fetches the filtered product list.
+// Used by filter/sort/pagination changes — metadata (categories, sources,
+// scheduler) doesn't change between scans, so re-fetching it per keystroke
+// just adds latency.
+async function loadProducts() {
+  const query = buildProductsQuery();
+  const response = await fetchJson(`/api/outlet-products${query}`);
+  latestProducts = response;
+  if (lastStatus) renderStats(lastStatus, response);
+  renderActiveFilterTags();
+  renderProducts(response);
+}
+
 async function loadDashboard() {
   const [status, categories, preferences, sources, outletSources, outletCampaigns] = await Promise.all([
     fetchJson('/api/status'),
@@ -1141,6 +1165,7 @@ async function loadDashboard() {
     fetchJson('/api/outlet-campaigns')
   ]);
 
+  lastStatus = status;
   state.latestRunStartedAt = status.lastRunSummary?.startedAt ?? status.lastRunStartedAt ?? null;
   state.favoriteCategories = preferences.favoriteCategories ?? [];
   state.categories = categories ?? [];
@@ -1213,6 +1238,17 @@ async function loadDrawerData() {
     el.notificationsEnabledToggle.checked = notifSettings.notificationsEnabled !== false;
   }
 
+  // Digest form
+  const digest = notifSettings.digest ?? {};
+  const digestEnabled = document.getElementById('digest-enabled');
+  const digestTime = document.getElementById('digest-time');
+  const digestWebhook = document.getElementById('digest-webhook');
+  const digestMaxItems = document.getElementById('digest-max-items');
+  if (digestEnabled) digestEnabled.checked = digest.enabled === true;
+  if (digestTime) digestTime.value = digest.time ?? '08:00';
+  if (digestWebhook) digestWebhook.value = digest.webhook ?? '';
+  if (digestMaxItems) digestMaxItems.value = digest.maxItems ?? '';
+
   renderRuleList();
   renderFavoriteChips();
   renderFavoritesEditor();
@@ -1235,7 +1271,9 @@ function createEmptyRule() {
     filteredSources: [],
     sourceFilterMode: 'exclude',
     webhooks: [''],
-    minDiscountPercent: null
+    minDiscountPercent: null,
+    notifyPriceDrops: true,
+    minPriceDropPercent: null
   };
 }
 
@@ -1356,6 +1394,19 @@ function createRuleElement(rule) {
           <input type="number" class="modal-input rule-mindiscount-input" placeholder="e.g. 20" min="0" max="100" step="1" value="${rule.minDiscountPercent != null ? rule.minDiscountPercent : ''}" />
         </div>
       </div>
+      <div class="rule-row">
+        <div class="rule-field">
+          <label class="toggle-switch" title="Also alert when a tracked match drops in price">
+            <input type="checkbox" class="rule-pricedrop-cb" ${rule.notifyPriceDrops !== false ? 'checked' : ''} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">Alert on price drops</span>
+          </label>
+        </div>
+        <div class="rule-field">
+          <label class="rule-field-label">Min drop % <span class="rule-hint">Default 5</span></label>
+          <input type="number" class="modal-input rule-mindrop-input" placeholder="5" min="0" max="100" step="1" value="${rule.minPriceDropPercent != null ? rule.minPriceDropPercent : ''}" />
+        </div>
+      </div>
     </div>`;
 
   // Wire events
@@ -1424,6 +1475,13 @@ function createRuleElement(rule) {
     rule.minDiscountPercent = e.target.value.trim() === '' ? null : (Number.isFinite(v) && v >= 0 ? v : null);
   });
 
+  // Price drop alerts
+  li.querySelector('.rule-pricedrop-cb').addEventListener('change', e => { rule.notifyPriceDrops = e.target.checked; });
+  li.querySelector('.rule-mindrop-input').addEventListener('input', e => {
+    const v = Number(e.target.value);
+    rule.minPriceDropPercent = e.target.value.trim() === '' ? null : (Number.isFinite(v) && v >= 0 ? v : null);
+  });
+
   return li;
 }
 
@@ -1450,6 +1508,12 @@ async function saveAllSettings() {
   try {
     // Save notification settings
     notifSettings.notificationsEnabled = el.notificationsEnabledToggle?.checked !== false;
+    notifSettings.digest = {
+      enabled: document.getElementById('digest-enabled')?.checked === true,
+      time: parseTimeOfDay(document.getElementById('digest-time')?.value) ?? '08:00',
+      webhook: (document.getElementById('digest-webhook')?.value ?? '').trim(),
+      maxItems: parsePositiveInteger(document.getElementById('digest-max-items')?.value) ?? undefined
+    };
     const res = await fetch('/api/notification-settings', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
@@ -1524,14 +1588,22 @@ function bindEvents() {
   el.maxPriceFilter.addEventListener('input', () => updateFilters({ debounce: true }));
 
   // Clear filters
-  el.clearFiltersBtn.addEventListener('click', () => { resetFilters(); loadDashboard().catch(err => showToast(err.message, 'error')); });
+  el.clearFiltersBtn.addEventListener('click', () => { resetFilters(); loadProducts().catch(err => showToast(err.message, 'error')); });
+
+  // Export CSV — same filters as the product list, minus pagination
+  document.getElementById('export-csv-btn')?.addEventListener('click', () => {
+    const params = new URLSearchParams(buildProductsQuery().slice(1));
+    params.delete('page');
+    params.delete('pageSize');
+    window.open(`/api/export.csv?${params.toString()}`, '_blank');
+  });
 
   // Filter presets
   for (const pill of el.filterPills) {
     pill.addEventListener('click', () => {
       applyPreset(pill.getAttribute('data-filter-preset'));
       state.currentPage = 1;
-      loadDashboard().catch(err => showToast(err.message, 'error'));
+      loadProducts().catch(err => showToast(err.message, 'error'));
     });
   }
 
@@ -1550,7 +1622,7 @@ function bindEvents() {
     state.sortDirection = dir;
     state.currentPage = 1;
     savePrefs();
-    loadDashboard().catch(err => showToast(err.message, 'error'));
+    loadProducts().catch(err => showToast(err.message, 'error'));
   });
 
   // View mode

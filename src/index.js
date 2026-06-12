@@ -6,6 +6,7 @@ import { buildListingKey, isSourceEnabled } from './lib/utils.js';
 import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
+import { buildDigestDeals, buildDigestPayload, shouldSendDigest } from './services/digest.js';
 import { ProductCache } from './services/productCache.js';
 import { DiscordNotifier } from './services/notifier.js';
 import { shouldSkipSourceNotifications } from './services/scanPolicy.js';
@@ -187,6 +188,9 @@ async function triggerScan(trigger, options = {}) {
         }
 
         processingChain = processingChain.then(async () => {
+          // The known-ID Set is scan-scoped scratch state — a Set serializes as {},
+          // so it must not leak into the persisted store.
+          delete sourceState.knownExternalIds;
           if (collectResult.status === 'cooling-down') {
             sourceResults.push({ sourceId: source.id, status: 'cooling-down', disabledUntil: collectResult.disabledUntil });
             return;
@@ -217,10 +221,14 @@ async function triggerScan(trigger, options = {}) {
           newItems.push(...mergeResult.newItems);
           priceDrops.push(...mergeResult.priceDrops);
 
-          if (collected.length > 0) {
+          // Prune only on complete snapshots. Cancelled scans and partial collections
+          // (incremental early-stop, mid-pagination failures) would otherwise delete
+          // valid items that simply weren't revisited — and re-alert them as "new" later.
+          const partialSnapshot = scanCancelled || sourceState.lastScanPartial === true;
+          if (collected.length > 0 && !partialSnapshot) {
             const seenKeys = new Set(collected.map(o => buildListingKey(o.sourceId, o.externalId)));
             let pruned = 0;
-            const archiveCutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+            const archiveCutoff = Date.now() - config.archiveRetentionDays * 24 * 60 * 60 * 1000;
             for (const key of Object.keys(state.items)) {
               if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
                 const item = state.items[key];
@@ -348,6 +356,35 @@ const scheduler = createSchedulerController({
   intervalMinutes: schedulerPreference.intervalMinutes,
   activeWindow: schedulerPreference.activeWindow
 });
+
+// ── Daily digest ───────────────────────────────────────────────
+// Checked every minute; fires once per Stockholm day at/after the
+// configured time. Empty days are marked sent without posting.
+async function maybeSendDigest() {
+  const digest = state.preferences?.notificationSettings?.digest;
+  if (!shouldSendDigest(digest, state.stats.lastDigestSentAt)) return;
+
+  state.stats.lastDigestSentAt = new Date().toISOString();
+  const deals = buildDigestDeals(state, {
+    maxItems: digest.maxItems ?? 10,
+    minScore: digest.minScore ?? 0
+  });
+
+  if (deals.length === 0) {
+    console.log('[digest] No new deals in the last 24h — skipping today\'s digest.');
+  } else {
+    try {
+      await notifier.sendToWebhook(buildDigestPayload(deals), digest.webhook.trim());
+      console.log(`[digest] Sent daily digest with ${deals.length} deal(s).`);
+    } catch (error) {
+      console.error('[digest]', error.message);
+    }
+  }
+  store.save().catch((err) => console.warn(`[digest] Save failed (non-fatal): ${err.message}`));
+}
+
+const digestTimer = setInterval(() => { maybeSendDigest().catch((err) => console.error('[digest]', err.message)); }, 60_000);
+if (digestTimer.unref) digestTimer.unref();
 
 async function updateScheduler(nextSettings = {}) {
   const updated = scheduler.update(nextSettings);

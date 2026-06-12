@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { firstFinite } from '../lib/utils.js';
+import { buildIdentityGroups } from './dealEngine.js';
 
 const NEW_PRODUCT_FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -72,6 +73,7 @@ export class ProductCache {
 
     // Build products
     const products = [];
+    const includedItems = []; // raw items parallel to products — for identity grouping
     const searchIndex = [];
     const byCategory = new Map();
     const byStore = new Map();
@@ -126,6 +128,7 @@ export class ProductCache {
 
       const idx = products.length;
       products.push(product);
+      includedItems.push(item);
 
       // Pre-compute search text
       const searchText = normalizeForSearch(
@@ -165,6 +168,31 @@ export class ProductCache {
       }
     }
 
+    // ── Cross-store annotation ───────────────────────────────────
+    // Products sharing a GTIN / manufacturer part number / productKey across
+    // at least two stores get cheapest-store info for the card UI.
+    const productByListingKey = new Map(products.map((p) => [p.listingKey, p]));
+    for (const group of buildIdentityGroups(includedItems).values()) {
+      if (group.length < 2) continue;
+      const groupProducts = group.map((item) => productByListingKey.get(item.listingKey)).filter(Boolean);
+      const distinctSources = new Set(groupProducts.map((p) => p.sourceId));
+      if (distinctSources.size < 2) continue;
+
+      let best = groupProducts[0];
+      for (const p of groupProducts) {
+        if (p.currentPriceSek < best.currentPriceSek) best = p;
+      }
+      for (const p of groupProducts) {
+        p.crossStore = {
+          offers: groupProducts.length,
+          stores: distinctSources.size,
+          bestPriceSek: best.currentPriceSek,
+          bestSourceLabel: best.sourceLabel,
+          isCheapest: p.currentPriceSek <= best.currentPriceSek
+        };
+      }
+    }
+
     this._products = products;
     this._searchIndex = searchIndex;
     this._byCategory = byCategory;
@@ -184,8 +212,54 @@ export class ProductCache {
     }));
   }
 
+  /** Full filtered + sorted result set (no pagination) — used for CSV export. */
+  exportRows(params, favoriteCategorySet, latestRunStartedAt, wishlistSet) {
+    return this.#filteredSorted(params, favoriteCategorySet, latestRunStartedAt, wishlistSet);
+  }
+
   // Fast filtered + sorted + paginated query
   query(params, favoriteCategorySet, latestRunStartedAt, wishlistSet) {
+    const filtered = this.#filteredSorted(params, favoriteCategorySet, latestRunStartedAt, wishlistSet);
+    const { page = 1, pageSize = 50 } = params;
+
+    // Aggregates
+    let discounted = 0, matched = 0, discountSum = 0, discountCount = 0;
+    for (const p of filtered) {
+      if (Number.isFinite(p.discountSek) && p.discountSek > 0) discounted++;
+      if (Number.isFinite(p.initialPriceSek)) matched++;
+      if (Number.isFinite(p.discountPercent)) { discountSum += p.discountPercent; discountCount++; }
+    }
+    const avgDiscountPercent = discountCount ? Math.round(discountSum / discountCount) : null;
+
+    // Paginate — guard against NaN from unparseable query params
+    const safePageSize = Number.isFinite(pageSize) ? pageSize : 50;
+    const safePage = Number.isFinite(page) ? page : 1;
+    const clampedPageSize = Math.min(200, Math.max(1, safePageSize));
+    const totalFiltered = filtered.length;
+    const totalPages = Math.ceil(totalFiltered / clampedPageSize) || 1;
+    const clampedPage = Math.min(Math.max(1, safePage), totalPages);
+    const offset = (clampedPage - 1) * clampedPageSize;
+
+    const items = filtered.slice(offset, offset + clampedPageSize);
+    // Annotate with wishlist status
+    if (wishlistSet && wishlistSet.size > 0) {
+      for (const item of items) {
+        item.wishlisted = wishlistSet.has(item.listingKey);
+      }
+    }
+
+    return {
+      items,
+      total: totalFiltered,
+      page: clampedPage,
+      pageSize: clampedPageSize,
+      totalPages,
+      aggregates: { discounted, matched, avgDiscountPercent }
+    };
+  }
+
+  // Shared filter + sort pipeline behind query() and exportRows()
+  #filteredSorted(params, favoriteCategorySet, latestRunStartedAt, wishlistSet) {
     const {
       search = '',
       category = '',
@@ -202,8 +276,6 @@ export class ProductCache {
       maxPriceSek = NaN,
       sortBy = 'discountPercent',
       sortDir = 'desc',
-      page = 1,
-      pageSize = 50,
     } = params;
 
     // Determine candidate set — use indexes to narrow down before linear filter
@@ -238,7 +310,7 @@ export class ProductCache {
         }
       } else {
         // Category doesn't exist — no results
-        return this._emptyResult(pageSize);
+        return [];
       }
     }
 
@@ -294,15 +366,6 @@ export class ProductCache {
       filtered.push(product);
     }
 
-    // Aggregates
-    let discounted = 0, matched = 0, discountSum = 0, discountCount = 0;
-    for (const p of filtered) {
-      if (Number.isFinite(p.discountSek) && p.discountSek > 0) discounted++;
-      if (Number.isFinite(p.initialPriceSek)) matched++;
-      if (Number.isFinite(p.discountPercent)) { discountSum += p.discountPercent; discountCount++; }
-    }
-    const avgDiscountPercent = discountCount ? Math.round(discountSum / discountCount) : null;
-
     // Sort
     const validSortColumns = new Set([
       'title', 'category', 'currentPriceSek', 'initialPriceSek',
@@ -326,39 +389,7 @@ export class ProductCache {
       return String(a.title ?? '').localeCompare(String(b.title ?? ''), 'sv-SE');
     });
 
-    // Paginate
-    const clampedPageSize = Math.min(200, Math.max(1, pageSize));
-    const totalFiltered = filtered.length;
-    const totalPages = Math.ceil(totalFiltered / clampedPageSize) || 1;
-    const clampedPage = Math.min(Math.max(1, page), totalPages);
-    const offset = (clampedPage - 1) * clampedPageSize;
-
-    const items = filtered.slice(offset, offset + clampedPageSize);
-    // Annotate with wishlist status
-    if (wishlistSet && wishlistSet.size > 0) {
-      for (const item of items) {
-        item.wishlisted = wishlistSet.has(item.listingKey);
-      }
-    }
-
-    return {
-      items,
-      total: totalFiltered,
-      page: clampedPage,
-      pageSize: clampedPageSize,
-      totalPages,
-      aggregates: { discounted, matched, avgDiscountPercent }
-    };
+    return filtered;
   }
 
-  _emptyResult(pageSize = 50) {
-    return {
-      items: [],
-      total: 0,
-      page: 1,
-      pageSize: Math.min(200, Math.max(1, pageSize)),
-      totalPages: 1,
-      aggregates: { discounted: 0, matched: 0, avgDiscountPercent: null }
-    };
-  }
 }

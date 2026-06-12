@@ -1,3 +1,4 @@
+import { resolveIncrementalMode } from '../lib/incremental.js';
 import { normalizeProductIdentity, sleep } from '../lib/utils.js';
 
 const BASE_URL = 'https://www.netonnet.se';
@@ -157,8 +158,30 @@ function parseReferencePrice(html) {
   return m ? parseInt(m[1], 10) : null;
 }
 
-async function scrapeAllPages(basePageUrl, source, sourceState, fetcher, now, maxPages) {
+async function scrapeAllPages(basePageUrl, source, sourceState, fetcher, now, maxPages, partialFlag, incremental) {
   const observations = [];
+  let consecutiveKnownPages = 0;
+
+  function addPage(products) {
+    let newOnPage = 0;
+    for (const p of products) {
+      const obs = mapProduct(p, source, now);
+      if (!obs) continue;
+      observations.push(obs);
+      if (!incremental?.knownIds.has(obs.externalId)) newOnPage++;
+    }
+    // Incremental stop: enough consecutive fully-known pages mean deeper
+    // pages are unchanged since the previous scan.
+    if (incremental?.active && products.length > 0) {
+      consecutiveKnownPages = newOnPage === 0 ? consecutiveKnownPages + 1 : 0;
+      if (consecutiveKnownPages >= incremental.stopPages) {
+        console.log(`[${source.id}] ${basePageUrl}: ${consecutiveKnownPages} consecutive fully-known pages — stopping early (incremental)`);
+        if (partialFlag) partialFlag.partial = true;
+        return false;
+      }
+    }
+    return true;
+  }
 
   const firstResult = await fetcher.fetchText(source, sourceState, basePageUrl, {
     headers: PAGE_HEADERS,
@@ -171,10 +194,7 @@ async function scrapeAllPages(basePageUrl, source, sourceState, fetcher, now, ma
   const firstHtml = firstResult.body;
   const totalPages = Math.min(parseTotalPages(firstHtml), maxPages);
 
-  for (const p of extractProducts(firstHtml)) {
-    const obs = mapProduct(p, source, now);
-    if (obs) observations.push(obs);
-  }
+  if (!addPage(extractProducts(firstHtml))) return observations;
 
   for (let pageIdx = 1; pageIdx < totalPages; pageIdx++) {
     const pageUrl = `${basePageUrl}?p=${pageIdx}`;
@@ -186,17 +206,17 @@ async function scrapeAllPages(basePageUrl, source, sourceState, fetcher, now, ma
         skipHostDelay: true,
       });
     } catch (err) {
-      if (observations.length > 0) break;
+      if (observations.length > 0) {
+        if (partialFlag) partialFlag.partial = true;
+        break;
+      }
       throw err;
     }
 
     const products = extractProducts(result.body);
     if (products.length === 0) break;
 
-    for (const p of products) {
-      const obs = mapProduct(p, source, now);
-      if (obs) observations.push(obs);
-    }
+    if (!addPage(products)) break;
 
     await sleep(PAGE_DELAY_MS);
 
@@ -208,18 +228,24 @@ async function scrapeAllPages(basePageUrl, source, sourceState, fetcher, now, ma
 
 export async function collectFromNetonnet({ source, sourceState, fetcher, now }) {
   const maxPages = source.maxPages ?? 25;
+  const partialFlag = { partial: false };
+  const incremental = resolveIncrementalMode(source, sourceState);
+  if (incremental.active) console.log(`[${source.id}] Incremental mode (${incremental.knownIds.size} known IDs)`);
 
   // Scrape both /art/outlet (~8 pages) and /art/fyndvaror (~18 pages)
   const [outletObs, fyndvarorObs] = await Promise.all([
-    scrapeAllPages(OUTLET_URL, source, sourceState, fetcher, now, maxPages).catch((err) => {
+    scrapeAllPages(OUTLET_URL, source, sourceState, fetcher, now, maxPages, partialFlag, incremental).catch((err) => {
       console.warn(`[netonnet] outlet scrape failed: ${err.message}`);
+      partialFlag.partial = true;
       return [];
     }),
-    scrapeAllPages(FYNDVAROR_URL, source, sourceState, fetcher, now, maxPages).catch((err) => {
+    scrapeAllPages(FYNDVAROR_URL, source, sourceState, fetcher, now, maxPages, partialFlag, incremental).catch((err) => {
       console.warn(`[netonnet] fyndvaror scrape failed: ${err.message}`);
+      partialFlag.partial = true;
       return [];
     }),
   ]);
+  sourceState.lastScanPartial = partialFlag.partial;
 
   // Deduplicate by externalId (same product can appear in both sections)
   const seen = new Set();

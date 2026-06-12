@@ -226,3 +226,35 @@ test('keeps matched reference and readable category when later observations are 
   assert.equal(item.referenceTitle, 'Sony WH-1000XM5');
   assert.equal(item.referenceMatchType, 'catalog-match');
 });
+
+test('buildIdentityGroups links items across stores via GTIN and manufacturer part number', async () => {
+  const { buildIdentityGroups } = await import('../src/services/dealEngine.js');
+  const items = [
+    // Same GPU at three stores: A↔B share a GTIN, B↔C share a part number — transitive link
+    { listingKey: 'a:1', productKey: 'asus-rtx-4070-dual-oc', gtin: '4711081898019', latestPriceSek: 7000 },
+    { listingKey: 'b:1', productKey: 'rtx-4070-dual', gtin: '4711081898019', manufacturerArticleNumber: 'DUAL-RTX4070-O12G', latestPriceSek: 6500 },
+    { listingKey: 'c:1', productKey: 'asus-dual-geforce-rtx-4070', manufacturerArticleNumber: 'DUAL-RTX4070-O12G', latestPriceSek: 6800 },
+    // Unrelated item
+    { listingKey: 'd:1', productKey: 'sony-wh-1000xm5', latestPriceSek: 2500 },
+    // Same productKey as d:1 → grouped by title fallback
+    { listingKey: 'e:1', productKey: 'sony-wh-1000xm5', latestPriceSek: 2400 }
+  ];
+
+  const groups = buildIdentityGroups(items);
+  const sizes = [...groups.values()].map(g => g.length).sort();
+  assert.deepEqual(sizes, [2, 3], 'one GPU group of 3, one headphone group of 2');
+
+  const gpuGroup = [...groups.values()].find(g => g.length === 3);
+  assert.deepEqual(gpuGroup.map(i => i.listingKey).sort(), ['a:1', 'b:1', 'c:1']);
+});
+
+test('buildIdentityGroups ignores short or letter-only part numbers', async () => {
+  const { buildIdentityGroups } = await import('../src/services/dealEngine.js');
+  const items = [
+    { listingKey: 'a:1', productKey: 'item-one', manufacturerArticleNumber: 'ABC', latestPriceSek: 100 },
+    { listingKey: 'b:1', productKey: 'item-two', manufacturerArticleNumber: 'ABC', latestPriceSek: 200 },
+    { listingKey: 'c:1', productKey: 'item-three', manufacturerArticleNumber: 'PRO', latestPriceSek: 300 }
+  ];
+  const groups = buildIdentityGroups(items);
+  assert.equal(groups.size, 3, 'generic 3-letter tokens must not link unrelated items');
+});

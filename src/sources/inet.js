@@ -56,10 +56,11 @@ function totalQty(qtyObj) {
   return total;
 }
 
-export async function collectFromInet({ source, fetcher, sourceState, now }) {
+export async function collectFromInet({ source, fetcher, sourceState, now, signal }) {
   const maxPages = source.maxPages ?? 7;
   const allProducts = [];
   const seen = new Set();
+  sourceState.lastScanPartial = false;
 
   for (let page = 1; page <= maxPages; page++) {
     const url = page === 1 ? BASE_URL : `${BASE_URL}?page=${page}`;
@@ -72,15 +73,18 @@ export async function collectFromInet({ source, fetcher, sourceState, now }) {
           'User-Agent': USER_AGENT,
           'Accept': 'text/html,application/xhtml+xml',
           'Accept-Language': 'sv-SE,sv;q=0.9,en;q=0.8',
-        }
+        },
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000)
       });
       if (!response.ok) {
         console.warn(`[inet] Page ${page} returned ${response.status}, stopping.`);
+        sourceState.lastScanPartial = true;
         break;
       }
       html = await response.text();
     } catch (err) {
       console.warn(`[inet] Page ${page} fetch failed: ${err.message}`);
+      sourceState.lastScanPartial = true;
       break;
     }
 

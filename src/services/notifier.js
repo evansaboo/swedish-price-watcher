@@ -120,7 +120,7 @@ export class DiscordNotifier {
     }
 
     const alertRules = Array.isArray(settings.alertRules) ? settings.alertRules.filter((r) => r.enabled !== false) : [];
-    const alertSummary = await this.notifyAlertRules({ newItems, state, alertRules });
+    const alertSummary = await this.notifyAlertRules({ newItems, priceDrops, state, alertRules });
 
     return {
       sent: alertSummary.sent,
@@ -133,15 +133,17 @@ export class DiscordNotifier {
 
   /**
    * Send Discord notifications for each enabled alert rule.
-   * A rule fires when a new item matches all its constraints:
+   * A rule fires when a new item — or a price drop, unless the rule sets
+   * notifyPriceDrops=false — matches all its constraints:
    *   - Source filter: sourceFilterMode='include' → only listed sources;
    *                    sourceFilterMode='exclude' (default) → all except listed
    *   - At least one keyword matches item title (if keywords are set; empty = any)
    *   - Item category matches a rule category (if categories are set; empty = any)
    *   - Item discount % ≥ minDiscountPercent (if set)
+   *   - Price drops additionally require dropPercent ≥ minPriceDropPercent (default 5)
    * Sends to all webhooks listed on the rule.
    */
-  async notifyAlertRules({ newItems, state, alertRules }) {
+  async notifyAlertRules({ newItems, priceDrops = [], state, alertRules }) {
     if (!alertRules.length) {
       return { sent: 0, skipped: 0, failed: 0, errors: [], reason: 'no-alert-rules' };
     }
@@ -162,8 +164,10 @@ export class DiscordNotifier {
       const filteredSources = (rule.filteredSources ?? rule.excludedSources ?? []).map((s) => String(s).trim()).filter(Boolean);
       const sourceFilterMode = rule.sourceFilterMode === 'include' ? 'include' : 'exclude';
       const minDiscountPercent = typeof rule.minDiscountPercent === 'number' && Number.isFinite(rule.minDiscountPercent) ? rule.minDiscountPercent : null;
+      const constraints = { keywords, categories, minDiscountPercent, filteredSources, sourceFilterMode };
+      const ruleLabel = rule.label || (keywords.length ? keywords.join(', ') : categories.length ? categories.join(', ') : 'Alert');
 
-      const matches = newItems.filter((item) => itemMatchesRule(item, { keywords, categories, minDiscountPercent, filteredSources, sourceFilterMode }));
+      const matches = newItems.filter((item) => itemMatchesRule(item, constraints));
 
       for (const item of matches) {
         const notificationKey = `${item.listingKey}:rule:${rule.id}`;
@@ -175,7 +179,6 @@ export class DiscordNotifier {
         }
 
         const discount = getDiscountSummary(item);
-        const ruleLabel = rule.label || (keywords.length ? keywords.join(', ') : categories.length ? categories.join(', ') : 'Alert');
 
         let itemSent = false;
         for (const webhookUrl of webhooks) {
@@ -211,9 +214,69 @@ export class DiscordNotifier {
           sent++;
         }
       }
+
+      // ── Price drops ──────────────────────────────────────────────
+      if (rule.notifyPriceDrops === false) continue;
+      const minDropPercent = typeof rule.minPriceDropPercent === 'number' && Number.isFinite(rule.minPriceDropPercent)
+        ? rule.minPriceDropPercent
+        : 5;
+
+      for (const drop of priceDrops) {
+        if (!Number.isFinite(drop.dropPercent) || drop.dropPercent < minDropPercent) continue;
+        // Match against the full tracked item (has reference price + image); fall
+        // back to the drop record itself if the item was pruned mid-scan.
+        const item = state.items[drop.listingKey] ?? drop;
+        if (!itemMatchesRule(item, constraints)) continue;
+
+        // One drop alert per item per rule per cooldown window.
+        const notificationKey = `${drop.listingKey}:rule:${rule.id}:drop`;
+        const previousSentAt = state.notifications[notificationKey];
+        if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
+          skipped++;
+          continue;
+        }
+
+        let dropSent = false;
+        for (const webhookUrl of webhooks) {
+          try {
+            await this.#postWebhook({
+              username: 'Price Watcher',
+              content: `📉 **${ruleLabel}** — price drop`,
+              embeds: [
+                {
+                  title: drop.title,
+                  url: drop.url,
+                  description: `${drop.sourceLabel} • ${drop.category ?? ''}`,
+                  color: 0x57f287,
+                  fields: [
+                    { name: 'Was', value: formatSek(drop.previousPriceSek), inline: true },
+                    { name: 'Now', value: formatSek(drop.newPriceSek), inline: true },
+                    { name: 'Drop', value: `−${formatPercent(drop.dropPercent)} (${formatSek(drop.dropSek)})`, inline: true }
+                  ],
+                  image: item.imageUrl ? { url: item.imageUrl } : undefined
+                }
+              ]
+            }, webhookUrl);
+            dropSent = true;
+          } catch (error) {
+            failed++;
+            this.#recordError(errors, error);
+          }
+        }
+
+        if (dropSent) {
+          state.notifications[notificationKey] = new Date(now).toISOString();
+          sent++;
+        }
+      }
     }
 
     return { sent, skipped, failed, errors };
+  }
+
+  /** Post an arbitrary payload (e.g. the daily digest) to a webhook with retry. */
+  async sendToWebhook(payload, webhookUrl) {
+    return this.#postWebhook(payload, webhookUrl);
   }
 
   #recordError(errors, error) {

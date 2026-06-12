@@ -134,6 +134,7 @@
         </div>
         <div class="filter-panel-footer">
           <button id="clear-filters-btn" type="button" class="clear-btn">Clear all</button>
+          <button id="export-csv-btn" type="button" class="clear-btn" title="Download the current filtered list as CSV">⬇ Export CSV</button>
           <div id="active-filter-tags" class="active-filter-tags"></div>
         </div>
       </div>
@@ -194,6 +195,27 @@
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
               <span class="toggle-label">Discord alerts enabled</span>
             </label>
+          </div>
+          <div class="digest-section">
+            <label class="toggle-switch">
+              <input id="digest-enabled" type="checkbox" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">Daily digest (top new deals)</span>
+            </label>
+            <div class="form-row" style="margin-top:0.5rem">
+              <div class="form-field">
+                <label for="digest-time">Send at (Stockholm)</label>
+                <input id="digest-time" type="time" class="field-input" value="08:00" />
+              </div>
+              <div class="form-field">
+                <label for="digest-max-items">Max deals</label>
+                <input id="digest-max-items" type="number" class="field-input" min="1" max="25" step="1" placeholder="10" />
+              </div>
+            </div>
+            <div class="form-field" style="margin-top:0.5rem">
+              <label for="digest-webhook">Digest webhook</label>
+              <input id="digest-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
+            </div>
           </div>
           <div class="rules-toolbar">
             <span id="rules-count-label" class="rules-count"></span>

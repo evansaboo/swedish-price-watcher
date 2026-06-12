@@ -79,7 +79,9 @@
       "category": "electronics",
       "condition": "outlet",
       "maxPages": 25,
-      "notes": "Scrapes both /art/outlet (~8 pages) and /art/fyndvaror (~18 pages) via RSC HTML parsing. Fixed marker to match both category paths. ~1200 products total."
+      "incrementalStopPages": 2,
+      "incrementalFullScanEvery": 5,
+      "notes": "Scrapes both /art/outlet (~8 pages) and /art/fyndvaror (~18 pages) via RSC HTML parsing. Fixed marker to match both category paths. ~1200 products total. Incremental mode stops pagination after 2 fully-known pages; every 5th scan runs full so stale items get pruned."
     },
     {
       "id": "webhallen-fyndware",
@@ -220,6 +222,47 @@
       "actorTimeoutMs": 180000,
       "scanIntervalMinutes": 120,
       "notes": "Scrapes inet.se/fyndhornan (Bargain Corner) via Apify cheerio-scraper. Server-rendered React with embedded hydrate JSON. ~400 outlet/refurb products across 7 pages. Requires APIFY_TOKEN. Uses RESIDENTIAL proxy to avoid Cloudflare challenges."
+    },
+    {
+      "id": "kjell-outlet",
+      "type": "kjell-outlet",
+      "enabled": true,
+      "label": "Kjell & Company Outlet",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxPages": 60,
+      "maxProducts": 5000,
+      "incrementalStopPages": 2,
+      "incrementalFullScanEvery": 5,
+      "notes": "Direct JSON API — kjell.com/se/outlet returns JSON with XHR headers (accept: application/json + x-requested-with). ~3 300 outlet products at 60/page. price.currentInclVat = outlet price, price.originalInclVat = reference price. Outlet grade A/B parsed from ?outlet= URL param. No API key or Cloudflare bypass needed. Incremental mode stops after 2 fully-known pages; every 5th scan runs full."
+    },
+    {
+      "id": "dustin-fyndvaror",
+      "type": "dustin-fyndvaror",
+      "enabled": false,
+      "label": "Dustin Fyndvaror",
+      "category": "electronics",
+      "condition": "outlet",
+      "listPaths": ["/group/ovrigt/fyndvaror"],
+      "maxPages": 10,
+      "pageDelayMs": 2000,
+      "requireTitlePattern": "fyndvara",
+      "scanIntervalMinutes": 240,
+      "notes": "dustinhome.se hard-403s direct requests — requires FLARESOLVERR_URL (or SCRAPERAPI_KEY/SCRAPFLY_API_KEY). Parses embedded searchResultProduct JSON from listing pages; includes manufacturerProductIdentifier for cross-store matching. VERIFY ON THE PI before enabling: run a single-source scan (curl -X POST localhost:3000/api/run -d '{\"sourceIds\":[\"dustin-fyndvaror\"]}'), check item count and that ?page=2 pagination yields new products. Written against an Aug 2025 Wayback capture.",
+      "maxItems": null
+    },
+    {
+      "id": "power-campaigns",
+      "type": "power-deals",
+      "enabled": true,
+      "label": "Power Kampanjer",
+      "category": "electronics",
+      "condition": "deal",
+      "outletOnly": false,
+      "minDiscountPct": 15,
+      "maxProducts": 3000,
+      "scanIntervalMinutes": 120,
+      "notes": "Same Power REST API as Power Outlet but with o=false — regular campaign markdowns instead of outlet/returned items. Only keeps products with previousPrice above current price and discount ≥ minDiscountPct."
     }
   ]
 }

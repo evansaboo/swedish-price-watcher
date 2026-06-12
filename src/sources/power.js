@@ -7,8 +7,13 @@ const IMAGE_CDN = 'https://media.power-cdn.net';
 // at size=100. Use actual returned count as the from= increment to avoid gaps.
 const PAGE_SIZE = 500;
 const PAGE_DELAY_MS = 100;
-// s=5 = sort by deal score; o=true = outlet/returned products only; cd=false = include discontinued
-const API_PARAMS = 's=5&o=true&cd=false';
+
+// s=5 = sort by deal score; o=true = outlet/returned products only; cd=false = include discontinued.
+// outletOnly=false in source config switches to regular campaign deals (o=false).
+function buildApiParams(source) {
+  const outletOnly = source.outletOnly !== false;
+  return `s=5&o=${outletOnly}&cd=false`;
+}
 
 /**
  * Build a product image URL from the productImage object.
@@ -39,6 +44,7 @@ function mapProduct(item, source, now) {
 
   const href = item.url ?? '';
   const url = href.startsWith('http') ? href : `https://www.power.se${href}`;
+  const outletOnly = source.outletOnly !== false;
 
   return {
     sourceId: source.id,
@@ -53,8 +59,8 @@ function mapProduct(item, source, now) {
     marketValueSek: refPrice,
     imageUrl: buildImageUrl(item.productImage),
     category: item.categoryName ?? 'electronics',
-    condition: 'outlet',
-    conditionLabel: item.outletReason ?? 'Outlet',
+    condition: outletOnly ? 'outlet' : 'deal',
+    conditionLabel: item.outletReason ?? (outletOnly ? 'Outlet' : 'Kampanj'),
     availability: 'in_stock',
     outletReason: item.outletReason ?? null,
     seenAt: now,
@@ -70,9 +76,10 @@ export async function collectFromPower({ source, sourceState, fetcher, now }) {
   const observations = [];
   const seen = new Set();
   let from = 0;
+  sourceState.lastScanPartial = false;
 
   while (observations.length < maxProducts) {
-    const url = `${API_BASE}?size=${PAGE_SIZE}&from=${from}&${API_PARAMS}`;
+    const url = `${API_BASE}?size=${PAGE_SIZE}&from=${from}&${buildApiParams(source)}`;
     let data;
     try {
       const result = await fetcher.fetchText(source, null, url, {
@@ -82,19 +89,37 @@ export async function collectFromPower({ source, sourceState, fetcher, now }) {
       });
       data = JSON.parse(result.body);
     } catch (err) {
-      if (observations.length > 0) break; // partial results OK
+      if (observations.length > 0) {
+        // Partial snapshot — flag it so the engine skips pruning unseen items.
+        sourceState.lastScanPartial = true;
+        break;
+      }
       throw new Error(`Power.se API failed at from=${from}: ${err.message}`);
     }
 
     const products = data.products ?? [];
+    const outletOnly = source.outletOnly !== false;
+    const minDiscountPct = Number.isFinite(source.minDiscountPct) ? source.minDiscountPct : 0;
     for (const item of products) {
       const obs = mapProduct(item, source, now);
       if (!obs || seen.has(obs.externalId)) continue;
+      // Campaign mode: only keep items with a real markdown (previousPrice above current).
+      if (!outletOnly) {
+        if (!Number.isFinite(obs.referencePriceSek) || obs.referencePriceSek <= obs.priceSek) continue;
+        const discountPct = (1 - obs.priceSek / obs.referencePriceSek) * 100;
+        if (discountPct < minDiscountPct) continue;
+      }
       seen.add(obs.externalId);
       observations.push(obs);
     }
 
     if (data.isLastPage || products.length === 0) break;
+
+    if (observations.length >= maxProducts) {
+      // Stopped at the cap with pages remaining — snapshot is incomplete.
+      sourceState.lastScanPartial = true;
+      break;
+    }
 
     // from advances by PAGE_SIZE (the unique-product offset step).
     // The API bundles extra related products per page, so returned count > PAGE_SIZE,

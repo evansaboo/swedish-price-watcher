@@ -109,16 +109,17 @@ function mapProduct(product, source, now) {
   };
 }
 
-export async function collectFromWebhallen({ source, fetcher, now }) {
+export async function collectFromWebhallen({ source, fetcher, sourceState, now }) {
   return source.toplistId != null
-    ? collectFromToplist({ source, fetcher, now })
-    : collectFromFyndwareSearch({ source, fetcher, now });
+    ? collectFromToplist({ source, fetcher, sourceState, now })
+    : collectFromFyndwareSearch({ source, fetcher, sourceState, now });
 }
 
-async function collectFromFyndwareSearch({ source, fetcher, now }) {
+async function collectFromFyndwareSearch({ source, fetcher, sourceState, now }) {
   const observations = [];
   let page = 1;
   const interPageDelayMs = source.apiDelayMs ?? 400;
+  if (sourceState) sourceState.lastScanPartial = false;
 
   while (page <= MAX_PAGES) {
     const url = `${FYNDWARE_API_URL}?pageNo=${page}&limit=${PAGE_SIZE}`;
@@ -131,7 +132,9 @@ async function collectFromFyndwareSearch({ source, fetcher, now }) {
       });
     } catch (err) {
       if (observations.length > 0) {
-        // Partial results are still useful — stop pagination gracefully
+        // Partial results are still useful — stop pagination gracefully,
+        // but flag the snapshot as partial so the engine skips pruning.
+        if (sourceState) sourceState.lastScanPartial = true;
         break;
       }
       throw err;
@@ -163,11 +166,12 @@ async function collectFromFyndwareSearch({ source, fetcher, now }) {
  * toplist/39 = Datorer deals, toplist/42 = Mobil deals).
  * Page size is fixed at 24 by the API.
  */
-async function collectFromToplist({ source, fetcher, now }) {
+async function collectFromToplist({ source, fetcher, sourceState, now }) {
   const toplistId = source.toplistId;
   const interPageDelayMs = source.apiDelayMs ?? 300;
   const observations = [];
   let page = 1;
+  if (sourceState) sourceState.lastScanPartial = false;
 
   while (page <= MAX_PAGES) {
     const url =
@@ -181,7 +185,10 @@ async function collectFromToplist({ source, fetcher, now }) {
         skipHostDelay: true,
       });
     } catch (err) {
-      if (observations.length > 0) break;
+      if (observations.length > 0) {
+        if (sourceState) sourceState.lastScanPartial = true;
+        break;
+      }
       throw err;
     }
 
