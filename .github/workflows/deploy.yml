@@ -1,0 +1,26 @@
+name: Deploy to Raspberry Pi
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Pi via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PI_HOST }}
+          username: zpeedx
+          key: ${{ secrets.PI_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd ~/swedish-price-watcher
+            git pull origin main
+            npm install --silent --no-audit
+            sudo systemctl restart swedish-price-watcher
+            sleep 3
+            curl -sf http://localhost:3030/health | grep -q '"ok":true' && echo "✅ Deploy successful" || (echo "❌ Health check failed" && exit 1)
