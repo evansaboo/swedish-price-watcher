@@ -193,11 +193,36 @@ export class ProductCache {
       }
     }
 
-    this._products = products;
-    this._searchIndex = searchIndex;
-    this._byCategory = byCategory;
-    this._byStore = byStore;
-    this._byCampaign = byCampaign;
+    // Pre-compute fast sort keys on each product (avoids per-comparison work in the hot sort loop)
+    for (let i = 0; i < products.length; i++) {
+      products[i]._titleKey = searchIndex[i]; // already normalized, reuse for tiebreaker
+      products[i]._lastSeenAtTs = products[i].lastSeenAt ? (Date.parse(products[i].lastSeenAt) || 0) : 0;
+    }
+
+    // Pre-sort the array once by the default order (discountPercent desc, then title asc).
+    // Queries using the default sort can skip the sort entirely — filtered results come out
+    // pre-ordered because we iterate the already-sorted array in order.
+    const sortedOrder = Array.from({ length: products.length }, (_, i) => i).sort((a, b) => {
+      const va = Number.isFinite(products[a].discountPercent) ? products[a].discountPercent : -Infinity;
+      const vb = Number.isFinite(products[b].discountPercent) ? products[b].discountPercent : -Infinity;
+      if (va !== vb) return vb - va;
+      const ka = products[a]._titleKey, kb = products[b]._titleKey;
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+
+    // Build old-index → new-position map so the index maps can be remapped cheaply
+    const newPosOf = new Int32Array(products.length);
+    for (let newPos = 0; newPos < sortedOrder.length; newPos++) {
+      newPosOf[sortedOrder[newPos]] = newPos;
+    }
+
+    const remapIndexArray = (arr) => arr.map(i => newPosOf[i]).sort((a, b) => a - b);
+
+    this._products = sortedOrder.map(i => products[i]);
+    this._searchIndex = sortedOrder.map(i => searchIndex[i]);
+    this._byCategory = new Map([...byCategory].map(([k, v]) => [k, remapIndexArray(v)]));
+    this._byStore = new Map([...byStore].map(([k, v]) => [k, remapIndexArray(v)]));
+    this._byCampaign = new Map([...byCampaign].map(([k, v]) => [k, remapIndexArray(v)]));
     this._categories = [...categoryMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'sv-SE'));
     this._sources = [...sourceMap.entries()].map(([id, label]) => ({ id, label }));
     this._campaigns = [...campaignSet].sort().map(label => ({ label, value: label.toLowerCase() }));
@@ -366,28 +391,36 @@ export class ProductCache {
       filtered.push(product);
     }
 
-    // Sort
+    // Sort — skip entirely for default order (array is pre-sorted at rebuild time)
     const validSortColumns = new Set([
       'title', 'category', 'currentPriceSek', 'initialPriceSek',
       'discountSek', 'discountPercent', 'score', 'lastSeenAt'
     ]);
     const col = validSortColumns.has(sortBy) ? sortBy : 'discountPercent';
     const dir = sortDir === 'asc' ? 1 : -1;
+    const isDefaultSort = col === 'discountPercent' && dir === -1;
 
-    filtered.sort((a, b) => {
-      let cmp;
-      if (col === 'title' || col === 'category') {
-        cmp = String(a[col] ?? '').localeCompare(String(b[col] ?? ''), 'sv-SE');
-      } else if (col === 'lastSeenAt') {
-        cmp = (Date.parse(a.lastSeenAt) || 0) - (Date.parse(b.lastSeenAt) || 0);
-      } else {
-        const va = Number.isFinite(a[col]) ? a[col] : -Infinity;
-        const vb = Number.isFinite(b[col]) ? b[col] : -Infinity;
-        cmp = va - vb;
-      }
-      if (cmp !== 0) return cmp * dir;
-      return String(a.title ?? '').localeCompare(String(b.title ?? ''), 'sv-SE');
-    });
+    if (!isDefaultSort) {
+      filtered.sort((a, b) => {
+        let cmp;
+        if (col === 'title' || col === 'category') {
+          // Use pre-computed normalized key for title; fall back to raw for category
+          const ka = col === 'title' ? (a._titleKey ?? '') : String(a.category ?? '').toLowerCase();
+          const kb = col === 'title' ? (b._titleKey ?? '') : String(b.category ?? '').toLowerCase();
+          cmp = ka < kb ? -1 : ka > kb ? 1 : 0;
+        } else if (col === 'lastSeenAt') {
+          cmp = (a._lastSeenAtTs ?? 0) - (b._lastSeenAtTs ?? 0);
+        } else {
+          const va = Number.isFinite(a[col]) ? a[col] : -Infinity;
+          const vb = Number.isFinite(b[col]) ? b[col] : -Infinity;
+          cmp = va - vb;
+        }
+        if (cmp !== 0) return cmp * dir;
+        // Tiebreaker: use pre-computed key (no localeCompare overhead)
+        const ka = a._titleKey ?? '', kb = b._titleKey ?? '';
+        return ka < kb ? -1 : ka > kb ? 1 : 0;
+      });
+    }
 
     return filtered;
   }
