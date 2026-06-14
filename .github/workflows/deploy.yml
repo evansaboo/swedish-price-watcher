@@ -8,20 +8,22 @@ on:
 jobs:
   deploy:
     name: Deploy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, raspberry-pi]
     steps:
-      - name: Deploy to Pi via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.PI_HOST }}
-          username: zpeedx
-          key: ${{ secrets.PI_SSH_KEY }}
-          port: 22
-          script: |
-            set -e
-            cd ~/swedish-price-watcher
-            git pull origin main
-            npm install --silent --no-audit
-            sudo systemctl restart swedish-price-watcher
-            sleep 3
-            curl -sf http://localhost:3030/health | grep -q '"ok":true' && echo "✅ Deploy successful" || (echo "❌ Health check failed" && exit 1)
+      - name: Pull latest code
+        run: |
+          cd ~/swedish-price-watcher
+          git pull origin main
+
+      - name: Install dependencies
+        run: |
+          cd ~/swedish-price-watcher
+          npm install --silent --no-audit
+
+      - name: Restart service
+        run: sudo systemctl restart swedish-price-watcher
+
+      - name: Health check
+        run: |
+          sleep 4
+          curl -sf http://localhost:3030/health | grep -q '"ok":true' && echo "✅ Deploy successful" || (echo "❌ Health check failed" && exit 1)
