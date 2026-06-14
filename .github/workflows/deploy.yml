@@ -25,5 +25,14 @@ jobs:
 
       - name: Health check
         run: |
-          sleep 4
-          curl -sf http://localhost:3030/health | grep -q '"ok":true' && echo "✅ Deploy successful" || (echo "❌ Health check failed" && exit 1)
+          # Wait up to 30s for the app to bind (it loads state before listening)
+          for i in $(seq 1 10); do
+            sleep 3
+            if curl -sf http://localhost:3030/health | grep -q '"ok":true'; then
+              echo "✅ Deploy successful"
+              exit 0
+            fi
+            echo "Waiting for app... ($i/10)"
+          done
+          echo "❌ Health check failed after 30s"
+          exit 1
