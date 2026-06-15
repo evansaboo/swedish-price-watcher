@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const BASE_URL = 'https://www.inet.se/fyndhornan';
-const IMAGE_BASE = 'https://www.inet.se/img/product-picture/standard/';
+const IMAGE_BASE = 'https://cdn.inet.se/product/500x500/';
 const PRODUCT_BASE = 'https://www.inet.se/produkt/';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 

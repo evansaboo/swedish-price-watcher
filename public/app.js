@@ -671,12 +671,12 @@ function renderPagination(response) {
   }
 
   el.paginationArea.innerHTML = `
-    <span class="pagination-info">Showing ${start}–${end} of ${total}</span>
     <div class="pagination-controls">
-      <button type="button" class="page-btn" data-page="${page - 1}"${page <= 1 ? ' disabled' : ''}>‹</button>
+      <button type="button" class="page-btn page-nav" data-page="${page - 1}"${page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹</button>
       ${buttons}
-      <button type="button" class="page-btn" data-page="${page + 1}"${page >= totalPages ? ' disabled' : ''}>›</button>
+      <button type="button" class="page-btn page-nav" data-page="${page + 1}"${page >= totalPages ? ' disabled' : ''} aria-label="Next page">›</button>
     </div>
+    <span class="pagination-info">Showing ${start}–${end} of ${total.toLocaleString('sv-SE')}</span>
   `;
 
   for (const btn of el.paginationArea.querySelectorAll('[data-page]')) {

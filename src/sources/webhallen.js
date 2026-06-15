@@ -66,7 +66,7 @@ function parseImageUrl(product) {
   // fyndwareOf.id is the original product ID whose /images/product/{id}/ returns a JPEG.
   const imageId = product.fyndwareOf?.id ?? product.id;
   if (!imageId) return null;
-  return `${BASE_URL}/images/product/${imageId}/`;
+  return `${BASE_URL}/images/product/${imageId}?size=500x500`;
 }
 
 function mapProduct(product, source, now) {
