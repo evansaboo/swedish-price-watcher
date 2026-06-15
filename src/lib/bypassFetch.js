@@ -27,8 +27,17 @@ function buildScrapflyUrl(targetUrl, apiKey, { renderJs = true } = {}) {
   return `https://api.scrapfly.io/scrape?${params}`;
 }
 
+function combineSignals(userSignal, timeoutMs) {
+  const timeoutSig = AbortSignal.timeout(timeoutMs);
+  if (!userSignal) return timeoutSig;
+  return AbortSignal.any([userSignal, timeoutSig]);
+}
+
 export async function scrapeViaScraperApi(url, apiKey, options = {}) {
-  const response = await fetch(buildScraperApiUrl(url, apiKey, options), { signal: AbortSignal.timeout(120_000) });
+  const { signal: userSignal, ...fetchOptions } = options;
+  const response = await fetch(buildScraperApiUrl(url, apiKey, fetchOptions), {
+    signal: combineSignals(userSignal, 120_000),
+  });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     throw new Error(`ScraperAPI HTTP ${response.status}: ${body.slice(0, 200)}`);
@@ -37,7 +46,10 @@ export async function scrapeViaScraperApi(url, apiKey, options = {}) {
 }
 
 export async function scrapeViaScrapfly(url, apiKey, options = {}) {
-  const response = await fetch(buildScrapflyUrl(url, apiKey, options), { signal: AbortSignal.timeout(90_000) });
+  const { signal: userSignal, ...fetchOptions } = options;
+  const response = await fetch(buildScrapflyUrl(url, apiKey, fetchOptions), {
+    signal: combineSignals(userSignal, 90_000),
+  });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     throw new Error(`Scrapfly HTTP ${response.status}: ${body.slice(0, 200)}`);
@@ -51,12 +63,12 @@ export async function scrapeViaScrapfly(url, apiKey, options = {}) {
   return result.content ?? '';
 }
 
-export async function scrapeViaFlaresolverr(url, flareSolverrUrl) {
+export async function scrapeViaFlaresolverr(url, flareSolverrUrl, options = {}) {
   const response = await fetch(`${flareSolverrUrl}/v1`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cmd: 'request.get', url, maxTimeout: 90_000 }),
-    signal: AbortSignal.timeout(120_000),
+    signal: combineSignals(options.signal, 120_000),
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
@@ -79,13 +91,13 @@ export function resolveBypassBackend(source, options = {}) {
   const scrapflyKey = process.env.SCRAPFLY_API_KEY?.trim() || '';
 
   if (flareSolverrUrl) {
-    return { label: 'FlareSolverr', fetchPage: (url) => scrapeViaFlaresolverr(url, flareSolverrUrl) };
+    return { label: 'FlareSolverr', fetchPage: (url, signal) => scrapeViaFlaresolverr(url, flareSolverrUrl, { signal }) };
   }
   if (scraperApiKey) {
-    return { label: 'ScraperAPI', fetchPage: (url) => scrapeViaScraperApi(url, scraperApiKey, options) };
+    return { label: 'ScraperAPI', fetchPage: (url, signal) => scrapeViaScraperApi(url, scraperApiKey, { ...options, signal }) };
   }
   if (scrapflyKey) {
-    return { label: 'Scrapfly', fetchPage: (url) => scrapeViaScrapfly(url, scrapflyKey, options) };
+    return { label: 'Scrapfly', fetchPage: (url, signal) => scrapeViaScrapfly(url, scrapflyKey, { ...options, signal }) };
   }
 
   throw new Error(

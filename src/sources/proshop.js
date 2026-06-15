@@ -90,7 +90,7 @@ function parseProshopPage(html, source, now, seen) {
   return observations;
 }
 
-export async function collectFromProshop({ source, sourceState, now }) {
+export async function collectFromProshop({ source, sourceState, now, signal }) {
   // Priority: FlareSolverr (free, self-hosted) → ScraperAPI → Scrapfly.
   const backend = resolveBypassBackend(source, {
     premium: source.premiumProxy === true,
@@ -123,7 +123,8 @@ export async function collectFromProshop({ source, sourceState, now }) {
 
       let html;
       try {
-        html = await backend.fetchPage(url);
+        if (signal?.aborted) break;
+        html = await backend.fetchPage(url, signal);
       } catch (err) {
         console.warn(`[proshop] ${path} page ${page} failed: ${err.message}`);
         stoppedEarly = true;

@@ -131,9 +131,10 @@
       "renderJs": true,
       "pageDelayMs": 1500,
       "maxOutletPages": 40,
-      "maxDemoPages": 65,
+      "maxDemoPages": 15,
       "scanIntervalMinutes": 240,
-      "incrementalStopPages": 2
+      "incrementalStopPages": 2,
+      "sourceTimeoutMs": 300000
     },
     {
       "id": "power-deals",
