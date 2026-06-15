@@ -2,6 +2,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeActiveWindow } from '../scheduler.js';
 
+let BetterSqlite3;
+try {
+  BetterSqlite3 = (await import('better-sqlite3')).default;
+} catch {
+  // better-sqlite3 not available — SqliteStore will throw on instantiation
+}
+
 const FALLBACK_WRITABLE_DATA_FILE = '/tmp/swedish-price-watcher-store.json';
 const APIFY_API_BASE_URL = 'https://api.apify.com/v2';
 
@@ -348,4 +355,271 @@ export class ApifyStore {
       throw new Error(`Unable to save Apify preferences: ${response.status} ${response.statusText}`);
     }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SqliteStore — SQLite-backed persistent store
+//
+// Schema:
+//   items          — one row per tracked product (data as JSON blob, history separate)
+//   price_history  — one row per price observation per item (indexed, append-only)
+//   source_states  — one row per scraper source
+//   notifications  — cooldown log (notification_key → sent_at)
+//   item_archive   — items that left scrapers (kept for history)
+//   scan_stats     — latest run stats + summary
+//
+// Preferences are still kept in a small sidecar JSON file for fast atomic saves.
+// ═══════════════════════════════════════════════════════════════
+
+const DDL = `
+  CREATE TABLE IF NOT EXISTS items (
+    listing_key  TEXT PRIMARY KEY,
+    source_id    TEXT NOT NULL,
+    data_json    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_items_source ON items(source_id);
+
+  CREATE TABLE IF NOT EXISTS price_history (
+    listing_key TEXT NOT NULL,
+    price_sek   REAL NOT NULL,
+    seen_at     TEXT NOT NULL,
+    PRIMARY KEY (listing_key, seen_at),
+    FOREIGN KEY (listing_key) REFERENCES items(listing_key) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS source_states (
+    source_id  TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    notification_key TEXT PRIMARY KEY,
+    sent_at          TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS item_archive (
+    listing_key TEXT PRIMARY KEY,
+    data_json   TEXT NOT NULL,
+    archived_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS scan_stats (
+    key        TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL
+  );
+`;
+
+export class SqliteStore {
+  constructor(dbPath) {
+    if (!BetterSqlite3) throw new Error('better-sqlite3 is not installed. Run: npm install better-sqlite3');
+    this.dbPath = dbPath;
+    this.preferencesFilePath = dbPath.replace(/(\.[^.]+)?$/, '.preferences.json');
+    this.state = createDefaultState();
+    this._db = null;
+    this._saveTimer = null;
+    this._savePromise = null;
+    this._onInvalidate = null;
+    // Prepared statements — initialised in #open()
+    this._stmts = null;
+  }
+
+  onInvalidate(fn) { this._onInvalidate = fn; }
+
+  #open() {
+    if (this._db) return;
+    this._db = new BetterSqlite3(this.dbPath);
+    this._db.pragma('journal_mode = WAL');
+    this._db.pragma('synchronous = NORMAL');
+    this._db.pragma('foreign_keys = ON');
+    this._db.pragma('cache_size = -32000'); // 32 MB page cache
+    this._db.exec(DDL);
+    this._stmts = {
+      upsertItem:      this._db.prepare('INSERT OR REPLACE INTO items (listing_key, source_id, data_json) VALUES (?, ?, ?)'),
+      deleteItem:      this._db.prepare('DELETE FROM items WHERE listing_key = ?'),
+      allItemKeys:     this._db.prepare('SELECT listing_key FROM items'),
+      allItems:        this._db.prepare('SELECT listing_key, data_json FROM items'),
+      insertHistory:   this._db.prepare('INSERT OR IGNORE INTO price_history (listing_key, price_sek, seen_at) VALUES (?, ?, ?)'),
+      allHistory:      this._db.prepare('SELECT listing_key, price_sek, seen_at FROM price_history ORDER BY listing_key, seen_at'),
+      upsertSource:    this._db.prepare('INSERT OR REPLACE INTO source_states (source_id, state_json) VALUES (?, ?)'),
+      allSources:      this._db.prepare('SELECT source_id, state_json FROM source_states'),
+      upsertNotif:     this._db.prepare('INSERT OR REPLACE INTO notifications (notification_key, sent_at) VALUES (?, ?)'),
+      deleteNotif:     this._db.prepare('DELETE FROM notifications WHERE notification_key = ?'),
+      allNotifs:       this._db.prepare('SELECT notification_key, sent_at FROM notifications'),
+      upsertArchive:   this._db.prepare('INSERT OR REPLACE INTO item_archive (listing_key, data_json, archived_at) VALUES (?, ?, ?)'),
+      allArchive:      this._db.prepare('SELECT listing_key, data_json FROM item_archive'),
+      upsertStats:     this._db.prepare('INSERT OR REPLACE INTO scan_stats (key, value_json) VALUES (?, ?)'),
+      getStats:        this._db.prepare('SELECT value_json FROM scan_stats WHERE key = ?'),
+    };
+  }
+
+  async load() {
+    await fs.mkdir(path.dirname(this.dbPath), { recursive: true });
+    this.#open();
+
+    // ── Items ──────────────────────────────────────────────────────
+    const items = {};
+    for (const row of this._stmts.allItems.all()) {
+      try {
+        const item = JSON.parse(row.data_json);
+        item.history = [];
+        items[row.listing_key] = item;
+      } catch { /* skip corrupted rows */ }
+    }
+
+    // ── Price history (streamed into item.history) ─────────────────
+    for (const row of this._stmts.allHistory.all()) {
+      items[row.listing_key]?.history.push({ priceSek: row.price_sek, seenAt: row.seen_at });
+    }
+
+    // ── Source states ──────────────────────────────────────────────
+    const sourceStates = {};
+    for (const row of this._stmts.allSources.all()) {
+      try { sourceStates[row.source_id] = JSON.parse(row.state_json); } catch { /* */ }
+    }
+
+    // ── Notifications ──────────────────────────────────────────────
+    const notifications = {};
+    for (const row of this._stmts.allNotifs.all()) {
+      notifications[row.notification_key] = row.sent_at;
+    }
+
+    // ── Item archive ───────────────────────────────────────────────
+    const itemHistory = {};
+    for (const row of this._stmts.allArchive.all()) {
+      try { itemHistory[row.listing_key] = JSON.parse(row.data_json); } catch { /* */ }
+    }
+
+    // ── Scan stats ─────────────────────────────────────────────────
+    const statsRow = this._stmts.getStats.get('stats');
+    const stats = statsRow
+      ? JSON.parse(statsRow.value_json)
+      : { lastRunStartedAt: null, lastRunCompletedAt: null, lastRunSummary: null };
+
+    this.state = normalizeState({ items, sourceStates, notifications, itemHistory, stats });
+    this.state.sourceStates = sourceStates; // normalizeState resets this
+    this.state.notifications = notifications;
+    this.state.itemHistory = itemHistory;
+    this.state.stats = { ...createDefaultState().stats, ...stats };
+
+    // ── Overlay preferences sidecar ────────────────────────────────
+    try {
+      const prefFile = await fs.readFile(this.preferencesFilePath, 'utf8');
+      const savedPrefs = JSON.parse(prefFile);
+      if (savedPrefs && typeof savedPrefs === 'object') {
+        this.state.preferences = normalizeState({ preferences: savedPrefs }).preferences;
+      }
+    } catch { /* preferences file doesn't exist yet */ }
+
+    return this.state;
+  }
+
+  getState() { return this.state; }
+
+  /** Full state persistence — runs in a single SQLite transaction. */
+  async save() {
+    this.#open();
+    const { items, sourceStates, notifications, itemHistory, stats } = this.state;
+    const stmts = this._stmts;
+
+    this._db.transaction(() => {
+      // ── Items: upsert active, delete pruned ──────────────────────
+      const dbKeys = new Set(stmts.allItemKeys.all().map(r => r.listing_key));
+      const stateKeys = new Set(Object.keys(items));
+
+      for (const [key, item] of Object.entries(items)) {
+        const { history = [], ...data } = item;
+        stmts.upsertItem.run(key, item.sourceId, JSON.stringify(data));
+        // Append-only: INSERT OR IGNORE keeps existing rows
+        for (const h of history) {
+          if (h.priceSek != null && h.seenAt) stmts.insertHistory.run(key, h.priceSek, h.seenAt);
+        }
+      }
+      for (const key of dbKeys) {
+        if (!stateKeys.has(key)) stmts.deleteItem.run(key); // cascades to price_history
+      }
+
+      // ── Source states ────────────────────────────────────────────
+      for (const [id, s] of Object.entries(sourceStates)) {
+        stmts.upsertSource.run(id, JSON.stringify(s));
+      }
+
+      // ── Notifications: sync additions and removals ───────────────
+      const dbNotifKeys = new Set(stmts.allNotifs.all().map(r => r.notification_key));
+      for (const [key, sentAt] of Object.entries(notifications)) {
+        stmts.upsertNotif.run(key, sentAt);
+      }
+      for (const key of dbNotifKeys) {
+        if (!(key in notifications)) stmts.deleteNotif.run(key);
+      }
+
+      // ── Item archive ─────────────────────────────────────────────
+      for (const [key, hist] of Object.entries(itemHistory)) {
+        stmts.upsertArchive.run(key, JSON.stringify(hist), hist.archivedAt ?? new Date().toISOString());
+      }
+
+      // ── Scan stats ───────────────────────────────────────────────
+      stmts.upsertStats.run('stats', JSON.stringify(stats));
+    })();
+
+    this._onInvalidate?.();
+  }
+
+  /** Fast save: only writes the small preferences sidecar (~1 KB). */
+  async savePreferences() {
+    await atomicWriteFile(this.preferencesFilePath, JSON.stringify(this.state.preferences ?? {}) + '\n');
+    this._onInvalidate?.();
+  }
+
+  debouncedSave(delayMs = 500) {
+    if (this._saveTimer) clearTimeout(this._saveTimer);
+    this._savePromise = new Promise((resolve, reject) => {
+      this._saveTimer = setTimeout(() => {
+        this._saveTimer = null;
+        this.save().then(resolve).catch(reject);
+      }, delayMs);
+    });
+    return this._savePromise;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// migrateJsonToSqlite — one-time migration from JsonStore → SqliteStore
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Reads an existing store.json and writes all data into a new store.db.
+ * The JSON file is renamed to store.json.migrated on success (kept as backup).
+ * No-ops if the db file already exists.
+ */
+export async function migrateJsonToSqlite(jsonPath, dbPath) {
+  // Already migrated or db exists
+  try { await fs.access(dbPath); return false; } catch { /* db doesn't exist yet — proceed */ }
+
+  let raw;
+  try { raw = await fs.readFile(jsonPath, 'utf8'); } catch { return false; } // no json to migrate
+
+  console.log('[sqlite] Migrating store.json → store.db …');
+  const t0 = Date.now();
+  const rawState = JSON.parse(raw);
+  const store = new SqliteStore(dbPath);
+  store.state = normalizeState(rawState);
+  store.state.sourceStates = rawState.sourceStates ?? {};
+  store.state.notifications = rawState.notifications ?? {};
+  store.state.itemHistory = rawState.itemHistory ?? {};
+  store.state.stats = { ...createDefaultState().stats, ...(rawState.stats ?? {}) };
+
+  await store.save();
+
+  // Preserve preferences sidecar path if the JSON store had one
+  const jsonPrefPath = jsonPath.replace(/(\.[^.]+)?$/, '.preferences.json');
+  if (store.preferencesFilePath !== jsonPrefPath) {
+    try {
+      const prefData = await fs.readFile(jsonPrefPath, 'utf8');
+      await atomicWriteFile(store.preferencesFilePath, prefData);
+    } catch { /* no sidecar — fine */ }
+  }
+
+  await fs.rename(jsonPath, jsonPath + '.migrated');
+  console.log(`[sqlite] Migration complete in ${Date.now() - t0}ms — ${Object.keys(rawState.items ?? {}).length} items transferred.`);
+  return true;
 }

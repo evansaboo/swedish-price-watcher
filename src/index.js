@@ -1,7 +1,7 @@
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PoliteFetcher } from './lib/fetcher.js';
-import { ApifyStore, JsonStore, reconcileStateWithSources } from './lib/store.js';
+import { ApifyStore, JsonStore, SqliteStore, migrateJsonToSqlite, reconcileStateWithSources } from './lib/store.js';
 import { buildListingKey, isSourceEnabled } from './lib/utils.js';
 import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
@@ -15,13 +15,26 @@ const runOnce = process.argv.includes('--run-once');
 const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 const useApifyStateStore = isRailwayRuntime && Boolean(process.env.APIFY_TOKEN?.trim());
 const config = await loadConfig();
-const store = useApifyStateStore
-  ? new ApifyStore({
-      token: process.env.APIFY_TOKEN.trim(),
-      storeName: process.env.APIFY_STATE_STORE_NAME ?? 'swedish-price-watcher-state',
-      recordKey: process.env.APIFY_STATE_RECORD_KEY ?? 'state'
-    })
-  : new JsonStore(config.dataFile);
+
+let store;
+if (useApifyStateStore) {
+  store = new ApifyStore({
+    token: process.env.APIFY_TOKEN.trim(),
+    storeName: process.env.APIFY_STATE_STORE_NAME ?? 'swedish-price-watcher-state',
+    recordKey: process.env.APIFY_STATE_RECORD_KEY ?? 'state'
+  });
+} else {
+  // Local mode: prefer SQLite, migrate from JSON if needed
+  const dbPath = config.dataFile.replace(/\.json$/, '.db');
+  try {
+    // One-time migration: if store.json exists but store.db doesn't, migrate automatically
+    await migrateJsonToSqlite(config.dataFile, dbPath);
+    store = new SqliteStore(dbPath);
+  } catch (sqliteErr) {
+    console.warn(`[store] SQLite unavailable (${sqliteErr.message}), falling back to JSON store`);
+    store = new JsonStore(config.dataFile);
+  }
+}
 
 await store.load();
 reconcileStateWithSources(store.getState(), config.sources);
