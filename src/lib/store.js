@@ -205,6 +205,12 @@ export class JsonStore {
     this._onInvalidate?.();
   }
 
+  /**
+   * Incremental flush — writes only the specified items to disk.
+   * No-op on JsonStore (full save happens at end of scan).
+   */
+  flushItems() { /* no-op for JsonStore */ }
+
   /** Fast save: only writes the small preferences object (~1 KB). */
   async savePreferences() {
     await this.ensureWritableFilePath();
@@ -355,6 +361,9 @@ export class ApifyStore {
       throw new Error(`Unable to save Apify preferences: ${response.status} ${response.statusText}`);
     }
   }
+
+  /** No-op: ApifyStore uses full saves only. */
+  flushItems() {}
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -515,27 +524,34 @@ export class SqliteStore {
 
   getState() { return this.state; }
 
-  /** Full state persistence — runs in a single SQLite transaction. */
-  async save() {
+  /**
+   * Full state persistence — runs in a single SQLite transaction.
+   *
+   * Pass `{ skipItems: true }` during and after scans — items are already
+   * written incrementally via flushItems() and don't need to be re-synced.
+   * This makes the end-of-scan save lightweight (metadata only).
+   */
+  async save({ skipItems = false } = {}) {
     this.#open();
     const { items, sourceStates, notifications, itemHistory, stats } = this.state;
     const stmts = this._stmts;
 
     this._db.transaction(() => {
-      // ── Items: upsert active, delete pruned ──────────────────────
-      const dbKeys = new Set(stmts.allItemKeys.all().map(r => r.listing_key));
-      const stateKeys = new Set(Object.keys(items));
+      if (!skipItems) {
+        // ── Items: full sync (startup / migration / periodic) ──────
+        const dbKeys = new Set(stmts.allItemKeys.all().map(r => r.listing_key));
+        const stateKeys = new Set(Object.keys(items));
 
-      for (const [key, item] of Object.entries(items)) {
-        const { history = [], ...data } = item;
-        stmts.upsertItem.run(key, item.sourceId, JSON.stringify(data));
-        // Append-only: INSERT OR IGNORE keeps existing rows
-        for (const h of history) {
-          if (h.priceSek != null && h.seenAt) stmts.insertHistory.run(key, h.priceSek, h.seenAt);
+        for (const [key, item] of Object.entries(items)) {
+          const { history = [], ...data } = item;
+          stmts.upsertItem.run(key, item.sourceId, JSON.stringify(data));
+          for (const h of history) {
+            if (h.priceSek != null && h.seenAt) stmts.insertHistory.run(key, h.priceSek, h.seenAt);
+          }
         }
-      }
-      for (const key of dbKeys) {
-        if (!stateKeys.has(key)) stmts.deleteItem.run(key); // cascades to price_history
+        for (const key of dbKeys) {
+          if (!stateKeys.has(key)) stmts.deleteItem.run(key); // cascades to price_history
+        }
       }
 
       // ── Source states ────────────────────────────────────────────
@@ -562,6 +578,42 @@ export class SqliteStore {
     })();
 
     this._onInvalidate?.();
+  }
+
+  /**
+   * Incremental item flush — called after each source completes during a scan.
+   * Only writes items that actually changed (O(scan_results) vs O(all_items)).
+   *
+   * - changedKeys: listing keys of all items returned by this source's scan
+   * - deletedKeys: listing keys of items pruned from state this scan
+   *
+   * Only the last history entry is inserted per item; all prior entries were
+   * already persisted in previous flushes (INSERT OR IGNORE is idempotent).
+   */
+  flushItems(changedKeys, deletedKeys) {
+    if ((!changedKeys?.length && !deletedKeys?.length) || !BetterSqlite3) return;
+    this.#open();
+    const { items } = this.state;
+    const stmts = this._stmts;
+
+    this._db.transaction(() => {
+      for (const key of changedKeys) {
+        const item = items[key];
+        if (!item) continue;
+        const { history = [], ...data } = item;
+        stmts.upsertItem.run(key, item.sourceId, JSON.stringify(data));
+        // Only persist the most-recent history entry — previous entries are
+        // already in the DB from earlier flushes. INSERT OR IGNORE is safe
+        // if this entry was already written (e.g. price unchanged this scan).
+        const last = history.at(-1);
+        if (last?.priceSek != null && last?.seenAt) {
+          stmts.insertHistory.run(key, last.priceSek, last.seenAt);
+        }
+      }
+      for (const key of deletedKeys) {
+        stmts.deleteItem.run(key); // cascades to price_history
+      }
+    })();
   }
 
   /** Fast save: only writes the small preferences sidecar (~1 KB). */

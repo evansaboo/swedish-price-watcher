@@ -139,7 +139,10 @@ async function triggerScan(trigger, options = {}) {
   if (trigger === 'scheduled') {
     state.stats.lastScheduledRunStartedAt = startedAt;
   }
-  store.save().catch(err => console.warn(`[scan] Pre-scan save failed (non-fatal): ${err.message}`));
+  // No pre-scan save — the SqliteStore writes items incrementally via
+  // flushItems() after each source, so there's nothing critical to persist
+  // at scan start. Saving 26k items here would block the event loop for
+  // several seconds and make the UI unresponsive when a scan is triggered.
 
   const aggregatedNotif = {
     sent: 0, skipped: 0, failed: 0, errors: [],
@@ -238,6 +241,7 @@ async function triggerScan(trigger, options = {}) {
           // (incremental early-stop, mid-pagination failures) would otherwise delete
           // valid items that simply weren't revisited — and re-alert them as "new" later.
           const partialSnapshot = scanCancelled || sourceState.lastScanPartial === true;
+          const deletedItemKeys = [];
           if (collected.length > 0 && !partialSnapshot) {
             const seenKeys = new Set(collected.map(o => buildListingKey(o.sourceId, o.externalId)));
             let pruned = 0;
@@ -257,6 +261,7 @@ async function triggerScan(trigger, options = {}) {
                 for (const notifKey of Object.keys(state.notifications)) {
                   if (notifKey.startsWith(`${key}:`)) delete state.notifications[notifKey];
                 }
+                deletedItemKeys.push(key);
                 delete state.items[key];
                 pruned += 1;
               }
@@ -268,6 +273,14 @@ async function triggerScan(trigger, options = {}) {
               }
             }
             if (pruned > 0) console.log(`[${source.id}] Pruned ${pruned} stale item(s).`);
+          }
+
+          // Incrementally flush only the items that changed this scan to SQLite.
+          // This avoids re-writing all 26k items + 122k history rows on every source
+          // completion, which would block the Node.js event loop for several seconds.
+          if (collected.length > 0 || deletedItemKeys.length > 0) {
+            const changedKeys = collected.map(o => buildListingKey(o.sourceId, o.externalId));
+            store.flushItems(changedKeys, deletedItemKeys);
           }
 
           const isFirstSuccessfulRun = !sourceState.lastSuccessAt;
@@ -322,7 +335,7 @@ async function triggerScan(trigger, options = {}) {
       sourceResults
     };
 
-    await store.save();
+    await store.save({ skipItems: true });
     return state.stats.lastRunSummary;
   } catch (error) {
     scanState.lastError = error.message;
@@ -335,7 +348,7 @@ async function triggerScan(trigger, options = {}) {
       observations,
       sourceResults
     };
-    await store.save();
+    await store.save({ skipItems: true });
     throw error;
   } finally {
     scanState.running = false;
