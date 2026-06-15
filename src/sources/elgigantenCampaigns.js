@@ -38,6 +38,8 @@ const ALGOLIA_HEADERS = {
   Accept: 'application/json',
   'x-algolia-api-key': 'bd55a210cb7ee1126552cab633fc1350',
   'x-algolia-application-id': 'Z0FL7R8UBH',
+  Referer: 'https://www.elgiganten.se/',
+  Origin: 'https://www.elgiganten.se',
 };
 
 function resolveImageUrl(raw) {
