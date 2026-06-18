@@ -55,6 +55,7 @@
 
   --header-height: 60px;
   --filter-bar-height: 52px;
+  --scan-bar-height: 0px;
 
   --transition-fast: 150ms ease;
   --transition-base: 250ms ease;
@@ -326,15 +327,19 @@ select { cursor: pointer; }
 
 /* Scan progress */
 .scan-progress {
-  position: relative;
+  position: sticky;
+  top: var(--header-height);
+  z-index: 95;
   height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--bg-inset);
-  border-top: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
   overflow: hidden;
 }
+/* When scanning, let the filter bar know to drop down by 28px */
+body.scanning { --scan-bar-height: 28px; }
 .scan-progress-bar {
   position: absolute;
   left: 0;
@@ -355,7 +360,7 @@ select { cursor: pointer; }
 /* ── FILTER BAR ────────────────────────────────────────────────── */
 .filter-bar {
   position: sticky;
-  top: var(--header-height);
+  top: calc(var(--header-height) + var(--scan-bar-height));
   z-index: 90;
   background: var(--bg-page);
   border-bottom: 1px solid var(--border-light);
@@ -486,7 +491,7 @@ select { cursor: pointer; }
 /* ── FILTER PANEL ──────────────────────────────────────────────── */
 .filter-panel {
   position: sticky;
-  top: calc(var(--header-height) + var(--filter-bar-height));
+  top: calc(var(--header-height) + var(--scan-bar-height) + var(--filter-bar-height));
   z-index: 89;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border);

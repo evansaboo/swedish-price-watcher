@@ -1016,6 +1016,7 @@ function syncScanUI(status) {
     el.cancelBtn.classList.add('hidden');
     el.scanProgress.classList.add('hidden');
     el.scanLine?.classList.add('hidden');
+    document.body.classList.remove('scanning');
     return;
   }
 
@@ -1033,6 +1034,7 @@ function syncScanUI(status) {
   el.scanProgressBar.style.width = `${pct}%`;
   el.scanProgressText.textContent = total ? `Scanning ${completed}/${total} sources` : 'Starting scan...';
   el.scanLine?.classList.remove('hidden');
+  document.body.classList.add('scanning');
 }
 
 function clearScanPoll() {
