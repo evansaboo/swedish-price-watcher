@@ -1807,3 +1807,38 @@ body.scanning { --scan-bar-height: 28px; }
 /* ── LIST VIEW SPARKLINE ─────────────────────────────────────── */
 .list-view .card-sparkline { margin-top: 0; margin-left: auto; }
 .list-view .wishlist-btn { opacity: 1; position: static; width: 28px; height: 28px; font-size: 16px; }
+
+/* ── APP FOOTER ──────────────────────────────────────────────── */
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 24px;
+  border-top: 1px solid var(--border-light);
+  margin-top: 24px;
+}
+.version-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-xl);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  cursor: default;
+  user-select: none;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+.version-badge:hover {
+  border-color: var(--border-hover);
+  color: var(--text-secondary);
+}
+.version-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--clr-success);
+  flex-shrink: 0;
+}

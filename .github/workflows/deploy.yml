@@ -15,6 +15,27 @@ jobs:
           cd ~/swedish-price-watcher
           git pull origin main
 
+      - name: Write version file
+        run: |
+          cd ~/swedish-price-watcher
+          node -e "
+            const { execSync } = require('child_process');
+            const sha = execSync('git rev-parse HEAD').toString().trim();
+            const shortSha = execSync('git rev-parse --short HEAD').toString().trim();
+            const message = execSync('git log -1 --pretty=%s').toString().trim();
+            const author = execSync('git log -1 --pretty=%an').toString().trim();
+            const info = {
+              sha,
+              shortSha,
+              message,
+              author,
+              deployedAt: new Date().toISOString(),
+              branch: execSync('git rev-parse --abbrev-ref HEAD').toString().trim()
+            };
+            require('fs').writeFileSync('version.json', JSON.stringify(info, null, 2));
+            console.log('version.json written:', shortSha, '-', message);
+          "
+
       - name: Install dependencies
         run: |
           cd ~/swedish-price-watcher

@@ -5,8 +5,13 @@
 import Fastify from 'fastify';
 import fastifyCompress from '@fastify/compress';
 import fastifyStatic from '@fastify/static';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isSourceEnabled } from './lib/utils.js';
 import { buildProductSummaries } from './services/dealEngine.js';
+
+const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -160,6 +165,22 @@ export async function buildApp({ config, store, productCache, scanState, trigger
 
   // ── Health ─────────────────────────────────────────────────────
   app.get('/health', async () => ({ ok: true }));
+
+  // ── Version / deployment info ──────────────────────────────────
+  app.get('/api/version', async (_, reply) => {
+    try {
+      const raw = await fs.readFile(path.join(ROOT_DIR, 'version.json'), 'utf8');
+      return JSON.parse(raw);
+    } catch {
+      // version.json is generated at deploy time; fall back to package.json version
+      try {
+        const pkg = JSON.parse(await fs.readFile(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+        return { version: pkg.version ?? '0.0.0', sha: null, shortSha: null, deployedAt: null };
+      } catch {
+        return reply.code(500).send({ error: 'Version info unavailable' });
+      }
+    }
+  });
 
   // ── Status ─────────────────────────────────────────────────────
   app.get('/api/status', async () => {

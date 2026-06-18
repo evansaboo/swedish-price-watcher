@@ -1700,3 +1700,30 @@ initTheme();
 hydratePrefs();
 bindEvents();
 loadWishlist().then(() => loadDashboard()).catch(err => showToast(err.message, 'error'));
+loadVersionInfo();
+
+async function loadVersionInfo() {
+  const badge = document.getElementById('version-badge');
+  const text = document.getElementById('version-text');
+  if (!badge || !text) return;
+  try {
+    const res = await fetch('/api/version');
+    if (!res.ok) throw new Error('unavailable');
+    const v = await res.json();
+    const sha = v.shortSha ?? v.sha?.slice(0, 7) ?? '?';
+    const deployedAt = v.deployedAt ? new Date(v.deployedAt) : null;
+    const timeStr = deployedAt
+      ? deployedAt.toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' })
+      : null;
+    text.textContent = timeStr ? `${sha} · deployed ${timeStr}` : sha;
+    badge.title = [
+      `Commit: ${v.sha ?? sha}`,
+      v.message ? `Message: ${v.message}` : null,
+      v.author ? `By: ${v.author}` : null,
+      deployedAt ? `Deployed: ${deployedAt.toLocaleString('sv-SE')}` : null,
+    ].filter(Boolean).join('\n');
+  } catch {
+    text.textContent = 'dev';
+    badge.title = 'Version info not available (dev mode)';
+  }
+}
