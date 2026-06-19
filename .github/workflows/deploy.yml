@@ -46,14 +46,14 @@ jobs:
 
       - name: Health check
         run: |
-          # Wait up to 30s for the app to bind (it loads state before listening)
-          for i in $(seq 1 10); do
-            sleep 3
+          # Wait up to 90s for the app to bind (SQLite with 30K+ items takes 20-40s on Pi)
+          for i in $(seq 1 18); do
+            sleep 5
             if curl -sf http://localhost:3030/health | grep -q '"ok":true'; then
               echo "✅ Deploy successful"
               exit 0
             fi
-            echo "Waiting for app... ($i/10)"
+            echo "Waiting for app... ($i/18)"
           done
-          echo "❌ Health check failed after 30s"
+          echo "❌ Health check failed after 90s"
           exit 1
