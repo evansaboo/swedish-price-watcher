@@ -474,13 +474,15 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       reply.code(404);
       return { message: 'Product not found.' };
     }
+    // Use in-memory history if populated (built during scans); otherwise query DB directly.
+    const history = item.history?.length > 0 ? item.history : store.getItemHistory(listingKey);
     return {
       listingKey,
       title: item.title,
       currentPriceSek: item.latestPriceSek,
       lowestPriceSek: item.lowestPriceSek,
       highestPriceSek: item.highestPriceSek,
-      history: item.history ?? []
+      history
     };
   });
 

@@ -249,9 +249,11 @@ async function triggerScan(trigger, options = {}) {
             for (const key of Object.keys(state.items)) {
               if (state.items[key].sourceId === source.id && !seenKeys.has(key)) {
                 const item = state.items[key];
-                if (item.history?.length > 0) {
+                // history may be empty if not yet rebuilt by a scan; fall back to DB query
+                const historyToArchive = item.history?.length > 0 ? item.history : store.getItemHistory(key);
+                if (historyToArchive.length > 0) {
                   state.itemHistory[key] = {
-                    history: item.history,
+                    history: historyToArchive,
                     lowestPriceSek: item.lowestPriceSek,
                     highestPriceSek: item.highestPriceSek,
                     firstSeenAt: item.firstSeenAt,

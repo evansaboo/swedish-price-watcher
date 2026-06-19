@@ -211,6 +211,13 @@ export class JsonStore {
    */
   flushItems() { /* no-op for JsonStore */ }
 
+  /** History is in-memory for JsonStore — just read from item.history. */
+  getItemHistory(listingKey) {
+    const state = this.getState();
+    const item = state.items?.[listingKey];
+    return Array.isArray(item?.history) ? item.history : [];
+  }
+
   /** Fast save: only writes the small preferences object (~1 KB). */
   async savePreferences() {
     await this.ensureWritableFilePath();
@@ -364,6 +371,13 @@ export class ApifyStore {
 
   /** No-op: ApifyStore uses full saves only. */
   flushItems() {}
+
+  /** History is in-memory for ApifyStore — just read from item.history. */
+  getItemHistory(listingKey) {
+    const state = this.getState();
+    const item = state.items?.[listingKey];
+    return Array.isArray(item?.history) ? item.history : [];
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -448,7 +462,7 @@ export class SqliteStore {
       allItemKeys:     this._db.prepare('SELECT listing_key FROM items'),
       allItems:        this._db.prepare('SELECT listing_key, data_json FROM items'),
       insertHistory:   this._db.prepare('INSERT OR IGNORE INTO price_history (listing_key, price_sek, seen_at) VALUES (?, ?, ?)'),
-      allHistory:      this._db.prepare('SELECT listing_key, price_sek, seen_at FROM price_history ORDER BY listing_key, seen_at'),
+      historyForItem:  this._db.prepare('SELECT price_sek, seen_at FROM price_history WHERE listing_key = ? ORDER BY seen_at'),
       upsertSource:    this._db.prepare('INSERT OR REPLACE INTO source_states (source_id, state_json) VALUES (?, ?)'),
       allSources:      this._db.prepare('SELECT source_id, state_json FROM source_states'),
       upsertNotif:     this._db.prepare('INSERT OR REPLACE INTO notifications (notification_key, sent_at) VALUES (?, ?)'),
@@ -470,15 +484,16 @@ export class SqliteStore {
     for (const row of this._stmts.allItems.all()) {
       try {
         const item = JSON.parse(row.data_json);
-        item.history = [];
+        item.history = []; // history loaded lazily from DB on first access
         items[row.listing_key] = item;
       } catch { /* skip corrupted rows */ }
     }
 
-    // ── Price history (streamed into item.history) ─────────────────
-    for (const row of this._stmts.allHistory.all()) {
-      items[row.listing_key]?.history.push({ priceSek: row.price_sek, seenAt: row.seen_at });
-    }
+    // NOTE: price_history is NOT loaded here — doing so for 100K+ rows blocks the
+    // event loop for 30-60s on low-end hardware (Raspberry Pi). Instead:
+    //   • history is rebuilt incrementally during scans via mergeObservations()
+    //   • the /api/price-history endpoint queries DB on-demand via getItemHistory()
+    //   • archiving reads DB on-demand via getItemHistory() for items with no in-memory history
 
     // ── Source states ──────────────────────────────────────────────
     const sourceStates = {};
@@ -523,6 +538,13 @@ export class SqliteStore {
   }
 
   getState() { return this.state; }
+
+  /** Query price history for a single item directly from SQLite (synchronous). */
+  getItemHistory(listingKey) {
+    this.#open();
+    const rows = this._stmts.historyForItem.all(listingKey);
+    return rows.map(r => ({ priceSek: r.price_sek, seenAt: r.seen_at }));
+  }
 
   /**
    * Full state persistence — runs in a single SQLite transaction.

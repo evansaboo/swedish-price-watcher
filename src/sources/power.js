@@ -63,6 +63,8 @@ function mapProduct(item, source, now) {
     conditionLabel: item.outletReason ?? (outletOnly ? 'Outlet' : 'Kampanj'),
     availability: 'in_stock',
     outletReason: item.outletReason ?? null,
+    gtin: item.eanGtin12 ?? item.barcode ?? null,
+    manufacturerArticleNumber: item.productManufactorIdentity ?? null,
     seenAt: now,
   };
 }
