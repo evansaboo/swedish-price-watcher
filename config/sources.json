@@ -129,12 +129,12 @@
       "notes": "Uses ScraperAPI (render=true, 5 credits/page, free: 5000/mo = ~9 full scans). Falls back to Scrapfly (SCRAPFLY_API_KEY) or self-hosted FlareSolverr (FLARESOLVERR_URL). Incremental mode stops pagination early when pages contain only already-known items — drastically cuts credit usage on repeat scans. scanIntervalMinutes=240 means scheduled scans run this source at most every 4h. Full scan via UI/API always runs immediately.",
       "apiTokenEnvVar": "SCRAPERAPI_KEY",
       "renderJs": true,
-      "pageDelayMs": 1500,
-      "maxOutletPages": 40,
-      "maxDemoPages": 15,
+      "pageDelayMs": 2000,
+      "maxOutletPages": 6,
+      "maxDemoPages": 5,
       "scanIntervalMinutes": 240,
       "incrementalStopPages": 2,
-      "sourceTimeoutMs": 300000
+      "sourceTimeoutMs": 600000
     },
     {
       "id": "power-deals",
