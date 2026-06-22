@@ -23,24 +23,77 @@ import { normalizeProductIdentity, sleep } from '../lib/utils.js';
  * }
  */
 
-const ALGOLIA_URL =
+const ALGOLIA_BASE_URL =
   'https://z0fl7r8ubh-dsn.algolia.net/1/indexes/*/queries' +
-  '?x-algolia-agent=Algolia%20for%20JavaScript' +
-  '&x-algolia-api-key=bd55a210cb7ee1126552cab633fc1350' +
-  '&x-algolia-application-id=Z0FL7R8UBH';
+  '?x-algolia-agent=Algolia%20for%20JavaScript';
+
+const SIGNED_KEY_URL = 'https://www.elgiganten.se/api/algolia/signed-api-key';
 
 const INDEX = 'commerce_b2c_OCSEELG';
 const HITS_PER_PAGE = 100;
 const PAGE_DELAY_MS = 150;
 
-const ALGOLIA_HEADERS = {
-  'Content-Type': 'application/json',
-  Accept: 'application/json',
-  'x-algolia-api-key': 'bd55a210cb7ee1126552cab633fc1350',
-  'x-algolia-application-id': 'Z0FL7R8UBH',
-  Referer: 'https://www.elgiganten.se/',
-  Origin: 'https://www.elgiganten.se',
-};
+/**
+ * Fetch a signed Algolia API key via Elgiganten's nonce-based auth endpoint.
+ * Cached in sourceState.algoliaApiKey until within 60s of expiry.
+ */
+async function getAlgoliaApiKey(sourceState) {
+  const now = Date.now();
+  if (sourceState.algoliaApiKey && sourceState.algoliaKeyExpiry > now + 60_000) {
+    return sourceState.algoliaApiKey;
+  }
+
+  const baseHeaders = {
+    Referer: 'https://www.elgiganten.se/',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+    Origin: 'https://www.elgiganten.se',
+  };
+
+  // Step 1: trigger nonce — response sets cookie algolia-refresh-nonce
+  const res1 = await fetch(SIGNED_KEY_URL, { headers: baseHeaders, signal: AbortSignal.timeout(15_000) });
+  const setCookie = res1.headers.get('set-cookie') ?? '';
+  const m = /algolia-refresh-nonce=([a-f0-9-]{36})/i.exec(setCookie);
+  const nonce = m?.[1] ?? null;
+  if (!nonce) throw new Error('Elgiganten campaigns: failed to obtain nonce from /api/algolia/signed-api-key');
+
+  // Step 2: exchange nonce for signed API key
+  const res2 = await fetch(SIGNED_KEY_URL, {
+    headers: { ...baseHeaders, 'x-algolia-refresh-nonce': nonce },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = await res2.json();
+  if (!body?.apiKey) throw new Error(`Elgiganten campaigns: signed-api-key returned no apiKey: ${JSON.stringify(body)}`);
+
+  let expiry = now + 10 * 60_000;
+  try {
+    const decoded = Buffer.from(body.apiKey, 'base64').toString('utf8');
+    const vm = /validUntil=(\d+)/.exec(decoded);
+    if (vm) expiry = Number(vm[1]) * 1000;
+  } catch { /* keep default */ }
+
+  sourceState.algoliaApiKey = body.apiKey;
+  sourceState.algoliaKeyExpiry = expiry;
+  return body.apiKey;
+}
+
+async function algoliaPost(apiKey, body) {
+  const url = `${ALGOLIA_BASE_URL}&x-algolia-api-key=${apiKey}&x-algolia-application-id=Z0FL7R8UBH`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'x-algolia-api-key': apiKey,
+      'x-algolia-application-id': 'Z0FL7R8UBH',
+      Referer: 'https://www.elgiganten.se/',
+      Origin: 'https://www.elgiganten.se',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new Error(`Algolia HTTP ${res.status}: ${await res.text()}`);
+  return res.json();
+}
 
 function resolveImageUrl(raw) {
   if (!raw) return null;
@@ -53,17 +106,6 @@ function resolveImageUrl(raw) {
     }
   } catch { /* fall through */ }
   return raw;
-}
-
-async function algoliaPost(body) {
-  const res = await fetch(ALGOLIA_URL, {
-    method: 'POST',
-    headers: ALGOLIA_HEADERS,
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`Algolia HTTP ${res.status}: ${await res.text()}`);
-  return res.json();
 }
 
 /** Fetch active campaign IDs grouped by type from Algolia facets. */
@@ -90,8 +132,8 @@ function isoWeekEndDate(year, week) {
   return end;
 }
 
-async function discoverCampaigns(filterTypes, filterGraceDays) {
-  const payload = await algoliaPost({
+async function discoverCampaigns(apiKey, filterTypes, filterGraceDays) {
+  const payload = await algoliaPost(apiKey, {
     requests: [{
       indexName: INDEX,
       hitsPerPage: 0,
@@ -118,7 +160,7 @@ async function discoverCampaigns(filterTypes, filterGraceDays) {
       page: 0,
       attributesToRetrieve: ['articleCampaigns'],
     }));
-    const data = await algoliaPost({ requests });
+    const data = await algoliaPost(apiKey, { requests });
     for (let j = 0; j < chunk.length; j++) {
       const hit = data?.results?.[j]?.hits?.[0];
       const campaigns = hit?.articleCampaigns ?? [];
@@ -171,12 +213,12 @@ async function discoverCampaigns(filterTypes, filterGraceDays) {
 }
 
 /** Paginate all products for a given Algolia filter string. Respects 1500-hit cap. */
-async function fetchAllPages(filter) {
+async function fetchAllPages(apiKey, filter) {
   const hits = [];
   let page = 0;
 
   for (;;) {
-    const payload = await algoliaPost({
+    const payload = await algoliaPost(apiKey, {
       requests: [{
         indexName: INDEX,
         hitsPerPage: HITS_PER_PAGE,
@@ -301,7 +343,7 @@ function mapCampaignHit(hit, campaignId, source, now, minDiscountPct) {
   };
 }
 
-export async function collectFromElgigantenCampaigns({ source, now }) {
+export async function collectFromElgigantenCampaigns({ source, sourceState, now }) {
   const campaignTypes = Array.isArray(source.campaignTypes) ? source.campaignTypes : ['W'];
   const pinnedIds = Array.isArray(source.campaignIds) ? source.campaignIds : [];
   const minDiscountPct = typeof source.minDiscountPct === 'number' ? source.minDiscountPct : 0;
@@ -309,10 +351,18 @@ export async function collectFromElgigantenCampaigns({ source, now }) {
   // Grace period after campaign end before we stop fetching it (default 3 days)
   const campaignGraceDays = typeof source.campaignGraceDays === 'number' ? source.campaignGraceDays : 3;
 
+  // Step 0: obtain a fresh signed Algolia API key via the nonce flow
+  let apiKey;
+  try {
+    apiKey = await getAlgoliaApiKey(sourceState);
+  } catch (err) {
+    throw new Error(`Elgiganten campaigns: failed to obtain Algolia API key — ${err.message}`);
+  }
+
   // Step 1: collect campaign IDs — pinned IDs + auto-discovered by type
   let discoveredIds = [];
   try {
-    discoveredIds = await discoverCampaigns(campaignTypes, campaignGraceDays);
+    discoveredIds = await discoverCampaigns(apiKey, campaignTypes, campaignGraceDays);
   } catch (err) {
     throw new Error(`Elgiganten campaigns: failed to discover campaign IDs — ${err.message}`);
   }
@@ -334,7 +384,7 @@ export async function collectFromElgigantenCampaigns({ source, now }) {
     if (taggedHits.length >= maxProducts) break;
     const filter = `articleCampaigns.campaignId:${cid}`;
     try {
-      const hits = await fetchAllPages(filter);
+      const hits = await fetchAllPages(apiKey, filter);
       for (const h of hits) {
         const id = String(h.objectID ?? h.articleNumber ?? '');
         const key = `${id}:${cid}`;

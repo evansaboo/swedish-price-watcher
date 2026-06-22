@@ -1,10 +1,10 @@
 import { normalizeProductIdentity, sleep } from '../lib/utils.js';
 
-const ALGOLIA_URL =
+const ALGOLIA_BASE_URL =
   'https://z0fl7r8ubh-dsn.algolia.net/1/indexes/*/queries' +
-  '?x-algolia-agent=Algolia%20for%20JavaScript' +
-  '&x-algolia-api-key=bd55a210cb7ee1126552cab633fc1350' +
-  '&x-algolia-application-id=Z0FL7R8UBH';
+  '?x-algolia-agent=Algolia%20for%20JavaScript';
+
+const SIGNED_KEY_URL = 'https://www.elgiganten.se/api/algolia/signed-api-key';
 
 const INDEX = 'commerce_b2c_OCSEELG';
 const OUTLET_FILTER = 'productTaxonomy.id:PT793';
@@ -15,14 +15,77 @@ const HITS_PER_PAGE = 100;
 const BRAND_QUERY_CONCURRENCY = 3; // parallel brand queries — keep low to limit memory spike
 const PAGE_DELAY_MS = 150;
 
-const ALGOLIA_HEADERS = {
-  'Content-Type': 'application/json',
-  Accept: 'application/json',
-  'x-algolia-api-key': 'bd55a210cb7ee1126552cab633fc1350',
-  'x-algolia-application-id': 'Z0FL7R8UBH',
-  Referer: 'https://www.elgiganten.se/',
-  Origin: 'https://www.elgiganten.se',
-};
+/**
+ * Fetch a signed Algolia API key from Elgiganten's auth endpoint.
+ * The endpoint uses a cookie-based nonce challenge:
+ *   1. GET /api/algolia/signed-api-key → 401, sets cookie algolia-refresh-nonce=<uuid>
+ *   2. GET /api/algolia/signed-api-key + x-algolia-refresh-nonce: <uuid> → { apiKey }
+ *
+ * The returned key is a Base64-encoded Algolia signed key with ~15 min validity.
+ * Cached in sourceState.algoliaApiKey until within 60s of expiry.
+ */
+async function getAlgoliaApiKey(sourceState) {
+  const now = Date.now();
+  // Reuse cached key if still valid (at least 60s remaining)
+  if (sourceState.algoliaApiKey && sourceState.algoliaKeyExpiry > now + 60_000) {
+    return sourceState.algoliaApiKey;
+  }
+
+  const baseHeaders = {
+    Referer: 'https://www.elgiganten.se/',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+    Origin: 'https://www.elgiganten.se',
+  };
+
+  // Step 1: trigger nonce — response sets cookie algolia-refresh-nonce
+  const res1 = await fetch(SIGNED_KEY_URL, { headers: baseHeaders, signal: AbortSignal.timeout(15_000) });
+  const setCookie = res1.headers.get('set-cookie') ?? '';
+  const m = /algolia-refresh-nonce=([a-f0-9-]{36})/i.exec(setCookie);
+  const nonce = m?.[1] ?? null;
+  if (!nonce) throw new Error('Elgiganten: failed to obtain Algolia nonce from /api/algolia/signed-api-key');
+
+  // Step 2: exchange nonce for signed API key
+  const res2 = await fetch(SIGNED_KEY_URL, {
+    headers: { ...baseHeaders, 'x-algolia-refresh-nonce': nonce },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = await res2.json();
+  if (!body?.apiKey) throw new Error(`Elgiganten: signed-api-key returned no apiKey: ${JSON.stringify(body)}`);
+
+  // Decode validUntil from the signed key (Base64 of "<hmac><restrictions>")
+  let expiry = now + 10 * 60_000; // default 10 min
+  try {
+    const decoded = Buffer.from(body.apiKey, 'base64').toString('utf8');
+    const vm = /validUntil=(\d+)/.exec(decoded);
+    if (vm) expiry = Number(vm[1]) * 1000;
+  } catch { /* keep default */ }
+
+  sourceState.algoliaApiKey = body.apiKey;
+  sourceState.algoliaKeyExpiry = expiry;
+  console.log(`[elgiganten] Obtained fresh Algolia API key (valid until ${new Date(expiry).toISOString()})`);
+  return body.apiKey;
+}
+
+function buildAlgoliaHeaders(apiKey) {
+  return {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    'x-algolia-api-key': apiKey,
+    'x-algolia-application-id': 'Z0FL7R8UBH',
+    Referer: 'https://www.elgiganten.se/',
+    Origin: 'https://www.elgiganten.se',
+  };
+}
+
+async function algoliaPost(fetcher, apiKey, body) {
+  const url = `${ALGOLIA_BASE_URL}&x-algolia-api-key=${apiKey}&x-algolia-application-id=Z0FL7R8UBH`;
+  return fetcher.fetchJsonApi(url, {
+    method: 'POST',
+    headers: buildAlgoliaHeaders(apiKey),
+    body: JSON.stringify(body),
+    skipHostDelay: true,
+  });
+}
 
 /**
  * Transform a next-media.elkjop.com URL to the direct media.elkjop.com CDN URL.
@@ -48,18 +111,9 @@ function resolveImageUrl(raw) {
   return raw;
 }
 
-async function algoliaPost(fetcher, body) {
-  return fetcher.fetchJsonApi(ALGOLIA_URL, {
-    method: 'POST',
-    headers: ALGOLIA_HEADERS,
-    body: JSON.stringify(body),
-    skipHostDelay: true,
-  });
-}
-
 /** Fetch all brand names from facets — returns Map<brand, count>. */
-async function fetchBrands(fetcher) {
-  const payload = await algoliaPost(fetcher, {
+async function fetchBrands(fetcher, apiKey) {
+  const payload = await algoliaPost(fetcher, apiKey, {
     requests: [
       {
         indexName: INDEX,
@@ -77,7 +131,7 @@ async function fetchBrands(fetcher) {
 }
 
 /** Paginate all outlet products for a single brand. */
-async function fetchBrandProducts(fetcher, brand, stats) {
+async function fetchBrandProducts(fetcher, apiKey, brand, stats) {
   const brandFilter = `${OUTLET_FILTER} AND brand:"${brand.replace(/"/g, '\\"')}"`;
   const hits = [];
   let page = 0;
@@ -85,7 +139,7 @@ async function fetchBrandProducts(fetcher, brand, stats) {
   for (;;) {
     let result;
     try {
-      const payload = await algoliaPost(fetcher, {
+      const payload = await algoliaPost(fetcher, apiKey, {
         requests: [{ indexName: INDEX, filters: brandFilter, hitsPerPage: HITS_PER_PAGE, page, query: '' }],
       });
       result = payload?.results?.[0];
@@ -163,7 +217,7 @@ function mapHit(hit, source, now, cgmCategoryMap = {}) {
  * the non-outlet Algolia index. Each cgm maps to a product category like "Grafikkort (GPU)".
  * Results are cached in sourceState to avoid redundant API calls across scans.
  */
-async function buildCategoryMap(fetcher, cgmIds, sourceState) {
+async function buildCategoryMap(fetcher, apiKey, cgmIds, sourceState) {
   if (!sourceState.categoryByGroupId || typeof sourceState.categoryByGroupId !== 'object') {
     sourceState.categoryByGroupId = {};
   }
@@ -185,7 +239,7 @@ async function buildCategoryMap(fetcher, cgmIds, sourceState) {
       attributesToRetrieve: ['hierarchicalCategories', 'cgm'],
     }));
     try {
-      const payload = await algoliaPost(fetcher, { requests });
+      const payload = await algoliaPost(fetcher, apiKey, { requests });
       for (let j = 0; j < chunk.length; j++) {
         const hit = payload?.results?.[j]?.hits?.[0];
         const cat =
@@ -243,10 +297,18 @@ export async function collectFromElgiganten({ source, sourceState, fetcher, now 
   const seen = new Set();
   const rawHits = [];
 
+  // Step 0: obtain a fresh signed Algolia API key via the nonce flow
+  let apiKey;
+  try {
+    apiKey = await getAlgoliaApiKey(sourceState);
+  } catch (err) {
+    throw new Error(`Elgiganten: failed to obtain Algolia API key — ${err.message}`);
+  }
+
   // Step 1: discover all brands
   let brands;
   try {
-    brands = await fetchBrands(fetcher);
+    brands = await fetchBrands(fetcher, apiKey);
   } catch (err) {
     throw new Error(`Elgiganten: failed to fetch brand facets — ${err.message}`);
   }
@@ -257,7 +319,7 @@ export async function collectFromElgiganten({ source, sourceState, fetcher, now 
   // Step 2: fetch products per brand in small parallel batches
   for (let i = 0; i < brandList.length && rawHits.length < maxProducts; i += BRAND_QUERY_CONCURRENCY) {
     const batch = brandList.slice(i, i + BRAND_QUERY_CONCURRENCY);
-    const results = await Promise.all(batch.map((brand) => fetchBrandProducts(fetcher, brand, stats)));
+    const results = await Promise.all(batch.map((brand) => fetchBrandProducts(fetcher, apiKey, brand, stats)));
 
     for (const hits of results) {
       for (const hit of hits) {
@@ -271,7 +333,7 @@ export async function collectFromElgiganten({ source, sourceState, fetcher, now 
 
   // Step 3: resolve cgm → category name for all unique cgm values
   const cgmIds = [...new Set(rawHits.map((h) => h.cgm != null ? String(h.cgm) : null).filter(Boolean))];
-  const cgmCategoryMap = await buildCategoryMap(fetcher, cgmIds, sourceState);
+  const cgmCategoryMap = await buildCategoryMap(fetcher, apiKey, cgmIds, sourceState);
 
   // Step 4: map hits to observations using resolved categories
   const observations = rawHits
