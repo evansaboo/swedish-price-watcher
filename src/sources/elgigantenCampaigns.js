@@ -56,9 +56,16 @@ async function getAlgoliaApiKey(sourceState) {
   const nonce = m?.[1] ?? null;
   if (!nonce) throw new Error('Elgiganten campaigns: failed to obtain nonce from /api/algolia/signed-api-key');
 
-  // Step 2: exchange nonce for signed API key
+  // Also grab the anonymous-id cookie if present
+  const anonM = /anonymous-id=([^;]+)/i.exec(setCookie);
+  const cookieHeader = [
+    `algolia-refresh-nonce=${nonce}`,
+    anonM ? `anonymous-id=${anonM[1]}` : null,
+  ].filter(Boolean).join('; ');
+
+  // Step 2: exchange nonce for signed API key — must send cookie + nonce header
   const res2 = await fetch(SIGNED_KEY_URL, {
-    headers: { ...baseHeaders, 'x-algolia-refresh-nonce': nonce },
+    headers: { ...baseHeaders, 'x-algolia-refresh-nonce': nonce, Cookie: cookieHeader },
     signal: AbortSignal.timeout(15_000),
   });
   const body = await res2.json();
