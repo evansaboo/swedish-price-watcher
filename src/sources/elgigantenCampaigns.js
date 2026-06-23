@@ -49,38 +49,53 @@ async function getAlgoliaApiKey(sourceState) {
     Origin: 'https://www.elgiganten.se',
   };
 
-  // Step 1: trigger nonce — response sets cookie algolia-refresh-nonce
+  // Step 1: attempt direct fetch — newer deployments return 200 + apiKey immediately.
   const res1 = await fetch(SIGNED_KEY_URL, { headers: baseHeaders, signal: AbortSignal.timeout(15_000) });
+
+  let body1 = null;
+  try { body1 = await res1.clone().json(); } catch { /* not JSON */ }
+
+  if (res1.ok && body1?.apiKey) {
+    // Direct 200 path — no nonce required
+    return cacheCampaignsKey(sourceState, body1.apiKey, now);
+  }
+
+  // 401 nonce-challenge path
   const setCookie = res1.headers.get('set-cookie') ?? '';
   const m = /algolia-refresh-nonce=([a-f0-9-]{36})/i.exec(setCookie);
   const nonce = m?.[1] ?? null;
-  if (!nonce) throw new Error('Elgiganten campaigns: failed to obtain nonce from /api/algolia/signed-api-key');
+  if (!nonce) {
+    const snippet = body1 ? JSON.stringify(body1) : (await res1.text().catch(() => '(unreadable)'));
+    throw new Error(`Elgiganten campaigns: no apiKey and no nonce (status ${res1.status}): ${snippet.slice(0, 200)}`);
+  }
 
-  // Also grab the anonymous-id cookie if present
   const anonM = /anonymous-id=([^;]+)/i.exec(setCookie);
   const cookieHeader = [
     `algolia-refresh-nonce=${nonce}`,
     anonM ? `anonymous-id=${anonM[1]}` : null,
   ].filter(Boolean).join('; ');
 
-  // Step 2: exchange nonce for signed API key — must send cookie + nonce header
   const res2 = await fetch(SIGNED_KEY_URL, {
     headers: { ...baseHeaders, 'x-algolia-refresh-nonce': nonce, Cookie: cookieHeader },
     signal: AbortSignal.timeout(15_000),
   });
-  const body = await res2.json();
-  if (!body?.apiKey) throw new Error(`Elgiganten campaigns: signed-api-key returned no apiKey: ${JSON.stringify(body)}`);
+  const body2 = await res2.json();
+  if (!body2?.apiKey) throw new Error(`Elgiganten campaigns: signed-api-key returned no apiKey: ${JSON.stringify(body2)}`);
 
+  return cacheCampaignsKey(sourceState, body2.apiKey, now);
+}
+
+function cacheCampaignsKey(sourceState, apiKey, now) {
   let expiry = now + 10 * 60_000;
   try {
-    const decoded = Buffer.from(body.apiKey, 'base64').toString('utf8');
+    const decoded = Buffer.from(apiKey, 'base64').toString('utf8');
     const vm = /validUntil=(\d+)/.exec(decoded);
     if (vm) expiry = Number(vm[1]) * 1000;
   } catch { /* keep default */ }
-
-  sourceState.algoliaApiKey = body.apiKey;
+  sourceState.algoliaApiKey = apiKey;
   sourceState.algoliaKeyExpiry = expiry;
-  return body.apiKey;
+  console.log(`[elgiganten-campaigns] Obtained fresh Algolia API key (valid until ${new Date(expiry).toISOString()})`);
+  return apiKey;
 }
 
 async function algoliaPost(apiKey, body) {
