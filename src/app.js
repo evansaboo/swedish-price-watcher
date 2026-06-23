@@ -570,5 +570,31 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     return { ok: wasCancelled, message: wasCancelled ? 'Scan cancellation requested.' : 'No scan is running.' };
   });
 
+  // Remote deploy webhook — pull latest code from git and restart via systemd.
+  // Requires DEPLOY_SECRET env var to be set; pass it as ?secret=<value> or Authorization: Bearer <value>.
+  app.post('/api/deploy', async (request, reply) => {
+    const secret = process.env.DEPLOY_SECRET?.trim();
+    if (!secret) { reply.code(501); return { ok: false, message: 'DEPLOY_SECRET not configured.' }; }
+
+    const provided = request.query?.secret
+      || (request.headers.authorization ?? '').replace(/^Bearer\s+/i, '').trim();
+    if (provided !== secret) { reply.code(401); return { ok: false, message: 'Unauthorized.' }; }
+
+    reply.send({ ok: true, message: 'Deploy triggered — pulling latest code and restarting.' });
+
+    // Run asynchronously after response is sent
+    setImmediate(async () => {
+      const { execSync } = await import('child_process');
+      try {
+        console.log('[deploy] Running git pull...');
+        execSync('git pull origin main', { cwd: process.cwd(), stdio: 'inherit' });
+        console.log('[deploy] Restarting service...');
+        execSync('sudo systemctl restart swedish-price-watcher', { stdio: 'inherit' });
+      } catch (err) {
+        console.error('[deploy] Failed:', err.message);
+      }
+    });
+  });
+
   return app;
 }
