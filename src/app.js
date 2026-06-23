@@ -585,10 +585,25 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     // Run asynchronously after response is sent
     setImmediate(async () => {
       const { execSync } = await import('child_process');
+      const { writeFileSync } = await import('fs');
+      const cwd = process.cwd();
       try {
-        console.log('[deploy] Running git pull...');
-        execSync('git pull origin main', { cwd: process.cwd(), stdio: 'inherit' });
-        console.log('[deploy] Restarting service...');
+        console.log('[deploy] git pull...');
+        execSync('git pull origin main', { cwd, stdio: 'inherit' });
+
+        console.log('[deploy] npm install...');
+        execSync('npm install --silent --no-audit', { cwd, stdio: 'inherit' });
+
+        console.log('[deploy] writing version.json...');
+        const sha = execSync('git rev-parse HEAD', { cwd }).toString().trim();
+        const shortSha = execSync('git rev-parse --short HEAD', { cwd }).toString().trim();
+        const message = execSync('git log -1 --pretty=%s', { cwd }).toString().trim();
+        const author = execSync('git log -1 --pretty=%an', { cwd }).toString().trim();
+        const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd }).toString().trim();
+        writeFileSync(`${cwd}/version.json`, JSON.stringify(
+          { sha, shortSha, message, author, branch, deployedAt: new Date().toISOString() }, null, 2));
+
+        console.log(`[deploy] restarting service (${shortSha})...`);
         execSync('sudo systemctl restart swedish-price-watcher', { stdio: 'inherit' });
       } catch (err) {
         console.error('[deploy] Failed:', err.message);

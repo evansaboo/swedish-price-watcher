@@ -8,52 +8,29 @@ on:
 jobs:
   deploy:
     name: Deploy
-    runs-on: [self-hosted, raspberry-pi]
+    runs-on: ubuntu-latest
     steps:
-      - name: Pull latest code
+      - name: Trigger deploy webhook on Pi
         run: |
-          cd ~/swedish-price-watcher
-          git pull origin main
+          echo "Triggering deploy on Pi via webhook..."
+          RESPONSE=$(curl -sf -X POST \
+            "https://deals.evansaboo.com/api/deploy?secret=${{ secrets.DEPLOY_SECRET }}" \
+            --max-time 15 \
+            -H "Content-Type: application/json")
+          echo "Response: $RESPONSE"
 
-      - name: Write version file
+      - name: Wait for Pi to restart and pass health check
         run: |
-          cd ~/swedish-price-watcher
-          node -e "
-            const { execSync } = require('child_process');
-            const sha = execSync('git rev-parse HEAD').toString().trim();
-            const shortSha = execSync('git rev-parse --short HEAD').toString().trim();
-            const message = execSync('git log -1 --pretty=%s').toString().trim();
-            const author = execSync('git log -1 --pretty=%an').toString().trim();
-            const info = {
-              sha,
-              shortSha,
-              message,
-              author,
-              deployedAt: new Date().toISOString(),
-              branch: execSync('git rev-parse --abbrev-ref HEAD').toString().trim()
-            };
-            require('fs').writeFileSync('version.json', JSON.stringify(info, null, 2));
-            console.log('version.json written:', shortSha, '-', message);
-          "
-
-      - name: Install dependencies
-        run: |
-          cd ~/swedish-price-watcher
-          npm install --silent --no-audit
-
-      - name: Restart service
-        run: sudo systemctl restart swedish-price-watcher
-
-      - name: Health check
-        run: |
-          # Wait up to 90s for the app to bind (SQLite with 30K+ items takes 20-40s on Pi)
+          echo "Waiting for Pi to pull, restart, and become healthy..."
+          sleep 20
           for i in $(seq 1 18); do
             sleep 5
-            if curl -sf http://localhost:3030/health | grep -q '"ok":true'; then
-              echo "✅ Deploy successful"
+            STATUS=$(curl -sf --max-time 5 https://deals.evansaboo.com/health 2>/dev/null || echo "")
+            if echo "$STATUS" | grep -q '"ok":true'; then
+              echo "✅ Deploy successful (attempt $i)"
               exit 0
             fi
-            echo "Waiting for app... ($i/18)"
+            echo "Waiting... ($i/18)"
           done
-          echo "❌ Health check failed after 90s"
+          echo "❌ Health check failed after 110s"
           exit 1
