@@ -125,7 +125,8 @@ test('a failing batch is left uncached so it retries later', async () => {
     return { ok: false, status: 503, async json() { return {}; } };
   };
   const c = createLlmClassifier({
-    apiKey: 'k', maxRetries: 1, fetchImpl: failingFetch, logger: silentLogger
+    apiKey: 'k', maxRetries: 1, serverErrorBackoffMs: 5, minRequestIntervalMs: 0,
+    fetchImpl: failingFetch, logger: silentLogger
   });
   const stats = await c.enrich(['GeForce 3060 Ti grafikkort till salu']);
   assert.equal(stats.classified, 0);

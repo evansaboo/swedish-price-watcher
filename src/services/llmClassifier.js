@@ -98,7 +98,10 @@ export function createLlmClassifier(opts = {}) {
     batchSize = 25,
     maxTitlesPerRun = 400,
     requestTimeoutMs = 30000,
-    maxRetries = 2,
+    maxRetries = 4,
+    minRequestIntervalMs = 4500, // pace requests to ~13/min, under free-tier RPM
+    rateLimitBackoffMs = 8000,   // 429 backoff base (per-minute window)
+    serverErrorBackoffMs = 1500, // 5xx/503 backoff base
     fetchImpl = globalThis.fetch,
     logger = console
   } = opts;
@@ -107,6 +110,13 @@ export function createLlmClassifier(opts = {}) {
 
   // normTitle -> string (clean label) | null (rejected). Absent = not yet seen.
   const cache = new Map();
+  let nextRequestAt = 0; // simple client-side rate limiter (ms epoch)
+
+  async function paceRequests() {
+    const wait = nextRequestAt - Date.now();
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    nextRequestAt = Date.now() + minRequestIntervalMs;
+  }
 
   function loadCache() {
     if (!cacheFile) return;
@@ -168,6 +178,7 @@ export function createLlmClassifier(opts = {}) {
     let lastErr = null;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
+        await paceRequests();
         const res = await fetchWithTimeout(fetchImpl, url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -176,7 +187,11 @@ export function createLlmClassifier(opts = {}) {
 
         if (res.status === 503 || res.status === 429 || res.status >= 500) {
           lastErr = new Error(`HTTP ${res.status}`);
-          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          // Rate limits use a per-minute window, so back off in whole seconds
+          // and push the next paced request out too.
+          const backoff = (res.status === 429 ? rateLimitBackoffMs : serverErrorBackoffMs) * (attempt + 1);
+          nextRequestAt = Date.now() + backoff;
+          await new Promise(r => setTimeout(r, backoff));
           continue;
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -189,7 +204,7 @@ export function createLlmClassifier(opts = {}) {
         return parsed;
       } catch (err) {
         lastErr = err;
-        if (err.name === 'AbortError') await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        if (err.name === 'AbortError') await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
       }
     }
     throw lastErr ?? new Error('classification failed');
