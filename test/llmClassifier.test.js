@@ -186,6 +186,31 @@ test('an older-version cache is migrated: high-precision kept, low-precision dro
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('concurrent enrich() calls are coalesced into a single run', async () => {
+  const calls = [];
+  let inFlight = 0, maxInFlight = 0;
+  const slowFetch = async (_url, options) => {
+    inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise(r => setTimeout(r, 20));
+    const body = JSON.parse(options.body);
+    const titles = body.contents[0].parts[0].text.split('\n').slice(1).map(l => l.replace(/^\d+\.\s/, ''));
+    calls.push(titles);
+    inFlight--;
+    const arr = titles.map((t, i) => ({ index: i + 1, cleanLabel: null }));
+    return { ok: true, status: 200, async json() { return { candidates: [{ content: { parts: [{ text: JSON.stringify(arr) }] } }] }; } };
+  };
+  const c = createLlmClassifier({
+    apiKey: 'k', minRequestIntervalMs: 0, fetchImpl: slowFetch, logger: silentLogger
+  });
+  // Fire two enrich runs simultaneously; the second must coalesce into the first.
+  const [s1, s2] = await Promise.all([
+    c.enrich(['GeForce 3060 Ti grafikkort till salu A']),
+    c.enrich(['GeForce 3060 Ti grafikkort till salu B'])
+  ]);
+  assert.equal(maxInFlight, 1, 'no two LLM requests should overlap');
+  assert.deepEqual(s1, s2, 'both callers observe the same coalesced run');
+});
+
 test('a failing batch is left uncached so it retries later', async () => {
   let attempts = 0;
   const failingFetch = async () => {

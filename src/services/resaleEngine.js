@@ -20,7 +20,12 @@ const DEFAULT_RESALE_OPTIONS = {
   resaleAdjustFactor: 0.95, // sell slightly under median to move quickly
   flatFeeSek: 60,          // shipping / packaging / Blocket fee allowance
   minNetProfitSek: 300,    // floor for surfacing a flip
-  minRoiPercent: 8         // floor ROI (profit / buy price)
+  minRoiPercent: 8,        // floor ROI (profit / buy price)
+  // Sanity floor: buying a product for less than this fraction of its used median
+  // is implausible for the SAME product and almost always means a category
+  // mismatch (a game/accessory/part keyed as the device). Guards against the last
+  // noisy titles the structural matcher + LLM miss, with no dependence on the LLM.
+  minBuyToResaleRatio: 0.12
 };
 
 function normalize(title) {
@@ -481,6 +486,8 @@ export function computeFlips(candidateItems, index, options = {}) {
     const market = index.get(model.resaleKey);
     if (!market || market.sampleCount < opts.minSampleCount) continue;
     if (!Number.isFinite(market.medianSek) || market.medianSek <= 0) continue;
+    // Implausibly cheap "buy" vs the used median ⇒ category mismatch, not a deal.
+    if (buyPriceSek < market.medianSek * opts.minBuyToResaleRatio) continue;
 
     const expectedResaleSek = Math.round(market.medianSek * opts.resaleAdjustFactor);
     const netProfitSek = expectedResaleSek - buyPriceSek - opts.flatFeeSek;

@@ -225,6 +225,26 @@ describe('computeFlips', () => {
     assert.equal(flips.length, 0);
   });
 
+  it('drops an implausibly cheap buy vs the used median (category mismatch)', () => {
+    // A 79 kr "PS5" game keyed as the console would otherwise show ~4000 kr profit.
+    const consoleIndex = buildResaleIndex([
+      { title: 'PlayStation 5 spelkonsol', latestPriceSek: 4200 },
+      { title: 'PlayStation 5 spelkonsol', latestPriceSek: 4500 },
+      { title: 'PlayStation 5 spelkonsol', latestPriceSek: 4800 }
+    ]);
+    const flips = computeFlips(
+      [{ listingKey: 'o:g', title: 'Sony PlayStation 5', latestPriceSek: 79, condition: 'outlet' }],
+      consoleIndex
+    );
+    assert.equal(flips.length, 0);
+    // …but a genuinely-discounted real console at a sane price still surfaces.
+    const real = computeFlips(
+      [{ listingKey: 'o:r', title: 'Sony PlayStation 5', latestPriceSek: 3200, condition: 'outlet' }],
+      consoleIndex
+    );
+    assert.equal(real.length, 1);
+  });
+
   it('sorts by net profit descending', () => {
     const flips = computeFlips(
       [

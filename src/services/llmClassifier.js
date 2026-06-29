@@ -126,6 +126,7 @@ export function createLlmClassifier(opts = {}) {
   // normTitle -> string (clean label) | null (rejected). Absent = not yet seen.
   const cache = new Map();
   let nextRequestAt = 0; // simple client-side rate limiter (ms epoch)
+  let enrichInFlight = null; // coalesces concurrent enrich() calls
 
   async function paceRequests() {
     const wait = nextRequestAt - Date.now();
@@ -233,9 +234,19 @@ export function createLlmClassifier(opts = {}) {
 
         if (res.status === 503 || res.status === 429 || res.status >= 500) {
           lastErr = new Error(`HTTP ${res.status}`);
-          // Rate limits use a per-minute window, so back off in whole seconds
-          // and push the next paced request out too.
-          const backoff = (res.status === 429 ? rateLimitBackoffMs : serverErrorBackoffMs) * (attempt + 1);
+          // Respect the server's RetryInfo when present (free-tier 429s report a
+          // concrete retry delay); otherwise grow the backoff per attempt.
+          let serverRetryMs = 0;
+          if (res.status === 429) {
+            try {
+              const errBody = await res.json();
+              const retry = errBody?.error?.details
+                ?.find(d => String(d?.['@type']).includes('RetryInfo'))?.retryDelay;
+              if (retry) serverRetryMs = (parseFloat(retry) || 0) * 1000;
+            } catch { /* body not JSON — fall back to fixed backoff */ }
+          }
+          const base = (res.status === 429 ? rateLimitBackoffMs : serverErrorBackoffMs) * (attempt + 1);
+          const backoff = Math.max(base, serverRetryMs);
           nextRequestAt = Date.now() + backoff;
           await new Promise(r => setTimeout(r, backoff));
           continue;
@@ -257,6 +268,14 @@ export function createLlmClassifier(opts = {}) {
   }
 
   async function enrich(titles) {
+    // Coalesce concurrent runs: overlapping enrich loops (boot + post-scan) would
+    // each pace independently and blow the provider's per-minute request cap.
+    if (enrichInFlight) return enrichInFlight;
+    enrichInFlight = runEnrich(titles).finally(() => { enrichInFlight = null; });
+    return enrichInFlight;
+  }
+
+  async function runEnrich(titles) {
     const stats = { classified: 0, rejected: 0, errors: 0 };
 
     // Unique, relevant, not-yet-cached titles, capped to bound cost per run.
