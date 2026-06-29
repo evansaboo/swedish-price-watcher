@@ -48,6 +48,10 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('Leather Folio iPad mini'), null);
     assert.equal(extractResaleModel('Linocell Aktiv stylus för iPad'), null);
     assert.equal(extractResaleModel('Logitech Crayon digital penna för iPad'), null);
+    // Accessory-only house brands with no explicit "case"/"fodral" word in the title.
+    assert.equal(extractResaleModel('Linocell Slim Swivel iPad (10:e gen.) och iPad (A16)'), null);
+    assert.equal(extractResaleModel('Spigen Liquid Air iPhone Air'), null);
+    assert.equal(extractResaleModel('Zagg Pro Keys iPad 10,9-Tums tangentbord'), null);
     // …but the genuine device still matches.
     assert.equal(extractResaleModel('Apple iPhone 15 Pro 256GB Blå Titan').resaleKey, 'iphone-15-pro-256gb');
   });

@@ -78,6 +78,22 @@ const ACCESSORY_PATTERN = new RegExp('\\b[a-z]*(?:' + [
   'armband', 'sportband', 'milanese'
 ].join('|') + ')\\b');
 
+// Accessory-only HOUSE BRANDS. These makers sell ONLY cases, covers, chargers,
+// screen protectors, stands, keyboards and similar add-ons — never the phone /
+// tablet / laptop / GPU / console themselves. A title carrying one of these brands
+// alongside a device name (e.g. "Linocell Slim Swivel iPad (A16)", which has no
+// "case"/"fodral" word and would otherwise slip through ACCESSORY_PATTERN) is an
+// accessory FOR that device and must never be priced as the device. High-precision:
+// none of these brands manufacture the actual hardware, so this can't reject a real
+// device. Matched as whole words against the normalized title.
+const ACCESSORY_BRAND_PATTERN = new RegExp('\\b(?:' + [
+  'linocell', 'dbramante', 'dbramante1928', 'zagg', 'belkin', 'onsala', 'deltaco',
+  'otterbox', 'nudient', 'panzerglass', 'holdit', 'la vie', 'targus', 'gear4',
+  'satechi', 'mophie', 'kensington', 'uag', 'spigen', 'twelve south', 'tech21',
+  'pipetto', 'rhinoshield', 'dux ducis', 'cellularline', 'sandberg', 'estuff',
+  'champion', 'puro', 'gripcase', 'speck'
+].join('|') + ')\\b');
+
 // Repair/refurb SERVICES, spare PARTS, and broken / for-parts listings. These
 // are not the sellable device: "Byt skärm på din iPhone 11" (a screen-swap
 // service) or "Skärm till iPhone 11" (a part) must never be priced as a phone.
@@ -373,6 +389,8 @@ export function extractResaleModel(title) {
   if (!norm) return null;
   // Reject accessories outright so a case/charger/strap is never priced as the device.
   if (ACCESSORY_PATTERN.test(norm)) return null;
+  // Reject accessory-only house brands (Linocell/Spigen/etc.) — never the device.
+  if (ACCESSORY_BRAND_PATTERN.test(norm)) return null;
   // Reject repair services, spare parts, and broken / for-parts listings.
   if (REPAIR_OR_PARTS_PATTERN.test(norm)) return null;
   for (const [demandCategory, extractor] of EXTRACTORS) {
@@ -401,7 +419,7 @@ export function extractResaleModel(title) {
 export function looksLikeAccessoryOrRepair(title) {
   const norm = normalize(title);
   if (!norm) return false;
-  return ACCESSORY_PATTERN.test(norm) || REPAIR_OR_PARTS_PATTERN.test(norm);
+  return ACCESSORY_PATTERN.test(norm) || ACCESSORY_BRAND_PATTERN.test(norm) || REPAIR_OR_PARTS_PATTERN.test(norm);
 }
 
 /**
