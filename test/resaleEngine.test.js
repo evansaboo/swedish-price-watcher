@@ -72,6 +72,31 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('Valve Steam Deck OLED 1TB').resaleKey, 'steam-deck-oled');
   });
 
+  it('does not key a console GAME or peripheral as the console itself', () => {
+    // Real production false positives that invented phantom console "profit".
+    // Parenthetical platform tags, EAN barcodes, peripherals, brands, editions.
+    assert.equal(extractResaleModel('Battlefield 2042 (PS5)'), null);
+    assert.equal(extractResaleModel('Hogwarts Legacy (Xbox Series X)'), null);
+    assert.equal(extractResaleModel('EA Sports FC 25 spel till PlayStation 5'), null);
+    assert.equal(extractResaleModel('Piranha Switch 2 Joy-Con 2-skyddsgrepp'), null);
+    assert.equal(extractResaleModel('Sony DualSense V3 trådlös handkontroll till PS5'), null);
+    assert.equal(extractResaleModel('Razer Quick laddningsställ för PS5 (vitt)'), null);
+    assert.equal(extractResaleModel('Seagate Game Drive extern SSD för PS4/PS5 (2TB)'), null);
+    assert.equal(extractResaleModel('Dacota Gaming Nintendo Switch Pro kontrollgrepp'), null);
+    assert.equal(extractResaleModel('PS5 Digital Edition Konsolhöljenova, pink'), null);
+    assert.equal(extractResaleModel('Asus ROG Ally reseförvaring (svart)'), null);
+    assert.equal(extractResaleModel('Ubisoft PS5 Assassin’s Creed Shadows - 3307216258022'), null);
+    assert.equal(extractResaleModel('Nintendo Switch 2 sökes'), null);
+    assert.equal(extractResaleModel('PDP Nintendo Switch Airlite trådbundet gamingheadset'), null);
+    // …but real console / handheld HARDWARE still matches (incl. "spelkonsol").
+    assert.equal(extractResaleModel('PlayStation 5 Slim').resaleKey, 'ps5-slim');
+    assert.equal(extractResaleModel('Nintendo Switch 2 spelkonsol').resaleKey, 'nintendo-switch-2');
+    assert.equal(extractResaleModel('Xbox Series X konsol').resaleKey, 'xbox-series-x');
+    assert.equal(extractResaleModel('Nintendo Switch OLED Spelkonsol, vit').resaleKey, 'nintendo-switch-oled');
+    assert.equal(extractResaleModel('ASUS ROG Ally 512 GB handhållen konsol').resaleKey, 'rog-ally');
+    assert.equal(extractResaleModel('PlayStation 5 Slim Console – Ghost of Yotei Gold Limited Edition Bundle').resaleKey, 'ps5-slim');
+  });
+
   it('extracts AMD and Intel CPU model signatures', () => {
     assert.equal(extractResaleModel('AMD Ryzen 7 7800X3D').resaleKey, 'ryzen-7-7800x3d');
     assert.equal(extractResaleModel('Intel Core i5-13600KF').resaleKey, 'intel-i5-13600kf');

@@ -81,6 +81,39 @@ test('enrich classifies missed titles and re-keys via the deterministic matcher'
   assert.equal(c.resolveModel('Silikonskal iPhone 14'), null);
 });
 
+test('low-precision console positives are re-verified by the LLM', async () => {
+  const calls = [];
+  // A bare-named game the deterministic matcher keys as a console (low precision),
+  // and a real console the matcher also keys — the LLM confirms one, rejects one.
+  const labels = {
+    'PS5 Dragons Dogma 2': null,                        // video game → reject
+    'PlayStation 5 Slim Digital Edition': 'PlayStation 5 Digital'
+  };
+  const c = createLlmClassifier({
+    apiKey: 'k', fetchImpl: mockFetch(labels, { calls }), logger: silentLogger
+  });
+
+  // Both are deterministic console matches, but both must still be sent for review.
+  await c.enrich(Object.keys(labels));
+  assert.equal(calls.length, 1, 'low-precision console titles must be sent to the LLM');
+  assert.deepEqual(calls[0].sort(), Object.keys(labels).sort());
+
+  // The game is dropped; the real console is re-keyed from its cleaned label.
+  assert.equal(c.resolveModel('PS5 Dragons Dogma 2'), null);
+  assert.equal(c.resolveModel('PlayStation 5 Slim Digital Edition').resaleKey, 'ps5-digital');
+});
+
+test('high-precision (non-console) positives bypass the LLM', async () => {
+  const calls = [];
+  const c = createLlmClassifier({
+    apiKey: 'k', fetchImpl: mockFetch({}, { calls }), logger: silentLogger
+  });
+  // A clean iPhone + GPU are high-precision: never sent for review.
+  await c.enrich(['Apple iPhone 15 Pro 256GB', 'PNY GeForce RTX 4070 grafikkort']);
+  assert.equal(calls.length, 0, 'high-precision titles must not be sent to the LLM');
+  assert.equal(c.resolveModel('Apple iPhone 15 Pro 256GB').resaleKey, 'iphone-15-pro-256gb');
+});
+
 test('a hallucinated whole-system label is still rejected by deterministic guards', async () => {
   // Even if the LLM wrongly returns a system-y label, re-keying rejects it.
   const c = createLlmClassifier({

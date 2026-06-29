@@ -64,6 +64,7 @@ const ACCESSORY_PATTERN = new RegExp('\\b[a-z]*(?:' + [
   'laddare', 'kabel', 'adapter', 'dongle', 'dockningsstation', 'docka', 'hubb',
   // mounts / stands / peripherals
   'stativ', 'hallare', 'faste', 'tangentbord', 'fjarrkontroll', 'pencil',
+  'gamepad', 'grepp', 'handkontroll',
   // wallet / folio cases ("mobilplånbok", "plånboksfodral")
   'planbok', 'holster', 'korthallare',
   // wearables straps (Apple Watch etc.)
@@ -85,6 +86,64 @@ const REPAIR_OR_PARTS_PATTERN = new RegExp([
   '\\breservdel', '\\btrasig\\b', '\\bdefekt\\b', '\\bfor delar\\b', '\\btill delar\\b',
   '\\bfungerar ej\\b', '\\bspracka?d\\b'
 ].join('|'));
+
+// Console / handheld GAMES, accessories and peripherals share the platform name
+// (PlayStation / Xbox / Switch / Steam Deck) with the actual hardware, so they
+// would otherwise be mis-keyed as the console itself — pricing a 300 kr game or a
+// 150 kr Joy-Con grip against a 5 000 kr console and inventing phantom profit.
+// These signals are HIGH-PRECISION for "this is NOT the hardware" and are applied
+// ONLY to the Game-console / Handheld categories (never to GPU / CPU / Apple), so a
+// barcode or a "(PS5)" platform tag in an unrelated title cannot cause a false
+// rejection elsewhere. Any genuine console wrongly caught here is recovered by the
+// LLM gap-filler, which re-keys real hardware from its cleaned label.
+const PAREN_PLATFORM_PATTERN = /\((?:ps[45]|playstation|xbox|switch|nintendo|pc|wii)\b[^)]*\)/i;
+const EAN_CODE_PATTERN = /\b\d{12,13}\b/;
+// Wanted-to-buy ("sökes" / "köpes") listings are requests, not real sale prices.
+const WANTED_LISTING_PATTERN = /\bsokes\b|\bkopes\b/;
+const GAME_WORD_PATTERN = /\bspel(?:et|en)?\b/;
+const CONSOLE_GAME_OR_PERIPHERAL_PATTERN = new RegExp([
+  // game wording — gated by konsol below so "spelkonsol" (game console) stays IN
+  '\\bspel(?:et|en)?\\b',
+  // peripheral / accessory nouns (Swedish noun is last → suffix-match where needed)
+  '\\bhandkontroll', '\\bkontroll', '\\bcontroller\\b', '\\bgamepad',
+  'joy ?con', '\\bdualsense\\b', '\\bdualshock\\b',
+  '[a-z]*ratt\\b', '\\bwheel\\b', '[a-z]*grepp\\b', '[a-z]*headset\\b', '\\bhorlur',
+  '\\bhogtalare\\b', '\\bmikrofon\\b', '\\bkamera\\b',
+  'ladd(?:nings)?(?:station|stall|stativ)', '\\bbatteripack\\b',
+  '[a-z]*forvaring\\b', '\\bremmar\\b', '\\btumspak\\b', 'arcade ?stick', '\\bhitbox\\b',
+  'nitro deck', 'dock(?:nings)?(?:set|station)?\\b', 'leg strap',
+  'microsd', '\\bminneskort\\b', 'minnes kort', '\\bexpress kort\\b',
+  '\\bssd\\b', 'game drive', 'extern ssd', '\\bskruv', '\\bscrews\\b',
+  'console cover', '[a-z]*holje', '\\bfaceplate\\b', 'vertical stand', '\\bstand\\b', '\\bstall\\b',
+  // game-only editions / genres
+  'day one edition', 'launch edition', '\\bcollector', '\\bgoty\\b', 'code in a box',
+  '\\bsteelbook\\b', 'deluxe edition', 'premium edition', 'master edition', 'standard edition',
+  '\\brpg\\b', '\\brollspel\\b', '\\bkampsport\\b',
+  // peripheral-only brands (these makers sell accessories, never the console)
+  '\\bpiranha\\b', '\\bpowera\\b', '\\bnacon\\b', '8bitdo', 'turtle beach', '\\bsteelseries\\b',
+  '\\bdeltaco\\b', '\\bbionik\\b', '\\bhori\\b', 'kontrolfreek', 'king controller', '\\bcrkd\\b',
+  '\\bfanatec\\b', '\\bkonix\\b', '\\bhyperkin\\b', '\\bpdp\\b', '\\brazer\\b', '\\bthrustmaster\\b',
+  '\\btrust\\b', '\\bsnakebyte\\b', '\\bsubsonic\\b', '\\bgioteck\\b', '\\bvenom\\b', '\\bscuf\\b',
+  '\\bvictrix\\b', '\\bgamesir\\b', '\\bipega\\b', '\\bseagate\\b', '\\bsandisk\\b',
+  // game-only publishers (console makers — sony / microsoft / nintendo / asus / valve — excluded)
+  '\\bubisoft\\b', '\\bplaion\\b', '\\bfromsoftware\\b', '\\bbethesda\\b', '\\bcapcom\\b',
+  '\\bbandai\\b', '\\bnamco\\b', 'square enix', 'take two', '\\brockstar\\b', '\\bdevolver\\b',
+  '\\bkoei\\b', '\\batlus\\b', 'deep silver', '\\bthq\\b'
+].join('|'));
+
+// True when a console/handheld title is actually a game, accessory or peripheral.
+function looksLikeConsoleGameOrPeripheral(rawTitle, norm) {
+  if (PAREN_PLATFORM_PATTERN.test(rawTitle)) return true;
+  if (EAN_CODE_PATTERN.test(norm)) return true;
+  if (WANTED_LISTING_PATTERN.test(norm)) return true;
+  if (!CONSOLE_GAME_OR_PERIPHERAL_PATTERN.test(norm)) return false;
+  // "spelkonsol" (game console) is real hardware: if the game-word is the only
+  // signal AND the title also says "konsol", re-test without it before rejecting.
+  if (GAME_WORD_PATTERN.test(norm) && /konsol/.test(norm)) {
+    return CONSOLE_GAME_OR_PERIPHERAL_PATTERN.test(norm.replace(GAME_WORD_PATTERN, ' '));
+  }
+  return true;
+}
 
 // ── Per-category extractors ────────────────────────────────────
 // Each returns { resaleKey, modelLabel } or null. demandCategory is attached
@@ -303,6 +362,12 @@ export function extractResaleModel(title) {
   for (const [demandCategory, extractor] of EXTRACTORS) {
     const result = extractor(norm);
     if (result?.resaleKey) {
+      // Console/handheld titles share the platform name with games & peripherals;
+      // reject those so they are never priced as the hardware itself.
+      if ((demandCategory === 'Game consoles' || demandCategory === 'Handhelds')
+          && looksLikeConsoleGameOrPeripheral(String(title ?? ''), norm)) {
+        return null;
+      }
       return { ...result, demandCategory };
     }
   }

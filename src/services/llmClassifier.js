@@ -22,6 +22,13 @@ import { extractResaleModel } from './resaleEngine.js';
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+// Categories where the platform name (PlayStation/Xbox/Switch) is SHARED by games
+// and peripherals, so the deterministic matcher's positives are low-precision: a
+// bare-named game ("PS5 Dragons Dogma 2") looks exactly like the console. For these,
+// even a deterministic MATCH is re-verified by the LLM before it is trusted. Every
+// other category (Apple/GPU/CPU) is high-precision and bypasses the LLM entirely.
+const LOW_PRECISION_CATEGORIES = new Set(['Game consoles', 'Handhelds']);
+
 // Cheap pre-filter: only titles that plausibly name a flip-relevant product are
 // ever sent to the LLM, so we never spend tokens on TVs, cables, fridges, etc.
 const RELEVANT_HINT = new RegExp(
@@ -45,7 +52,10 @@ const SYSTEM_INSTRUCTION =
   '"Steam Deck OLED 512GB", "AMD Ryzen 7 5800X3D", "AirPods Pro 2"). ' +
   'Return null (not a label) when the title is a WHOLE computer/laptop/prebuilt/gaming build (e.g. "gamingdator", "speldator", ' +
   '"nybyggd dator", a Lenovo Legion / ASUS ROG laptop, or a CPU+GPU bundle), an accessory (case/skal/fodral/charger/cable/strap/screen protector), ' +
+  'a VIDEO GAME or game disc/cartridge (e.g. "FIFA 23", "Elden Ring", "Mario Kart 8", "Dragons Dogma 2", "Funko Fusion" — software, not the console), ' +
+  'a console PERIPHERAL (controller/handkontroll/gamepad/DualSense/Joy-Con/headset/racing wheel/charging dock/face-plate/memory card), ' +
   'broken / for-parts, or anything outside the listed categories. ' +
+  'A real console listing names the HARDWARE itself (e.g. "PlayStation 5 Slim", "Xbox Series X konsol", "Nintendo Switch OLED spelkonsol"); a game or accessory merely mentions the platform. ' +
   'Respond ONLY with a JSON array, one element per input, in the same order.';
 
 const RESPONSE_SCHEMA = {
@@ -150,11 +160,24 @@ export function createLlmClassifier(opts = {}) {
     return cache.get(cacheKeyForTitle(title));
   }
 
-  // Deterministic-first resolver with LLM gap-fill. Always re-keys through the
-  // deterministic matcher so resaleKeys stay consistent across the whole index.
+  // Deterministic-first resolver with LLM gap-fill + low-precision gate. Always
+  // re-keys through the deterministic matcher so resaleKeys stay consistent.
   function resolveModel(title) {
     const direct = extractResaleModel(title);
-    if (direct) return direct;
+    if (direct) {
+      // High-precision categories (Apple/GPU/CPU): trust the matcher directly.
+      if (!LOW_PRECISION_CATEGORIES.has(direct.demandCategory)) return direct;
+      // Low-precision (consoles/handhelds): re-verify against the LLM verdict.
+      const key = cacheKeyForTitle(title);
+      if (cache.has(key)) {
+        const clean = cache.get(key);
+        if (clean === null) return null;                 // LLM: game/peripheral → drop
+        if (typeof clean === 'string' && clean) {
+          return extractResaleModel(clean) ?? direct;    // re-key cleaned label
+        }
+      }
+      return direct; // not yet classified → keep optimistically (cleaned next run)
+    }
     const clean = cache.get(cacheKeyForTitle(title));
     if (typeof clean === 'string' && clean) {
       return extractResaleModel(clean); // may still be null if it re-fails guards
@@ -220,7 +243,10 @@ export function createLlmClassifier(opts = {}) {
       const key = cacheKeyForTitle(title);
       if (!key || seen.has(key) || cache.has(key)) continue;
       if (!isFlipRelevantTitle(title)) continue;
-      if (extractResaleModel(title)) continue; // deterministic already handles it
+      // Skip titles the deterministic matcher already resolves to a HIGH-precision
+      // category; low-precision console/handheld positives still need LLM review.
+      const direct = extractResaleModel(title);
+      if (direct && !LOW_PRECISION_CATEGORIES.has(direct.demandCategory)) continue;
       seen.add(key);
       pending.push(title);
       if (pending.length >= maxTitlesPerRun) break;
