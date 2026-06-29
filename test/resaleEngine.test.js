@@ -76,9 +76,16 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('Lenovo Legion Pro 5 – RTX 5070 Ti | Ultra 9 | OLED'), null);
     assert.equal(extractResaleModel('Stationär speldator med RTX 4070 och i7-13700K'), null);
     assert.equal(extractResaleModel('Säljer hela mitt bygge: RTX 4080, Ryzen 9 7900X'), null);
-    // …but a bare card (even with a board-partner TUF/ROG line) still matches.
+    // Swedish compound nouns ("gamingdator", "nybyggd") must be caught too.
+    assert.equal(extractResaleModel('Gamingdator – MSI RTX 5060 | Intel i5-11400F | 16 GB RAM'), null);
+    assert.equal(extractResaleModel('Gamingdator 🔥 RTX 5060 | Ryzen 5 | Win 11 PRO'), null);
+    assert.equal(extractResaleModel('Nybyggd Kraftfull Gamingdator - 5950x / RTX 5060 / 32Gb'), null);
+    assert.equal(extractResaleModel('Komplett gamingdator RTX 3080'), null);
+    // …but a bare card (even with a board-partner TUF/ROG/Nitro line) still matches.
     assert.equal(extractResaleModel('ASUS TUF Gaming GeForce RTX 5070 Ti 16GB OC').resaleKey, 'rtx-5070-ti');
     assert.equal(extractResaleModel('PNY GeForce RTX 5070 Ti 16GB grafikkort').resaleKey, 'rtx-5070-ti');
+    assert.equal(extractResaleModel('ASUS ROG Strix GeForce RTX 4090 OC').resaleKey, 'rtx-4090');
+    assert.equal(extractResaleModel('Sapphire Radeon RX 7900 XTX Nitro+').resaleKey, 'rx-7900-xtx');
   });
 
   it('does not key a CPU+GPU build as a bare CPU', () => {

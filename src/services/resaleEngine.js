@@ -75,21 +75,30 @@ const ACCESSORY_PATTERN = new RegExp('\\b[a-z]*(?:' + [
 // "profit", so such titles must NOT be keyed as the bare component.
 // NOTE: deliberately EXCLUDES 'rog'/'tuf'/'strix' etc. because those are also
 // desktop GPU board-partner lines (e.g. "ASUS TUF Gaming RTX 5070 Ti" is a card).
-const SYSTEM_OR_LAPTOP_PATTERN = new RegExp('\\b(?:' + [
-  // complete desktops / custom builds (Swedish + English)
-  'pc', 'dator', 'speldator', 'stationar', 'stationär', 'barebone', 'prebuilt',
-  'workstation', 'rig', 'bygge', 'bygget', 'byggd', 'bygga', 'komplett', 'moderkort',
-  // laptops (generic)
-  'laptop', 'barbar', 'bärbar', 'notebook', 'ultrabook', 'gaming laptop',
-  // laptop product lines (laptop-only — safe to reject)
-  'legion', 'predator', 'zephyrus', 'katana', 'raider', 'cyborg', 'thinkpad',
-  'ideapad', 'victus', 'omen', 'vivobook', 'zenbook', 'aspire', 'inspiron',
-  'latitude', 'probook', 'elitebook', 'pavilion', 'thinkbook', 'macbook'
-].join('|') + ')\\b');
+// `norm` is already diacritic-stripped, so use stripped forms (stationar, barbar).
+// Swedish puts the noun LAST in compounds, so 'dator'/'bygg' must suffix-match
+// (gamingdator, speldator, stationardator, nybyggd, hemmabygge) — a plain word
+// boundary would miss them.
+const SYSTEM_OR_LAPTOP_PATTERN = new RegExp(
+  '\\b[a-z]*dator\\b' +       // *dator: gamingdator, speldator, stationardator…
+  '|\\b[a-z]*bygg[a-z]*\\b' + // *bygg*: bygge, bygget, byggd, nybyggd, hemmabygge
+  '|\\b(?:' + [
+    // complete desktops / builds
+    'pc', 'stationar', 'barebone', 'prebuilt', 'workstation', 'rig', 'komplett',
+    'moderkort', 'chassi',
+    // laptops (generic)
+    'laptop', 'barbar', 'notebook', 'ultrabook',
+    // laptop product lines (laptop-only — safe to reject)
+    'legion', 'predator', 'zephyrus', 'katana', 'raider', 'cyborg', 'thinkpad',
+    'ideapad', 'victus', 'omen', 'vivobook', 'zenbook', 'aspire', 'inspiron',
+    'latitude', 'probook', 'elitebook', 'pavilion', 'thinkbook', 'macbook'
+  ].join('|') + ')\\b'
+);
 
 // Lightweight presence detectors (no model parsing) used to spot CPU+GPU bundles.
-const HAS_GPU_TOKEN = /\b(?:rtx|gtx)\s*\d{3,4}\b|\brx\s*\d{3,4}\b|\barc\s*[ab]\d{3}\b/;
-const HAS_CPU_TOKEN = /\bryzen\s*[3579]\s*\d{4}\b|\bi[3579]\s*\d{4,5}\b|\bcore\s*ultra\b/;
+// No trailing \b so model suffixes (i5-11400F, 7800X3D) still match.
+const HAS_GPU_TOKEN = /\b(?:rtx|gtx)\s*\d{3,4}|\brx\s*\d{3,4}|\barc\s*[ab]\d{3}/;
+const HAS_CPU_TOKEN = /\bryzen\s*[3579]\s*\d{3,4}|\bi[3579]-?\s*\d{4,5}|\bcore\s*ultra\b/;
 
 // A bare component listing must not also look like a system/laptop, and must not
 // pair a CPU with a GPU (that is a build/bundle, not the bare part).
