@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import fs from 'node:fs';
-import { extractResaleModel } from './resaleEngine.js';
+import { extractResaleModel, looksLikeAccessoryOrRepair } from './resaleEngine.js';
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -204,6 +204,9 @@ export function createLlmClassifier(opts = {}) {
     }
     const clean = cache.get(cacheKeyForTitle(title));
     if (typeof clean === 'string' && clean) {
+      // Veto: never let the LLM "recover" a structural accessory/repair title by
+      // cleaning the accessory word away (e.g. "Swivel Case för iPad" → "iPad").
+      if (looksLikeAccessoryOrRepair(title)) return null;
       return extractResaleModel(clean); // may still be null if it re-fails guards
     }
     return null;
@@ -285,6 +288,9 @@ export function createLlmClassifier(opts = {}) {
       const key = cacheKeyForTitle(title);
       if (!key || seen.has(key) || cache.has(key)) continue;
       if (!isFlipRelevantTitle(title)) continue;
+      // Never classify structural accessories/repairs — they are unambiguous and
+      // must not be recoverable as the device, so there is nothing for the LLM to do.
+      if (looksLikeAccessoryOrRepair(title)) continue;
       // Skip titles the deterministic matcher already resolves to a HIGH-precision
       // category; low-precision console/handheld positives still need LLM review.
       const direct = extractResaleModel(title);

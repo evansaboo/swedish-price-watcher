@@ -69,7 +69,9 @@ const ACCESSORY_PATTERN = new RegExp('\\b[a-z]*(?:' + [
   'laddare', 'kabel', 'adapter', 'dongle', 'dockningsstation', 'docka', 'hubb',
   // mounts / stands / peripherals
   'stativ', 'hallare', 'faste', 'tangentbord', 'fjarrkontroll', 'pencil',
-  'gamepad', 'grepp', 'handkontroll',
+  'gamepad', 'grepp', 'handkontroll', 'stylus', 'penna', 'crayon',
+  // folio cases / watch bands ("Leather Folio", "Alpine Loop"/"Bergsloop", "Sportloop")
+  'folio', 'loop',
   // wallet / folio cases ("mobilplånbok", "plånboksfodral")
   'planbok', 'holster', 'korthallare',
   // wearables straps (Apple Watch etc.)
@@ -389,10 +391,19 @@ export function extractResaleModel(title) {
 }
 
 /**
- * Build a Blocket resale price index keyed by resaleKey.
- * @param {Array} usedItems items with condition 'used' (Blocket comps)
- * @returns {Map<string, object>}
+ * High-precision structural rejection: true when a title is unambiguously NOT a
+ * resellable device — an accessory/peripheral or a repair-service/spare-part/
+ * for-parts listing. Exported so the LLM gap-filler can REFUSE to "recover" such
+ * titles: otherwise the LLM might strip the accessory word ("Linocell Swivel
+ * Case för iPad Pro" → "iPad Pro") and re-key it as the device, defeating this
+ * deterministic guard. The LLM may only ever clean genuinely ambiguous titles.
  */
+export function looksLikeAccessoryOrRepair(title) {
+  const norm = normalize(title);
+  if (!norm) return false;
+  return ACCESSORY_PATTERN.test(norm) || REPAIR_OR_PARTS_PATTERN.test(norm);
+}
+
 /**
  * Robust price bounds for a comp bucket using the median absolute deviation
  * (MAD) — resists contamination from a whole-system / mispriced comp that slips

@@ -43,6 +43,11 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('USB-C laddare till MacBook Pro 14 M3'), null);
     assert.equal(extractResaleModel('Skärmskydd iPhone 15 Pro Max härdat glas'), null);
     assert.equal(extractResaleModel('Sportband Apple Watch Series 9 45mm'), null);
+    assert.equal(extractResaleModel('Apple Watch Ultra Bergsloop M - Stjärnglans'), null);
+    assert.equal(extractResaleModel('Apple Watch Ultra 2 Trail Loop'), null);
+    assert.equal(extractResaleModel('Leather Folio iPad mini'), null);
+    assert.equal(extractResaleModel('Linocell Aktiv stylus för iPad'), null);
+    assert.equal(extractResaleModel('Logitech Crayon digital penna för iPad'), null);
     // …but the genuine device still matches.
     assert.equal(extractResaleModel('Apple iPhone 15 Pro 256GB Blå Titan').resaleKey, 'iphone-15-pro-256gb');
   });

@@ -60,23 +60,23 @@ test('resolveModel prefers the deterministic matcher and never calls the LLM for
 test('enrich classifies missed titles and re-keys via the deterministic matcher', async () => {
   const labels = {
     'Gamingdator – MSI RTX 5060 | Intel i5-11400F': null,            // whole build → reject
-    'Säljer min gamla GeForce 3060 Ti grafikkort fint skick': 'RTX 3060 Ti',
-    'Silikonskal iPhone 14': null                                     // accessory → reject
+    'Säljer min gamla GeForce 3060 Ti grafikkort fint skick': 'RTX 3060 Ti'
   };
   const c = createLlmClassifier({
     apiKey: 'k', fetchImpl: mockFetch(labels), logger: silentLogger
   });
-  const titles = Object.keys(labels);
+  // A structural accessory is filtered out before the LLM (never sent/classified).
+  const titles = [...Object.keys(labels), 'Silikonskal iPhone 14'];
   const stats = await c.enrich(titles);
   assert.equal(stats.classified, 1);
-  assert.equal(stats.rejected, 2);
+  assert.equal(stats.rejected, 1);
 
   // The cleaned label is re-keyed through the deterministic matcher.
   const r = c.resolveModel('Säljer min gamla GeForce 3060 Ti grafikkort fint skick');
   assert.equal(r.resaleKey, 'rtx-3060-ti');
   assert.equal(r.demandCategory, 'Graphics cards');
 
-  // Rejected build/accessory titles resolve to null.
+  // The build (LLM null) and the accessory (deterministic veto) both resolve null.
   assert.equal(c.resolveModel('Gamingdator – MSI RTX 5060 | Intel i5-11400F'), null);
   assert.equal(c.resolveModel('Silikonskal iPhone 14'), null);
 });
@@ -184,6 +184,18 @@ test('an older-version cache is migrated: high-precision kept, low-precision dro
   assert.ok(!('nintendo lego marvel super heroes' in saved.entries));
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the LLM may not recover a structural accessory by cleaning it to a device', async () => {
+  // Even if the cache holds a device label for an accessory title (an LLM that
+  // stripped "Swivel Case" down to "iPad Pro 11"), the veto keeps it rejected.
+  const c = createLlmClassifier({
+    apiKey: 'k',
+    fetchImpl: mockFetch({ 'Linocell Swivel Case för iPad Pro 11': 'iPad Pro 11' }),
+    logger: silentLogger
+  });
+  await c.enrich(['Linocell Swivel Case för iPad Pro 11']);
+  assert.equal(c.resolveModel('Linocell Swivel Case för iPad Pro 11'), null);
 });
 
 test('concurrent enrich() calls are coalesced into a single run', async () => {
