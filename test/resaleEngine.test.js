@@ -86,6 +86,8 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('PNY GeForce RTX 5070 Ti 16GB grafikkort').resaleKey, 'rtx-5070-ti');
     assert.equal(extractResaleModel('ASUS ROG Strix GeForce RTX 4090 OC').resaleKey, 'rtx-4090');
     assert.equal(extractResaleModel('Sapphire Radeon RX 7900 XTX Nitro+').resaleKey, 'rx-7900-xtx');
+    // Trademark glyph must not glue onto the token (NFKD: "RTX™" → "rtxtm").
+    assert.equal(extractResaleModel('ASUS GeForce 3060 Ti Mini V2 RTX™ 3060 Ti 8GB GDDR6 GPU grafikkort').resaleKey, 'rtx-3060-ti');
   });
 
   it('does not key a CPU+GPU build as a bare CPU', () => {

@@ -25,6 +25,10 @@ const DEFAULT_RESALE_OPTIONS = {
 
 function normalize(title) {
   return String(title ?? '')
+    // Drop trademark/registered/copyright marks FIRST: NFKD expands ™ → "TM",
+    // which would glue onto the preceding token (e.g. "RTX™" → "rtxtm") and
+    // break word-boundary matching. Replace with a space, not nothing.
+    .replace(/[\u2122\u00ae\u00a9]/g, ' ')
     .normalize('NFKD')
     // strip combining diacritics so "ö" → "o" for robust token matching
     .replace(/[\u0300-\u036f]/g, '')
