@@ -151,6 +151,41 @@ test('classifications persist to disk and reload', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('an older-version cache is migrated: high-precision kept, low-precision dropped', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-cache-'));
+  const cacheFile = path.join(dir, 'cache.json');
+  // Simulate a v1 cache written by an older, game-unaware prompt: a real GPU
+  // label (keep), a null verdict (keep), and a GAME mislabelled as the console
+  // (drop — re-keys into a low-precision console category).
+  fs.writeFileSync(cacheFile, JSON.stringify({
+    version: 1,
+    entries: {
+      'geforce 3060 ti fyndvara grafikkort': 'RTX 3060 Ti',
+      'nybyggd gamingdator rtx 4070': null,
+      'nintendo lego marvel super heroes': 'Nintendo Switch'
+    }
+  }));
+
+  const calls = [];
+  const c = createLlmClassifier({
+    apiKey: 'k', cacheFile, fetchImpl: mockFetch({}, { calls }), logger: silentLogger
+  });
+
+  // High-precision GPU label survives the migration (no LLM call needed).
+  assert.equal(c.resolveModel('GeForce 3060 Ti fyndvara grafikkort').resaleKey, 'rtx-3060-ti');
+  // Null verdict survives.
+  assert.equal(c.getCleanLabel('Nybyggd gamingdator RTX 4070'), null);
+  // The mislabelled game was dropped → its (now empty) entry no longer keys it.
+  assert.equal(c.getCleanLabel('Nintendo Lego Marvel Super Heroes'), undefined);
+
+  // The migrated cache is rewritten at the current version.
+  const saved = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  assert.equal(saved.version, 2);
+  assert.ok(!('nintendo lego marvel super heroes' in saved.entries));
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('a failing batch is left uncached so it retries later', async () => {
   let attempts = 0;
   const failingFetch = async () => {

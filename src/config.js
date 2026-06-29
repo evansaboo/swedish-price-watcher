@@ -147,7 +147,7 @@ export async function loadConfig() {
       cacheFile: path.resolve(rootDir, process.env.LLM_CACHE_FILE ?? 'data/llm-model-cache.json'),
       batchSize: parsePositiveInt(process.env.LLM_BATCH_SIZE, 25),
       maxTitlesPerRun: parsePositiveInt(process.env.LLM_MAX_TITLES_PER_RUN, 400),
-      minRequestIntervalMs: parseNonNegativeInt(process.env.LLM_MIN_REQUEST_INTERVAL_MS, 4500)
+      minRequestIntervalMs: parseNonNegativeInt(process.env.LLM_MIN_REQUEST_INTERVAL_MS, 6000)
     },
     sources: await loadSources(sourcesFile)
   };

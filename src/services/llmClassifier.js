@@ -138,11 +138,25 @@ export function createLlmClassifier(opts = {}) {
     try {
       if (!fs.existsSync(cacheFile)) return;
       const raw = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      const entries = raw?.entries ?? {};
       if (raw?.version !== CACHE_VERSION) {
-        logger.log?.(`[llm] ignoring cache (version ${raw?.version} != ${CACHE_VERSION}); re-classifying with current prompt`);
+        // Targeted migration instead of a full wipe (a wipe re-classifies every
+        // title at once and triggers a rate-limit storm). Only entries whose
+        // cached label re-keys INTO a low-precision console/handheld category are
+        // dropped — those are the ones an older prompt could have mislabelled
+        // (e.g. a game cleaned to "Nintendo Switch"). Null verdicts and
+        // high-precision labels (Apple/GPU/CPU) are kept as-is.
+        let kept = 0, dropped = 0;
+        for (const [k, v] of Object.entries(entries)) {
+          if (v === null) { cache.set(k, null); kept++; continue; }
+          const reKeyed = extractResaleModel(String(v));
+          if (reKeyed && LOW_PRECISION_CATEGORIES.has(reKeyed.demandCategory)) { dropped++; continue; }
+          cache.set(k, String(v)); kept++;
+        }
+        logger.log?.(`[llm] migrated cache v${raw?.version}->v${CACHE_VERSION}: kept ${kept}, dropped ${dropped} low-precision for re-classification`);
+        saveCache();
         return;
       }
-      const entries = raw?.entries ?? {};
       for (const [k, v] of Object.entries(entries)) {
         cache.set(k, v === null ? null : String(v));
       }
