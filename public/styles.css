@@ -1842,3 +1842,162 @@ body.scanning { --scan-bar-height: 28px; }
   background: var(--clr-success);
   flex-shrink: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   FLIP / RESALE VIEW
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Deals / Flip mode switch */
+.mode-switch {
+  display: flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.mode-btn {
+  padding: 5px 14px;
+  border: none;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+.mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+.mode-btn:hover { color: var(--text-primary); }
+.mode-btn.active { background: var(--green); color: #fff; }
+
+/* Flip controls bar */
+.flip-bar {
+  position: sticky;
+  top: calc(var(--header-height) + var(--scan-bar-height));
+  z-index: 89;
+  background: var(--green-soft);
+  border-bottom: 1px solid var(--border-light);
+}
+.flip-bar-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.flip-bar-intro {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.flip-bolt { color: var(--green); font-weight: 700; }
+.flip-bar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.flip-bar-controls .field-select,
+.flip-bar-controls .sort-select { height: 32px; }
+.flip-num { width: 110px; height: 32px; }
+
+/* Flip card profit visuals */
+.flip-card .card-pricing {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.flip-prices {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+.flip-price-block { display: flex; flex-direction: column; gap: 2px; }
+.flip-price-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.flip-price-buy {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.flip-price-resale {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.flip-profit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--green-soft);
+}
+.flip-profit-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.flip-profit-value {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.flip-profit-label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.flip-roi {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: var(--radius-xl);
+  background: var(--green);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.flip-comps {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.flip-comps a {
+  color: var(--blue);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.flip-comps a:hover { text-decoration: underline; }
+.badge-model {
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .flip-bar-controls { width: 100%; }
+  .flip-num { flex: 1; width: auto; min-width: 90px; }
+}

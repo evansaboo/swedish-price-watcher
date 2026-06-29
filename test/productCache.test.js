@@ -118,3 +118,55 @@ test('cross-store annotation marks cheapest store across matched products', () =
   assert.equal(b.crossStore.stores, 2);
   assert.equal(solo.crossStore, undefined, 'unmatched product has no crossStore');
 });
+
+test('queryFlips values outlet items against Blocket used medians', () => {
+  const state = createDefaultState();
+  state.items = {
+    'elg:1': {
+      listingKey: 'elg:1', sourceId: 'elgiganten-outlet', sourceLabel: 'Elgiganten', title: 'ASUS TUF RTX 4070 Ti 12GB',
+      category: 'Grafikkort', condition: 'outlet', latestPriceSek: 6000,
+      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
+    },
+    'blo:1': {
+      listingKey: 'blo:1', sourceId: 'blocket-electronics', sourceLabel: 'Blocket', title: 'RTX 4070 Ti Gigabyte',
+      condition: 'used', latestPriceSek: 8500, history: []
+    },
+    'blo:2': {
+      listingKey: 'blo:2', sourceId: 'blocket-electronics', sourceLabel: 'Blocket', title: 'MSI RTX 4070 Ti',
+      condition: 'used', latestPriceSek: 9000, history: []
+    },
+    'blo:3': {
+      listingKey: 'blo:3', sourceId: 'blocket-electronics', sourceLabel: 'Blocket', title: 'RTX 4070 Ti Ventus',
+      condition: 'used', latestPriceSek: 9500, history: []
+    }
+  };
+
+  const cache = new ProductCache({ minSampleCount: 3, flatFeeSek: 0, resaleAdjustFactor: 1 });
+  cache.rebuild(state, new Map());
+
+  const result = cache.queryFlips({});
+  assert.equal(result.total, 1, 'one profitable flip');
+  const flip = result.items[0];
+  assert.equal(flip.listingKey, 'elg:1');
+  assert.equal(flip.resaleMedianSek, 9000);
+  assert.equal(flip.netProfitSek, 3000);
+  assert.equal(flip.sampleCount, 3);
+  assert.deepEqual(result.demandCategories, ['Graphics cards']);
+  assert.equal(result.aggregates.bestProfitSek, 3000);
+});
+
+test('queryFlips honours demandCategory and minRoi filters', () => {
+  const state = createDefaultState();
+  state.items = {
+    'elg:1': { listingKey: 'elg:1', sourceId: 's', sourceLabel: 'S', title: 'RTX 4070 Ti', condition: 'outlet', latestPriceSek: 6000, history: [] },
+    'b1': { listingKey: 'b1', sourceId: 'blo', sourceLabel: 'Blocket', title: 'RTX 4070 Ti', condition: 'used', latestPriceSek: 8500, history: [] },
+    'b2': { listingKey: 'b2', sourceId: 'blo', sourceLabel: 'Blocket', title: 'RTX 4070 Ti', condition: 'used', latestPriceSek: 9000, history: [] },
+    'b3': { listingKey: 'b3', sourceId: 'blo', sourceLabel: 'Blocket', title: 'RTX 4070 Ti', condition: 'used', latestPriceSek: 9500, history: [] }
+  };
+  const cache = new ProductCache({ minSampleCount: 3 });
+  cache.rebuild(state, new Map());
+
+  assert.equal(cache.queryFlips({ demandCategory: 'Apple — iPhone' }).total, 0);
+  assert.equal(cache.queryFlips({ demandCategory: 'Graphics cards' }).total, 1);
+  assert.equal(cache.queryFlips({ minRoiPercent: 999 }).total, 0);
+});

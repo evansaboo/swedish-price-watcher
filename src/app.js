@@ -256,6 +256,24 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }, favSet, state.stats.lastRunStartedAt, wishlistSet);
   });
 
+  // ── Flip / Resale opportunities ────────────────────────────────
+  // Buyable items valued against actual Blocket second-hand prices.
+  app.get('/api/flips', async (request) => {
+    const q = request.query;
+    return productCache.queryFlips({
+      search: q.search,
+      demandCategory: q.demandCategory,
+      store: q.store,
+      minNetProfitSek: Number.parseInt(q.minNetProfitSek ?? q.minProfit ?? '', 10),
+      minRoiPercent: Number.parseInt(q.minRoiPercent ?? q.minRoi ?? '', 10),
+      maxBuyPriceSek: Number.parseInt(q.maxBuyPriceSek ?? q.maxPrice ?? '', 10),
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+      page: Number.parseInt(q.page ?? '1', 10),
+      pageSize: Number.parseInt(q.pageSize ?? '50', 10)
+    });
+  });
+
   // ── CSV Export (same filters as /api/outlet-products) ──────────
   app.get('/api/export.csv', async (request, reply) => {
     const state = store.getState();

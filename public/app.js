@@ -44,7 +44,17 @@ const state = {
   schedulerIsInActiveWindow: true,
   schedulerNextRunAt: null,
   schedulerFormDirty: false,
-  latestRunStartedAt: null
+  latestRunStartedAt: null,
+  // Flip / resale view
+  mode: 'deals', // 'deals' or 'flip'
+  flipDemandCategory: '',
+  flipStore: '',
+  flipMinProfit: '',
+  flipMinRoi: '',
+  flipMaxPrice: '',
+  flipSortBy: 'netProfitSek',
+  flipSortDir: 'desc',
+  flipPage: 1
 };
 
 const STORAGE_KEY = 'pricewatch-ui-v2';
@@ -114,7 +124,16 @@ const el = {
   toastContainer: $('#toast-container'),
   runSummary: $('#run-summary'),
   themeToggle: $('#theme-toggle'),
-  scanLine: $('#scan-line')
+  scanLine: $('#scan-line'),
+  // Flip / resale view
+  modeButtons: $$('.mode-btn'),
+  flipBar: $('#flip-bar'),
+  flipDemandFilter: $('#flip-demand-filter'),
+  flipStoreFilter: $('#flip-store-filter'),
+  flipMinProfit: $('#flip-min-profit'),
+  flipMinRoi: $('#flip-min-roi'),
+  flipMaxPrice: $('#flip-max-price'),
+  flipSort: $('#flip-sort')
 };
 
 let scanPollTimer = null;
@@ -234,7 +253,8 @@ function savePrefs() {
       sortBy: state.sortBy,
       sortDirection: state.sortDirection,
       viewMode: state.viewMode,
-      activePreset: state.activePreset
+      activePreset: state.activePreset,
+      mode: state.mode
     }));
   } catch {}
 }
@@ -257,6 +277,7 @@ function hydratePrefs() {
   if (s.sortDirection === 'asc' || s.sortDirection === 'desc') state.sortDirection = s.sortDirection;
   if (s.viewMode === 'grid' || s.viewMode === 'list') state.viewMode = s.viewMode;
   if (typeof s.activePreset === 'string') state.activePreset = s.activePreset;
+  if (s.mode === 'deals' || s.mode === 'flip') state.mode = s.mode;
 
   // Sync UI
   el.searchInput.value = state.search;
@@ -683,11 +704,216 @@ function renderPagination(response) {
     btn.addEventListener('click', () => {
       const target = Number(btn.getAttribute('data-page'));
       if (!Number.isFinite(target) || target < 1) return;
-      state.currentPage = target;
-      loadProducts().catch(err => showToast(err.message, 'error'));
+      if (state.mode === 'flip') state.flipPage = target; else state.currentPage = target;
+      loadActiveView().catch(err => showToast(err.message, 'error'));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }
+}
+
+// ── FLIP / RESALE VIEW ──────────────────────────────────────────
+function buildFlipsQuery() {
+  const params = new URLSearchParams();
+  const minProfit = parsePositiveInteger(state.flipMinProfit);
+  const minRoi = parsePositiveInteger(state.flipMinRoi);
+  const maxPrice = parsePositiveInteger(state.flipMaxPrice);
+
+  if (state.search) params.set('search', state.search);
+  if (state.flipDemandCategory) params.set('demandCategory', state.flipDemandCategory);
+  if (state.flipStore) params.set('store', state.flipStore);
+  if (minProfit) params.set('minNetProfitSek', String(minProfit));
+  if (minRoi) params.set('minRoiPercent', String(minRoi));
+  if (maxPrice) params.set('maxBuyPriceSek', String(maxPrice));
+
+  params.set('sortBy', state.flipSortBy);
+  params.set('sortDir', state.flipSortDir);
+  params.set('page', String(state.flipPage));
+  params.set('pageSize', String(state.pageSize));
+  return `?${params.toString()}`;
+}
+
+function availabilityInfo(item) {
+  const seenText = timeAgo(item.lastSeenAt) ?? '';
+  if (item.availability === 'in_stock' || item.availability === 'InStock') return { dot: 'in-stock', label: 'In stock' };
+  if (item.availability === 'few_left' || item.availability === 'limited') return { dot: 'limited', label: 'Few left' };
+  return { dot: 'out', label: seenText || 'Unknown' };
+}
+
+function populateFlipFilters(response) {
+  // Demand categories come from the flips payload; preserve current selection.
+  const cats = Array.isArray(response?.demandCategories) ? response.demandCategories : [];
+  const current = state.flipDemandCategory;
+  el.flipDemandFilter.innerHTML = ['<option value="">All types</option>']
+    .concat(cats.map(c => `<option value="${escapeHtml(c)}"${c === current ? ' selected' : ''}>${escapeHtml(c)}</option>`))
+    .join('');
+}
+
+function renderFlipStoreFilter(sources) {
+  if (!el.flipStoreFilter || !Array.isArray(sources)) return;
+  el.flipStoreFilter.innerHTML = ['<option value="">All stores</option>']
+    .concat(sources.map(s => `<option value="${escapeHtml(s.id)}"${s.id === state.flipStore ? ' selected' : ''}>${escapeHtml(s.label)}</option>`))
+    .join('');
+}
+
+function renderFlipStats(response) {
+  const agg = response?.aggregates ?? {};
+  const total = response?.total ?? 0;
+  const pills = [
+    [total, 'opportunities'],
+    [formatSek(agg.bestProfitSek ?? 0), 'best profit'],
+    [formatSek(agg.avgProfitSek ?? 0), 'avg profit'],
+    [formatSek(agg.totalProfitSek ?? 0), 'total spread']
+  ];
+  el.statsPills.innerHTML = pills
+    .map(([val, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(val))}</strong> ${escapeHtml(label)}</span>`)
+    .join('');
+  el.productsCount.textContent = `${total} flip opportunities`;
+  el.activeFilterTags.innerHTML = '';
+  el.filterCountBadge.classList.add('hidden');
+}
+
+function renderFlips(response) {
+  const flips = response?.items ?? [];
+  const total = response?.total ?? flips.length;
+
+  if (!total) {
+    el.productGrid.innerHTML = '';
+    el.paginationArea.innerHTML = '';
+    el.emptyState.classList.remove('hidden');
+    return;
+  }
+  el.emptyState.classList.add('hidden');
+
+  const cards = flips.map((flip, idx) => {
+    const isNew = isNewProduct(flip);
+    const avail = availabilityInfo(flip);
+    const url = flip.url ? escapeHtml(flip.url) : '';
+    const titleLink = url
+      ? `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(flip.title)}</a>`
+      : escapeHtml(flip.title);
+
+    const imgSrc = flip.imageUrl;
+    const imageHtml = imgSrc
+      ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder-img\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'" />`
+      : `<div class="card-placeholder-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+
+    let badgesLeft = `<span class="badge badge-model" title="Matched resale model">${escapeHtml(flip.modelLabel)}</span>`;
+    if (isNew) badgesLeft += '<span class="badge badge-new">New</span>';
+
+    const wishlisted = state.wishlist.has(flip.listingKey);
+    const wishlistIcon = wishlisted ? '♥' : '♡';
+    const wishlistClass = wishlisted ? 'wishlist-btn active' : 'wishlist-btn';
+    const delay = Math.min(idx * 25, 300);
+
+    return `
+      <article class="product-card flip-card${isNew ? ' is-new' : ''}${wishlisted ? ' is-wishlisted' : ''}" style="animation-delay:${delay}ms" data-listing-key="${escapeHtml(flip.listingKey)}">
+        <div class="card-image">
+          ${imageHtml}
+          <div class="card-badges"><div class="card-badges-left">${badgesLeft}</div></div>
+          <button type="button" class="${wishlistClass}" data-listing-key="${escapeHtml(flip.listingKey)}" title="${wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}">${wishlistIcon}</button>
+        </div>
+        <div class="card-body">
+          <span class="card-store">${escapeHtml(flip.sourceLabel ?? '')} · ${escapeHtml(flip.demandCategory ?? '')}</span>
+          <h3 class="card-title">${titleLink}</h3>
+          <div class="card-pricing">
+            <div class="flip-prices">
+              <div class="flip-price-block">
+                <span class="flip-price-label">Buy now</span>
+                <span class="flip-price-buy">${formatSek(flip.buyPriceSek)}</span>
+              </div>
+              <div class="flip-price-block" style="text-align:right">
+                <span class="flip-price-label">Blocket median</span>
+                <span class="flip-price-resale">${formatSek(flip.resaleMedianSek)}</span>
+              </div>
+            </div>
+            <div class="flip-profit-row">
+              <div class="flip-profit-main">
+                <span class="flip-profit-value">+${formatSek(flip.netProfitSek)}</span>
+                <span class="flip-profit-label">est. net profit</span>
+              </div>
+              <span class="flip-roi" title="Return on the buy price">ROI ${flip.roiPercent}%</span>
+            </div>
+            <div class="flip-comps">
+              <span>From ${flip.sampleCount} Blocket comp${flip.sampleCount === 1 ? '' : 's'}</span>
+              <a href="${escapeHtml(flip.blocketSearchUrl)}" target="_blank" rel="noreferrer">View comps ↗</a>
+            </div>
+          </div>
+        </div>
+        <div class="card-footer">
+          <span class="card-availability"><span class="avail-dot ${avail.dot}"></span>${escapeHtml(avail.label)}</span>
+          <span title="Shipping/fee allowance subtracted from profit">incl. ${formatSek(flip.feesSek)} fees</span>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  el.productGrid.innerHTML = cards;
+
+  for (const btn of el.productGrid.querySelectorAll('.wishlist-btn')) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleWishlist(btn.getAttribute('data-listing-key'), btn);
+    });
+  }
+
+  renderPagination(response);
+}
+
+async function loadFlips() {
+  const response = await fetchJson(`/api/flips${buildFlipsQuery()}`);
+  latestProducts = response;
+  populateFlipFilters(response);
+  renderFlipStats(response);
+  renderFlips(response);
+}
+
+// Dispatch list refresh to the active view (deals or flip).
+function loadActiveView() {
+  return state.mode === 'flip' ? loadFlips() : loadProducts();
+}
+
+function applyModeUI(mode) {
+  const isFlip = mode === 'flip';
+  for (const b of el.modeButtons) b.classList.toggle('active', b.dataset.mode === mode);
+  el.flipBar.classList.toggle('hidden', !isFlip);
+  document.getElementById('filter-pills').classList.toggle('hidden', isFlip);
+  document.querySelector('.filter-bar-right').classList.toggle('hidden', isFlip);
+  el.searchInput.placeholder = isFlip ? 'Search flips…' : 'Search deals...';
+
+  // Close the deals filter panel when entering flip mode
+  if (isFlip && state.filterPanelOpen) {
+    state.filterPanelOpen = false;
+    el.filterPanel.classList.add('hidden');
+    el.filterExpandBtn.classList.remove('active');
+    document.getElementById('filter-bar').classList.remove('panel-open');
+  }
+}
+
+function setMode(mode) {
+  if (mode !== 'deals' && mode !== 'flip') return;
+  state.mode = mode;
+  applyModeUI(mode);
+  savePrefs();
+  loadActiveView().catch(err => showToast(err.message, 'error'));
+}
+
+function updateFlipFilters({ debounce = false } = {}) {
+  state.flipDemandCategory = el.flipDemandFilter.value;
+  state.flipStore = el.flipStoreFilter.value;
+  state.flipMinProfit = el.flipMinProfit.value.trim();
+  state.flipMinRoi = el.flipMinRoi.value.trim();
+  state.flipMaxPrice = el.flipMaxPrice.value.trim();
+  state.flipPage = 1;
+
+  if (debounce) {
+    if (filterApplyTimer) clearTimeout(filterApplyTimer);
+    filterApplyTimer = setTimeout(() => {
+      filterApplyTimer = null;
+      loadFlips().catch(err => showToast(err.message, 'error'));
+    }, 250);
+    return;
+  }
+  loadFlips().catch(err => showToast(err.message, 'error'));
 }
 
 // ── WISHLIST ────────────────────────────────────────────────────
@@ -1183,15 +1409,21 @@ async function loadDashboard() {
   latestProducts = response;
 
   syncScanUI(status);
-  renderStats(status, response);
   renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
   renderCategoryFilter(categories);
   renderStoreFilter(outletSources ?? []);
+  renderFlipStoreFilter(outletSources ?? []);
   renderCampaignFilter(outletCampaigns ?? []);
-  renderActiveFilterTags();
   renderSchedulerForm(status.scheduler);
-  renderProducts(response);
   el.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
+
+  if (state.mode === 'flip') {
+    await loadFlips();
+  } else {
+    renderStats(status, response);
+    renderActiveFilterTags();
+    renderProducts(response);
+  }
 
   if (status.isRunning) { scheduleScanPoll(); } else { clearScanPoll(); }
 }
@@ -1571,7 +1803,35 @@ async function bulkToggleSources(enabled) {
 // ── EVENT LISTENERS ─────────────────────────────────────────────
 function bindEvents() {
   // Search
-  el.searchInput.addEventListener('input', () => updateFilters({ debounce: true }));
+  el.searchInput.addEventListener('input', () => {
+    if (state.mode === 'flip') {
+      state.search = el.searchInput.value.trim();
+      state.flipPage = 1;
+      if (filterApplyTimer) clearTimeout(filterApplyTimer);
+      filterApplyTimer = setTimeout(() => { filterApplyTimer = null; loadFlips().catch(err => showToast(err.message, 'error')); }, 250);
+    } else {
+      updateFilters({ debounce: true });
+    }
+  });
+
+  // Deals / Flip mode switch
+  for (const btn of el.modeButtons) {
+    btn.addEventListener('click', () => setMode(btn.dataset.mode));
+  }
+
+  // Flip controls
+  el.flipDemandFilter?.addEventListener('change', () => updateFlipFilters());
+  el.flipStoreFilter?.addEventListener('change', () => updateFlipFilters());
+  el.flipMinProfit?.addEventListener('input', () => updateFlipFilters({ debounce: true }));
+  el.flipMinRoi?.addEventListener('input', () => updateFlipFilters({ debounce: true }));
+  el.flipMaxPrice?.addEventListener('input', () => updateFlipFilters({ debounce: true }));
+  el.flipSort?.addEventListener('change', () => {
+    const [col, dir] = el.flipSort.value.split('-');
+    state.flipSortBy = col;
+    state.flipSortDir = dir;
+    state.flipPage = 1;
+    loadFlips().catch(err => showToast(err.message, 'error'));
+  });
 
   // Filter selects
   el.categoryFilter.addEventListener('change', () => updateFilters());
@@ -1698,6 +1958,7 @@ function bindEvents() {
 // ── INIT ────────────────────────────────────────────────────────
 initTheme();
 hydratePrefs();
+applyModeUI(state.mode);
 bindEvents();
 loadWishlist().then(() => loadDashboard()).catch(err => showToast(err.message, 'error'));
 loadVersionInfo();

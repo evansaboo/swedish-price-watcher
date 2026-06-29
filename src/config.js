@@ -133,6 +133,13 @@ export async function loadConfig() {
       minimumDiscountPercent: parsePositiveInt(process.env.MINIMUM_DISCOUNT_PERCENT, 18),
       minimumProfitSek: parsePositiveInt(process.env.MINIMUM_PROFIT_SEK, 400)
     },
+    resale: {
+      minSampleCount: parsePositiveInt(process.env.RESALE_MIN_SAMPLES, 3),
+      resaleAdjustFactor: Number.parseFloat(process.env.RESALE_ADJUST_FACTOR ?? '') || 0.95,
+      flatFeeSek: parseNonNegativeInt(process.env.RESALE_FLAT_FEE_SEK, 60),
+      minNetProfitSek: parsePositiveInt(process.env.RESALE_MIN_PROFIT_SEK, 300),
+      minRoiPercent: parsePositiveInt(process.env.RESALE_MIN_ROI_PERCENT, 8)
+    },
     sources: await loadSources(sourcesFile)
   };
 }

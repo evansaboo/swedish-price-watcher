@@ -30,6 +30,7 @@ A production outlet price tracker for Swedish electronics stores. Runs on a Rasp
 - Discord alert rules fire on **new matches** and **price drops** (per-rule toggle + min-drop %)
 - **Daily digest**: top new deals by score posted once per day at a configured Stockholm time (Settings → Alerts)
 - **Cross-store matching**: the same product is linked across stores via GTIN/EAN and manufacturer part numbers (with normalized-title fallback); cards show "Cheaper at X" / "Best price of N stores"
+- **⚡ Flip / Resale view**: a dedicated dashboard mode that values buyable outlet/deal items against **actual Blocket second-hand prices** for the same model, then ranks by real net profit. Model matching is resale-aware for high-demand categories — Apple (iPhone/iPad/MacBook/AirPods/Watch), GPUs (RTX/RX/Arc), consoles (PS5/Xbox), handhelds (Switch/Steam Deck) and CPUs (Ryzen/Intel) — so noisy Blocket titles collapse to the same model key as clean retail titles. Each card shows buy price, Blocket median, estimated net profit, ROI %, the number of comps, and a link to live Blocket listings (`/api/flips`).
 - **Incremental scanning** for ProShop, Kjell, and NetOnNet — pagination stops once consecutive pages contain only known items; every 5th scan runs full so stale items still get pruned
 - CSV export of the current filtered product list (`/api/export.csv` or the button in the filter panel)
 - Partial-scan protection: cancelled scans and incremental early-stops never prune items that simply weren't revisited
@@ -58,6 +59,11 @@ Open `http://127.0.0.1:3030`.
 | `FLARESOLVERR_URL` | Auto | Set by docker-compose to `http://flaresolverr:8191` |
 | `ARCHIVE_RETENTION_DAYS` | No | How long pruned items keep their price history (default: 90) |
 | `MAX_HISTORY_ENTRIES` | No | Price-history points kept per item (default: 20) |
+| `RESALE_MIN_SAMPLES` | No | Min Blocket comps before a flip is trusted (default: 3) |
+| `RESALE_ADJUST_FACTOR` | No | Fraction of Blocket median used as expected resale (default: 0.95) |
+| `RESALE_FLAT_FEE_SEK` | No | Shipping/fee allowance subtracted from flip profit (default: 60) |
+| `RESALE_MIN_PROFIT_SEK` | No | Min net profit for a flip to surface (default: 300) |
+| `RESALE_MIN_ROI_PERCENT` | No | Min ROI %% for a flip to surface (default: 8) |
 
 ### ProShop / Dustin / SweClockers — Cloudflare bypass
 

@@ -5,6 +5,10 @@
 
 import { firstFinite } from '../lib/utils.js';
 import { buildIdentityGroups } from './dealEngine.js';
+import { buildResaleIndex, computeFlips, DEFAULT_RESALE_OPTIONS } from './resaleEngine.js';
+
+// Conditions whose items can be bought and re-sold privately (flip candidates).
+const FLIP_CANDIDATE_CONDITIONS = new Set(['outlet', 'deal', 'new']);
 
 const NEW_PRODUCT_FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -45,7 +49,7 @@ function tokenize(query) {
 }
 
 export class ProductCache {
-  constructor() {
+  constructor(resaleOptions = {}) {
     this._products = [];          // Materialized outlet products
     this._searchIndex = [];       // Pre-tokenized search text per product (parallel array)
     this._byCategory = new Map(); // category key → product indices
@@ -54,6 +58,9 @@ export class ProductCache {
     this._categories = [];        // Pre-computed category stats (no favorites applied)
     this._sources = [];           // Unique sources [{id, label}]
     this._campaigns = [];         // Unique campaigns [{label, value}]
+    this._flips = [];             // Materialized flip/resale opportunities
+    this._flipDemandCategories = []; // Unique demand categories among flips
+    this._resaleOptions = { ...DEFAULT_RESALE_OPTIONS, ...resaleOptions };
     this._version = 0;            // Incremented on rebuild
   }
 
@@ -62,6 +69,8 @@ export class ProductCache {
   get categories() { return this._categories; }
   get sources() { return this._sources; }
   get campaigns() { return this._campaigns; }
+  get flips() { return this._flips; }
+  get flipDemandCategories() { return this._flipDemandCategories; }
 
   // Rebuild the entire cache from raw state. Call after scan completes or state loads.
   // sourceLabelMap: optional Map(sourceId → label) from config for label overrides
@@ -226,7 +235,99 @@ export class ProductCache {
     this._categories = [...categoryMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'sv-SE'));
     this._sources = [...sourceMap.entries()].map(([id, label]) => ({ id, label }));
     this._campaigns = [...campaignSet].sort().map(label => ({ label, value: label.toLowerCase() }));
+
+    // ── Resale / flip opportunities ──────────────────────────────
+    // Build a Blocket second-hand price index from 'used' items, then value
+    // buyable (outlet/deal/new) items against the matching model's median.
+    const allItems = Object.values(items);
+    const usedItems = allItems.filter((item) => item.condition === 'used');
+    const flipCandidates = allItems
+      .filter((item) => FLIP_CANDIDATE_CONDITIONS.has(item.condition) && Number.isFinite(item.latestPriceSek))
+      .map((item) => ({
+        ...item,
+        sourceLabel: (labelOverrides && labelOverrides.get(item.sourceId)) || item.sourceLabel || item.sourceId
+      }));
+
+    const resaleIndex = buildResaleIndex(usedItems);
+    this._flips = computeFlips(flipCandidates, resaleIndex, this._resaleOptions);
+    this._flipDemandCategories = [...new Set(this._flips.map((f) => f.demandCategory))]
+      .sort((a, b) => a.localeCompare(b, 'sv-SE'));
+
     this._version++;
+  }
+
+  // Fast filtered + sorted + paginated query over flip/resale opportunities
+  queryFlips(params = {}) {
+    const {
+      search = '',
+      demandCategory = '',
+      store = '',
+      minNetProfitSek = NaN,
+      minRoiPercent = NaN,
+      maxBuyPriceSek = NaN,
+      sortBy = 'netProfitSek',
+      sortDir = 'desc',
+      page = 1,
+      pageSize = 50
+    } = params;
+
+    const searchTokens = tokenize(search);
+    const demand = String(demandCategory ?? '').trim().toLowerCase();
+    const storeKey = String(store ?? '').trim();
+
+    let filtered = this._flips.filter((flip) => {
+      if (demand && String(flip.demandCategory).toLowerCase() !== demand) return false;
+      if (storeKey && flip.sourceId !== storeKey) return false;
+      if (Number.isFinite(minNetProfitSek) && flip.netProfitSek < minNetProfitSek) return false;
+      if (Number.isFinite(minRoiPercent) && flip.roiPercent < minRoiPercent) return false;
+      if (Number.isFinite(maxBuyPriceSek) && maxBuyPriceSek > 0 && flip.buyPriceSek > maxBuyPriceSek) return false;
+      if (searchTokens.length) {
+        const hay = normalizeForSearch([flip.title, flip.modelLabel, flip.demandCategory, flip.sourceLabel].filter(Boolean).join(' '));
+        for (const t of searchTokens) if (!hay.includes(t)) return false;
+      }
+      return true;
+    });
+
+    // Sort — default (netProfitSek desc) is already the materialized order
+    const validSortColumns = new Set(['netProfitSek', 'roiPercent', 'buyPriceSek', 'resaleMedianSek', 'sampleCount']);
+    const col = validSortColumns.has(sortBy) ? sortBy : 'netProfitSek';
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (!(col === 'netProfitSek' && dir === -1)) {
+      filtered = filtered.slice().sort((a, b) => {
+        const cmp = (Number(a[col]) || 0) - (Number(b[col]) || 0);
+        return cmp !== 0 ? cmp * dir : b.netProfitSek - a.netProfitSek;
+      });
+    }
+
+    // Aggregates over the full filtered set
+    const totalFiltered = filtered.length;
+    let profitSum = 0;
+    let bestProfit = 0;
+    for (const f of filtered) {
+      profitSum += f.netProfitSek;
+      if (f.netProfitSek > bestProfit) bestProfit = f.netProfitSek;
+    }
+
+    const safePageSize = Number.isFinite(pageSize) ? pageSize : 50;
+    const safePage = Number.isFinite(page) ? page : 1;
+    const clampedPageSize = Math.min(200, Math.max(1, safePageSize));
+    const totalPages = Math.ceil(totalFiltered / clampedPageSize) || 1;
+    const clampedPage = Math.min(Math.max(1, safePage), totalPages);
+    const offset = (clampedPage - 1) * clampedPageSize;
+
+    return {
+      items: filtered.slice(offset, offset + clampedPageSize),
+      total: totalFiltered,
+      page: clampedPage,
+      pageSize: clampedPageSize,
+      totalPages,
+      demandCategories: this._flipDemandCategories,
+      aggregates: {
+        totalProfitSek: Math.round(profitSum),
+        bestProfitSek: Math.round(bestProfit),
+        avgProfitSek: totalFiltered ? Math.round(profitSum / totalFiltered) : 0
+      }
+    };
   }
 
   // Get categories with favorites applied

@@ -62,6 +62,10 @@
     <!-- ===== FILTER BAR ===== -->
     <nav class="filter-bar" id="filter-bar">
       <div class="filter-bar-inner">
+        <div class="mode-switch" role="group" aria-label="View mode">
+          <button type="button" class="mode-btn active" data-mode="deals">Deals</button>
+          <button type="button" class="mode-btn" data-mode="flip">⚡ Flip</button>
+        </div>
         <div class="filter-pills" id="filter-pills">
           <button type="button" class="filter-pill active" data-filter-preset="all">All</button>
           <button type="button" class="filter-pill" data-filter-preset="new">New</button>
@@ -141,6 +145,28 @@
         </div>
       </div>
     </div>
+
+    <!-- ===== FLIP CONTROLS BAR ===== -->
+    <nav class="flip-bar hidden" id="flip-bar">
+      <div class="flip-bar-inner">
+        <div class="flip-bar-intro" title="Buy price vs. real Blocket second-hand prices for the same model">
+          <span class="flip-bolt">⚡</span> Resale opportunities — priced against live Blocket comps
+        </div>
+        <div class="flip-bar-controls">
+          <select id="flip-demand-filter" class="field-select" aria-label="Product type"><option value="">All types</option></select>
+          <select id="flip-store-filter" class="field-select" aria-label="Store"><option value="">All stores</option></select>
+          <input id="flip-min-profit" type="number" class="field-input flip-num" min="0" step="50" placeholder="Min profit kr" />
+          <input id="flip-min-roi" type="number" class="field-input flip-num" min="0" step="1" placeholder="Min ROI %" />
+          <input id="flip-max-price" type="number" class="field-input flip-num" min="0" step="100" placeholder="Max buy kr" />
+          <select id="flip-sort" class="sort-select" aria-label="Sort flips by">
+            <option value="netProfitSek-desc">Net profit: high → low</option>
+            <option value="roiPercent-desc">ROI %: high → low</option>
+            <option value="buyPriceSek-asc">Buy price: low → high</option>
+            <option value="sampleCount-desc">Most Blocket comps</option>
+          </select>
+        </div>
+      </div>
+    </nav>
 
     <!-- ===== STATS BAR ===== -->
     <div class="stats-bar" id="stats-bar">

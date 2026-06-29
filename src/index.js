@@ -43,7 +43,7 @@ const state = store.getState();
 state.deals = computeDeals(state, config.thresholds);
 
 // Initialize product cache — materialized view for fast API queries
-const productCache = new ProductCache();
+const productCache = new ProductCache(config.resale);
 const sourceLabelMap = new Map(config.sources.map(s => [s.id, s.label || s.id]));
 productCache.rebuild(state, sourceLabelMap);
 
