@@ -310,13 +310,13 @@ function robustPriceBounds(prices) {
   return [med - limit, med + limit];
 }
 
-export function buildResaleIndex(usedItems) {
+export function buildResaleIndex(usedItems, { resolveModel = extractResaleModel } = {}) {
   const buckets = new Map();
 
   for (const item of usedItems ?? []) {
     const price = Number(item.latestPriceSek);
     if (!Number.isFinite(price) || price <= 0) continue;
-    const model = extractResaleModel(item.title);
+    const model = resolveModel(item.title);
     if (!model) continue;
 
     let bucket = buckets.get(model.resaleKey);
@@ -375,13 +375,14 @@ function blocketSearchUrl(modelLabel) {
  */
 export function computeFlips(candidateItems, index, options = {}) {
   const opts = { ...DEFAULT_RESALE_OPTIONS, ...options };
+  const resolveModel = options.resolveModel ?? extractResaleModel;
   const flips = [];
 
   for (const item of candidateItems ?? []) {
     const buyPriceSek = Number(item.latestPriceSek);
     if (!Number.isFinite(buyPriceSek) || buyPriceSek <= 0) continue;
 
-    const model = extractResaleModel(item.title);
+    const model = resolveModel(item.title);
     if (!model) continue;
     const market = index.get(model.resaleKey);
     if (!market || market.sampleCount < opts.minSampleCount) continue;

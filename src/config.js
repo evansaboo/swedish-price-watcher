@@ -140,6 +140,14 @@ export async function loadConfig() {
       minNetProfitSek: parsePositiveInt(process.env.RESALE_MIN_PROFIT_SEK, 300),
       minRoiPercent: parsePositiveInt(process.env.RESALE_MIN_ROI_PERCENT, 8)
     },
+    llm: {
+      enabled: (process.env.LLM_CLASSIFIER_ENABLED ?? 'true') !== 'false',
+      apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
+      cacheFile: path.resolve(rootDir, process.env.LLM_CACHE_FILE ?? 'data/llm-model-cache.json'),
+      batchSize: parsePositiveInt(process.env.LLM_BATCH_SIZE, 25),
+      maxTitlesPerRun: parsePositiveInt(process.env.LLM_MAX_TITLES_PER_RUN, 400)
+    },
     sources: await loadSources(sourcesFile)
   };
 }

@@ -61,7 +61,14 @@ export class ProductCache {
     this._flips = [];             // Materialized flip/resale opportunities
     this._flipDemandCategories = []; // Unique demand categories among flips
     this._resaleOptions = { ...DEFAULT_RESALE_OPTIONS, ...resaleOptions };
+    this._resolveModel = null;    // optional LLM-backed resolver (set via setModelResolver)
     this._version = 0;            // Incremented on rebuild
+  }
+
+  // Inject a model resolver (e.g. deterministic + LLM gap-fill). When unset the
+  // resale engine falls back to the deterministic extractResaleModel.
+  setModelResolver(fn) {
+    this._resolveModel = typeof fn === 'function' ? fn : null;
   }
 
   get version() { return this._version; }
@@ -248,8 +255,8 @@ export class ProductCache {
         sourceLabel: (labelOverrides && labelOverrides.get(item.sourceId)) || item.sourceLabel || item.sourceId
       }));
 
-    const resaleIndex = buildResaleIndex(usedItems);
-    this._flips = computeFlips(flipCandidates, resaleIndex, this._resaleOptions);
+    const resaleIndex = buildResaleIndex(usedItems, { resolveModel: this._resolveModel ?? undefined });
+    this._flips = computeFlips(flipCandidates, resaleIndex, { ...this._resaleOptions, resolveModel: this._resolveModel ?? undefined });
     this._flipDemandCategories = [...new Set(this._flips.map((f) => f.demandCategory))]
       .sort((a, b) => a.localeCompare(b, 'sv-SE'));
 

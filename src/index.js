@@ -8,6 +8,7 @@ import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { buildDigestDeals, buildDigestPayload, shouldSendDigest } from './services/digest.js';
 import { ProductCache } from './services/productCache.js';
+import { createLlmClassifier } from './services/llmClassifier.js';
 import { DiscordNotifier } from './services/notifier.js';
 import { shouldSkipSourceNotifications } from './services/scanPolicy.js';
 
@@ -45,11 +46,45 @@ state.deals = computeDeals(state, config.thresholds);
 // Initialize product cache — materialized view for fast API queries
 const productCache = new ProductCache(config.resale);
 const sourceLabelMap = new Map(config.sources.map(s => [s.id, s.label || s.id]));
+
+// Optional Gemini-backed resale-model resolver (deterministic-first, LLM gap-fill).
+// Null when no GEMINI_API_KEY / disabled — the deterministic matcher is used alone.
+const llmClassifier = createLlmClassifier({ ...config.llm });
+if (llmClassifier) {
+  productCache.setModelResolver(llmClassifier.resolveModel);
+  console.log(`[llm] classifier enabled (model=${config.llm.model})`);
+}
+
 productCache.rebuild(state, sourceLabelMap);
+
+// Gather every Blocket-used + buyable title and let the LLM classify the ones
+// the deterministic matcher missed, then rebuild so new comps/candidates fold in.
+// Bounded per run (config.llm.maxTitlesPerRun); runs out of band so it never
+// blocks scans or API requests. No-op when the classifier is disabled.
+async function enrichResaleModels(reason) {
+  if (!llmClassifier) return;
+  try {
+    const titles = Object.values(store.getState().items)
+      .filter(it => it && it.title)
+      .map(it => it.title);
+    const stats = await llmClassifier.enrich(titles);
+    if (stats.classified > 0 || stats.rejected > 0) {
+      productCache.rebuild(store.getState(), sourceLabelMap);
+      console.log(`[llm] resale enrichment (${reason}) applied: +${stats.classified} models, cache=${llmClassifier.size()}`);
+    }
+  } catch (err) {
+    console.warn(`[llm] enrichment failed: ${err.message}`);
+  }
+}
 
 // Wire store invalidation to rebuild cache on saves
 if (store.onInvalidate) {
   store.onInvalidate(() => productCache.rebuild(store.getState(), sourceLabelMap));
+}
+
+// Kick off a one-off resale enrichment of already-stored data at boot (non-blocking).
+if (llmClassifier) {
+  enrichResaleModels('boot').catch(() => {});
 }
 
 const configuredInterval = Number.isFinite(config.scanIntervalMinutes) && config.scanIntervalMinutes > 0 ? config.scanIntervalMinutes : 180;
@@ -338,6 +373,9 @@ async function triggerScan(trigger, options = {}) {
     };
 
     await store.save({ skipItems: true });
+    // Classify any new noisy titles this scan surfaced, out of band. Fire and
+    // forget so the scan returns promptly; results fold in on the next rebuild.
+    enrichResaleModels('post-scan').catch(() => {});
     return state.stats.lastRunSummary;
   } catch (error) {
     scanState.lastError = error.message;
