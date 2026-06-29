@@ -427,9 +427,11 @@ export function createLlmClassifier(opts = {}) {
           stats.rejected++;
         }
       }
+      // Persist after every batch so slow LOCAL runs (minutes per batch) survive a
+      // restart without losing all progress and re-classifying from scratch.
+      saveCache();
     }
 
-    saveCache();
     logger.log?.(`[llm] done: ${stats.classified} labelled, ${stats.rejected} rejected, ${stats.errors} errored`);
     return stats;
   }
