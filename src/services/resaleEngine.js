@@ -68,6 +68,38 @@ const ACCESSORY_PATTERN = new RegExp('\\b[a-z]*(?:' + [
 // Each returns { resaleKey, modelLabel } or null. demandCategory is attached
 // by the dispatcher below.
 
+// Indicators that a listing is a COMPLETE system / laptop rather than a bare
+// component. A bare GPU/CPU names only the part; a build/laptop names a chassis,
+// a CPU+GPU together, or a known laptop product line. Pricing a bare RTX 5070
+// against a whole gaming PC or a Lenovo Legion laptop produces large phantom
+// "profit", so such titles must NOT be keyed as the bare component.
+// NOTE: deliberately EXCLUDES 'rog'/'tuf'/'strix' etc. because those are also
+// desktop GPU board-partner lines (e.g. "ASUS TUF Gaming RTX 5070 Ti" is a card).
+const SYSTEM_OR_LAPTOP_PATTERN = new RegExp('\\b(?:' + [
+  // complete desktops / custom builds (Swedish + English)
+  'pc', 'dator', 'speldator', 'stationar', 'stationär', 'barebone', 'prebuilt',
+  'workstation', 'rig', 'bygge', 'bygget', 'byggd', 'bygga', 'komplett', 'moderkort',
+  // laptops (generic)
+  'laptop', 'barbar', 'bärbar', 'notebook', 'ultrabook', 'gaming laptop',
+  // laptop product lines (laptop-only — safe to reject)
+  'legion', 'predator', 'zephyrus', 'katana', 'raider', 'cyborg', 'thinkpad',
+  'ideapad', 'victus', 'omen', 'vivobook', 'zenbook', 'aspire', 'inspiron',
+  'latitude', 'probook', 'elitebook', 'pavilion', 'thinkbook', 'macbook'
+].join('|') + ')\\b');
+
+// Lightweight presence detectors (no model parsing) used to spot CPU+GPU bundles.
+const HAS_GPU_TOKEN = /\b(?:rtx|gtx)\s*\d{3,4}\b|\brx\s*\d{3,4}\b|\barc\s*[ab]\d{3}\b/;
+const HAS_CPU_TOKEN = /\bryzen\s*[3579]\s*\d{4}\b|\bi[3579]\s*\d{4,5}\b|\bcore\s*ultra\b/;
+
+// A bare component listing must not also look like a system/laptop, and must not
+// pair a CPU with a GPU (that is a build/bundle, not the bare part).
+function looksLikeBareComponent(norm, { partType }) {
+  if (SYSTEM_OR_LAPTOP_PATTERN.test(norm)) return false;
+  if (partType === 'gpu' && HAS_CPU_TOKEN.test(norm)) return false; // GPU + CPU → build
+  if (partType === 'cpu' && HAS_GPU_TOKEN.test(norm)) return false; // CPU + GPU → build
+  return true;
+}
+
 function matchIphone(norm) {
   if (!/\biphone\b/.test(norm)) return null;
   // Strip storage first so "128"/"256" can't be read as a model number, then
@@ -139,6 +171,9 @@ function matchAppleWatch(norm) {
 }
 
 function matchGpu(norm) {
+  // A bare graphics card only; reject whole PCs/laptops and CPU+GPU builds so a
+  // card is never priced against a complete system.
+  if (!looksLikeBareComponent(norm, { partType: 'gpu' })) return null;
   // NVIDIA GeForce RTX/GTX
   const rtx = norm.match(/\b(?:rtx|gtx)\s*(\d{3,4})\s*(ti\s*super|super|ti)?/);
   if (rtx) {
@@ -187,6 +222,8 @@ function matchHandheld(norm) {
 }
 
 function matchCpu(norm) {
+  // A bare processor only; reject whole PCs/laptops and CPU+GPU builds.
+  if (!looksLikeBareComponent(norm, { partType: 'cpu' })) return null;
   // AMD Ryzen — model number + optional X3D/X suffix is the price driver
   const ryzen = norm.match(/ryzen\s*([3579])\s*(\d{4})\s*(x3d|xt|x|g)?/);
   if (ryzen) {
@@ -244,6 +281,22 @@ export function extractResaleModel(title) {
  * @param {Array} usedItems items with condition 'used' (Blocket comps)
  * @returns {Map<string, object>}
  */
+/**
+ * Robust price bounds for a comp bucket using the median absolute deviation
+ * (MAD) — resists contamination from a whole-system / mispriced comp that slips
+ * past the structural (keyword) filters, so a bare-part median is not skewed.
+ * Returns [lo, hi]; a conservative 3.5·MAD window keeps normal variation intact.
+ */
+function robustPriceBounds(prices) {
+  if (prices.length < 4) return [-Infinity, Infinity]; // too few to estimate spread
+  const sorted = prices.slice().sort((a, b) => a - b);
+  const med = median(sorted);
+  const mad = median(sorted.map(p => Math.abs(p - med)).sort((a, b) => a - b));
+  if (!mad) return [-Infinity, Infinity]; // identical-ish prices → nothing to trim
+  const limit = 3.5 * mad;
+  return [med - limit, med + limit];
+}
+
 export function buildResaleIndex(usedItems) {
   const buckets = new Map();
 
@@ -259,21 +312,28 @@ export function buildResaleIndex(usedItems) {
         resaleKey: model.resaleKey,
         modelLabel: model.modelLabel,
         demandCategory: model.demandCategory,
-        prices: [],
-        samples: []
+        entries: [] // { price, title, url }
       };
       buckets.set(model.resaleKey, bucket);
     }
-    bucket.prices.push(price);
-    if (bucket.samples.length < 6) {
-      bucket.samples.push({ title: item.title, url: item.url ?? null, priceSek: Math.round(price) });
-    }
+    bucket.entries.push({ price, title: item.title, url: item.url ?? null });
   }
 
   const index = new Map();
   for (const bucket of buckets.values()) {
-    const sorted = bucket.prices.slice().sort((a, b) => a - b);
+    const allPrices = bucket.entries.map(e => e.price);
+    let [lo, hi] = robustPriceBounds(allPrices);
+    let kept = bucket.entries.filter(e => e.price >= lo && e.price <= hi);
+    if (kept.length < 3) kept = bucket.entries; // never trim below a usable sample size
+
+    const sorted = kept.map(e => e.price).sort((a, b) => a - b);
     const p25 = sorted[Math.floor((sorted.length - 1) * 0.25)];
+    const samples = kept
+      .slice()
+      .sort((a, b) => a.price - b.price)
+      .slice(0, 6)
+      .map(e => ({ title: e.title, url: e.url, priceSek: Math.round(e.price) }));
+
     index.set(bucket.resaleKey, {
       resaleKey: bucket.resaleKey,
       modelLabel: bucket.modelLabel,
@@ -283,7 +343,7 @@ export function buildResaleIndex(usedItems) {
       minSek: Math.round(sorted[0]),
       maxSek: Math.round(sorted[sorted.length - 1]),
       sampleCount: sorted.length,
-      samples: bucket.samples.sort((a, b) => a.priceSek - b.priceSek)
+      samples
     });
   }
   return index;

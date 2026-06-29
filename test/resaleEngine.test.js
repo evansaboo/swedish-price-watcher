@@ -69,6 +69,23 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('Tvättmaskin Samsung 8kg'), null);
     assert.equal(extractResaleModel('HDMI-kabel 2m'), null);
   });
+
+  it('does not key a whole gaming PC or laptop as a bare GPU', () => {
+    // Real production false positives that inflated GPU "profit".
+    assert.equal(extractResaleModel('Mini-ITX Gaming-PC – Fractal Terra, RTX 5070 Ti, Ryzen 7 9700X'), null);
+    assert.equal(extractResaleModel('Lenovo Legion Pro 5 – RTX 5070 Ti | Ultra 9 | OLED'), null);
+    assert.equal(extractResaleModel('Stationär speldator med RTX 4070 och i7-13700K'), null);
+    assert.equal(extractResaleModel('Säljer hela mitt bygge: RTX 4080, Ryzen 9 7900X'), null);
+    // …but a bare card (even with a board-partner TUF/ROG line) still matches.
+    assert.equal(extractResaleModel('ASUS TUF Gaming GeForce RTX 5070 Ti 16GB OC').resaleKey, 'rtx-5070-ti');
+    assert.equal(extractResaleModel('PNY GeForce RTX 5070 Ti 16GB grafikkort').resaleKey, 'rtx-5070-ti');
+  });
+
+  it('does not key a CPU+GPU build as a bare CPU', () => {
+    assert.equal(extractResaleModel('Gaming PC: Ryzen 7 7800X3D + RTX 4070'), null);
+    // …but a bare CPU still matches.
+    assert.equal(extractResaleModel('AMD Ryzen 7 7800X3D boxed').resaleKey, 'ryzen-7-7800x3d');
+  });
 });
 
 describe('buildResaleIndex', () => {
@@ -95,6 +112,22 @@ describe('buildResaleIndex', () => {
       { title: 'iPhone 15 Pro 256GB', latestPriceSek: 0 }
     ]);
     assert.equal(index.size, 0);
+  });
+
+  it('trims a gross high outlier so the median is not skewed', () => {
+    // Five bare-card comps clustered ~7000 plus one absurd 30000 outlier.
+    const index = buildResaleIndex([
+      { title: 'RTX 4070 Ti', latestPriceSek: 6800, url: 'a' },
+      { title: 'RTX 4070 Ti', latestPriceSek: 7000, url: 'b' },
+      { title: 'RTX 4070 Ti', latestPriceSek: 7100, url: 'c' },
+      { title: 'RTX 4070 Ti', latestPriceSek: 7300, url: 'd' },
+      { title: 'RTX 4070 Ti', latestPriceSek: 7500, url: 'e' },
+      { title: 'RTX 4070 Ti', latestPriceSek: 30000, url: 'f' }
+    ]);
+    const entry = index.get('rtx-4070-ti');
+    assert.equal(entry.sampleCount, 5, 'the 30000 outlier is trimmed');
+    assert.equal(entry.maxSek, 7500);
+    assert.ok(entry.medianSek <= 7300);
   });
 });
 
