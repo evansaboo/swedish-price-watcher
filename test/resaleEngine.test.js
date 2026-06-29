@@ -88,11 +88,19 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('Ubisoft PS5 Assassin’s Creed Shadows - 3307216258022'), null);
     assert.equal(extractResaleModel('Nintendo Switch 2 sökes'), null);
     assert.equal(extractResaleModel('PDP Nintendo Switch Airlite trådbundet gamingheadset'), null);
+    // "switch" alone must NOT match HDMI / network / KVM / dimmer / light switches.
+    assert.equal(extractResaleModel('Hama 3x1 4K HDMI-switch'), null);
+    assert.equal(extractResaleModel('D-Link 8-port Gigabit Unmanaged Desktop switch (dgs-108)'), null);
+    assert.equal(extractResaleModel('TP-Link Tapo S112 Smart Switch Module'), null);
+    assert.equal(extractResaleModel('KVM-switch med VGA och USB'), null);
+    assert.equal(extractResaleModel('Aqara Smart Wall Switch H1'), null);
     // …but real console / handheld HARDWARE still matches (incl. "spelkonsol").
     assert.equal(extractResaleModel('PlayStation 5 Slim').resaleKey, 'ps5-slim');
     assert.equal(extractResaleModel('Nintendo Switch 2 spelkonsol').resaleKey, 'nintendo-switch-2');
     assert.equal(extractResaleModel('Xbox Series X konsol').resaleKey, 'xbox-series-x');
     assert.equal(extractResaleModel('Nintendo Switch OLED Spelkonsol, vit').resaleKey, 'nintendo-switch-oled');
+    assert.equal(extractResaleModel('Switch OLED vit').resaleKey, 'nintendo-switch-oled');
+    assert.equal(extractResaleModel('Nintendo Switch Lite Korall').resaleKey, 'nintendo-switch-lite');
     assert.equal(extractResaleModel('ASUS ROG Ally 512 GB handhållen konsol').resaleKey, 'rog-ally');
     assert.equal(extractResaleModel('PlayStation 5 Slim Console – Ghost of Yotei Gold Limited Edition Bundle').resaleKey, 'ps5-slim');
   });

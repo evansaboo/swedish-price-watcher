@@ -297,7 +297,16 @@ function matchConsole(norm) {
 }
 
 function matchHandheld(norm) {
-  if (/nintendo\s*switch|\bswitch\b/.test(norm)) {
+  // "switch" alone is dangerously generic — HDMI/network/KVM/dimmer/light/Scart
+  // switches must NOT be keyed as a Nintendo Switch. Require Nintendo context or a
+  // Switch-console qualifier (model/variant/Joy-Con) before treating it as the console.
+  const isNintendoSwitch =
+    /nintendo\s*switch/.test(norm) ||
+    (/\bswitch\b/.test(norm) && (
+      /nintendo/.test(norm) ||
+      /switch\s*2\b|switch\s*(?:oled|lite)|\b(?:oled|lite)\s*switch|joy ?con|spelkonsol/.test(norm)
+    ));
+  if (isNintendoSwitch) {
     if (/\b2\b/.test(norm) && /switch\s*2/.test(norm)) return { resaleKey: 'nintendo-switch-2', modelLabel: 'Nintendo Switch 2' };
     if (/oled/.test(norm)) return { resaleKey: 'nintendo-switch-oled', modelLabel: 'Nintendo Switch OLED' };
     if (/lite/.test(norm)) return { resaleKey: 'nintendo-switch-lite', modelLabel: 'Nintendo Switch Lite' };
