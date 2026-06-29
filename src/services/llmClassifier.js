@@ -29,6 +29,11 @@ const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models
 // other category (Apple/GPU/CPU) is high-precision and bypasses the LLM entirely.
 const LOW_PRECISION_CATEGORIES = new Set(['Game consoles', 'Handhelds']);
 
+// Bump whenever the prompt / classification semantics change so stale on-disk
+// classifications from an older prompt are discarded and re-classified. (v2 made
+// the prompt game/peripheral-aware, fixing games mislabelled as the console.)
+const CACHE_VERSION = 2;
+
 // Cheap pre-filter: only titles that plausibly name a flip-relevant product are
 // ever sent to the LLM, so we never spend tokens on TVs, cables, fridges, etc.
 const RELEVANT_HINT = new RegExp(
@@ -133,6 +138,10 @@ export function createLlmClassifier(opts = {}) {
     try {
       if (!fs.existsSync(cacheFile)) return;
       const raw = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      if (raw?.version !== CACHE_VERSION) {
+        logger.log?.(`[llm] ignoring cache (version ${raw?.version} != ${CACHE_VERSION}); re-classifying with current prompt`);
+        return;
+      }
       const entries = raw?.entries ?? {};
       for (const [k, v] of Object.entries(entries)) {
         cache.set(k, v === null ? null : String(v));
@@ -148,7 +157,7 @@ export function createLlmClassifier(opts = {}) {
     try {
       const entries = {};
       for (const [k, v] of cache.entries()) entries[k] = v;
-      fs.writeFileSync(cacheFile, JSON.stringify({ version: 1, entries }, null, 0));
+      fs.writeFileSync(cacheFile, JSON.stringify({ version: CACHE_VERSION, entries }, null, 0));
     } catch (err) {
       logger.warn?.(`[llm] cache save failed: ${err.message}`);
     }
