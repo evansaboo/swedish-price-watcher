@@ -215,7 +215,7 @@ test('an older-version cache is migrated: high-precision kept, low-precision dro
 
   // The migrated cache is rewritten at the current version.
   const saved = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-  assert.equal(saved.version, 2);
+  assert.equal(saved.version, 3);
   assert.ok(!('nintendo lego marvel super heroes' in saved.entries));
 
   fs.rmSync(dir, { recursive: true, force: true });
