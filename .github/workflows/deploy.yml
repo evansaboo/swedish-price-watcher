@@ -13,11 +13,23 @@ jobs:
       - name: Trigger deploy webhook on Pi
         run: |
           echo "Triggering deploy on Pi via webhook..."
-          RESPONSE=$(curl -sf -X POST \
+          if [ -z "${{ secrets.DEPLOY_SECRET }}" ]; then
+            echo "❌ GitHub secret DEPLOY_SECRET is empty/unset. Set it with: gh secret set DEPLOY_SECRET"
+            exit 1
+          fi
+          # Capture body + status separately (do NOT use -f, which hides the body on 4xx/5xx)
+          HTTP_CODE=$(curl -s -o /tmp/deploy_body.txt -w "%{http_code}" -X POST \
             "https://deals.evansaboo.com/api/deploy?secret=${{ secrets.DEPLOY_SECRET }}" \
             --max-time 15 \
             -H "Content-Type: application/json")
-          echo "Response: $RESPONSE"
+          echo "HTTP $HTTP_CODE"
+          echo "Response: $(cat /tmp/deploy_body.txt)"
+          case "$HTTP_CODE" in
+            2*) echo "✅ Webhook accepted." ;;
+            401) echo "❌ 401 Unauthorized: the GitHub DEPLOY_SECRET does not match the Pi's DEPLOY_SECRET env var."; exit 1 ;;
+            501) echo "❌ 501: DEPLOY_SECRET is not configured on the Pi."; exit 1 ;;
+            *)   echo "❌ Unexpected HTTP $HTTP_CODE from deploy webhook."; exit 1 ;;
+          esac
 
       - name: Wait for Pi to restart and pass health check
         run: |
