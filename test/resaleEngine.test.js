@@ -36,6 +36,17 @@ describe('extractResaleModel', () => {
     assert.equal(m.resaleKey, 'iphone-14-base-128gb');
   });
 
+  it('rejects accessories so a case/charger is not priced as the device', () => {
+    // Real production false positive: a MacBook case keyed as a MacBook laptop.
+    assert.equal(extractResaleModel('dBramante Island MacBook Pro 14 (M3 Pro/Max) fodral (klar)'), null);
+    assert.equal(extractResaleModel('Apple iPhone 15 Pro Silikonskal MagSafe Svart'), null);
+    assert.equal(extractResaleModel('USB-C laddare till MacBook Pro 14 M3'), null);
+    assert.equal(extractResaleModel('Skärmskydd iPhone 15 Pro Max härdat glas'), null);
+    assert.equal(extractResaleModel('Sportband Apple Watch Series 9 45mm'), null);
+    // …but the genuine device still matches.
+    assert.equal(extractResaleModel('Apple iPhone 15 Pro 256GB Blå Titan').resaleKey, 'iphone-15-pro-256gb');
+  });
+
   it('keys MacBook by line + Apple silicon chip', () => {
     const m = extractResaleModel('MacBook Air M2 13" 8GB 256GB');
     assert.equal(m.resaleKey, 'macbook-air-m2');

@@ -17,11 +17,11 @@ jobs:
             echo "❌ GitHub secret DEPLOY_SECRET is empty/unset. Set it with: gh secret set DEPLOY_SECRET"
             exit 1
           fi
-          # Capture body + status separately (do NOT use -f, which hides the body on 4xx/5xx)
+          # Capture body + status separately (do NOT use -f, which hides the body on 4xx/5xx).
+          # No request body is sent, so don't set Content-Type: application/json (Fastify would 400 on empty body).
           HTTP_CODE=$(curl -s -o /tmp/deploy_body.txt -w "%{http_code}" -X POST \
             "https://deals.evansaboo.com/api/deploy?secret=${{ secrets.DEPLOY_SECRET }}" \
-            --max-time 15 \
-            -H "Content-Type: application/json")
+            --max-time 15)
           echo "HTTP $HTTP_CODE"
           echo "Response: $(cat /tmp/deploy_body.txt)"
           case "$HTTP_CODE" in

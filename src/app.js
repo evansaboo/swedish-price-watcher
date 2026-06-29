@@ -622,7 +622,10 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           { sha, shortSha, message, author, branch, deployedAt: new Date().toISOString() }, null, 2));
 
         console.log(`[deploy] restarting service (${shortSha})...`);
-        execSync('sudo systemctl restart swedish-price-watcher', { stdio: 'inherit' });
+        // --no-block: systemd enqueues the restart and returns immediately, so
+        // execSync exits 0 before this process is SIGTERM'd (avoids a misleading
+        // "Command failed" when the service restarts itself).
+        execSync('sudo systemctl restart --no-block swedish-price-watcher', { stdio: 'inherit' });
       } catch (err) {
         console.error('[deploy] Failed:', err.message);
       }

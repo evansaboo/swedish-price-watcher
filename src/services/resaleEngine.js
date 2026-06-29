@@ -43,6 +43,27 @@ function extractStorage(norm) {
   return null;
 }
 
+// Accessory / peripheral indicators. A "MacBook Pro 14 fodral" (case) or an
+// "iPhone 15 silikonskal" must NEVER be priced against the actual device — that
+// produces absurd "flips" (a 300 kr case vs a 21 000 kr laptop). If a title is
+// clearly an accessory FOR a device rather than the device itself, reject it.
+// Tokens are matched against the normalized (diacritic-stripped) title. In
+// Swedish the accessory noun is the LAST element of a compound ("silikonskal",
+// "läderfodral", "skärmskydd", "väggfäste", "billaddare"), so we suffix-match
+// (optional leading compound letters) rather than require a standalone word.
+const ACCESSORY_PATTERN = new RegExp('\\b[a-z]*(?:' + [
+  // cases / covers / protection
+  'fodral', 'skal', 'etui', 'skarmskydd', 'skyddsglas', 'skyddsfilm', 'skydd',
+  'protector', 'case', 'cover', 'sleeve', 'pouch', 'grip', 'skin',
+  'klistermarke', 'dekal', 'vaska', 'ryggsack',
+  // power / cabling / connectivity
+  'laddare', 'kabel', 'adapter', 'dongle', 'dockningsstation', 'docka', 'hubb',
+  // mounts / stands / peripherals
+  'stativ', 'hallare', 'faste', 'tangentbord', 'fjarrkontroll', 'pencil',
+  // wearables straps (Apple Watch etc.)
+  'armband', 'sportband', 'milanese'
+].join('|') + ')\\b');
+
 // ── Per-category extractors ────────────────────────────────────
 // Each returns { resaleKey, modelLabel } or null. demandCategory is attached
 // by the dispatcher below.
@@ -207,6 +228,8 @@ const EXTRACTORS = [
 export function extractResaleModel(title) {
   const norm = normalize(title);
   if (!norm) return null;
+  // Reject accessories outright so a case/charger/strap is never priced as the device.
+  if (ACCESSORY_PATTERN.test(norm)) return null;
   for (const [demandCategory, extractor] of EXTRACTORS) {
     const result = extractor(norm);
     if (result?.resaleKey) {
