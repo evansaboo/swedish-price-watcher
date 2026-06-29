@@ -119,6 +119,54 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('Intel Core i5-13600KF').resaleKey, 'intel-i5-13600kf');
   });
 
+  it('extracts Samsung Galaxy phones / tablets / watches', () => {
+    const s = extractResaleModel('Samsung Galaxy S22 256 GB, green');
+    assert.equal(s.resaleKey, 'galaxy-s22-base-256gb');
+    assert.equal(s.demandCategory, 'Samsung — Galaxy phone');
+    assert.equal(extractResaleModel('Samsung Galaxy S24 Ultra 512GB Titan').resaleKey, 'galaxy-s24-ultra-512gb');
+    assert.equal(extractResaleModel('Samsung Galaxy Z Flip5 256GB').resaleKey, 'galaxy-z-flip-5-256gb');
+    const tab = extractResaleModel('Samsung Galaxy Tab S7 128 GB WiFi Mystic Black');
+    assert.equal(tab.resaleKey, 'galaxy-tab-s7-128gb');
+    assert.equal(tab.demandCategory, 'Samsung — Galaxy Tab');
+    const watch = extractResaleModel('Samsung Galaxy Watch4 Classic 46 mm BT, silver');
+    assert.equal(watch.resaleKey, 'galaxy-watch-4-classic-46mm');
+    assert.equal(watch.demandCategory, 'Samsung — Galaxy Watch');
+  });
+
+  it('extracts Google Pixel phones', () => {
+    const p = extractResaleModel('Google Pixel 9 Pro XL 5G smartphone 16/128GB (Obsidian)');
+    assert.equal(p.resaleKey, 'pixel-9-pro-xl-128gb');
+    assert.equal(p.demandCategory, 'Google Pixel');
+    assert.equal(extractResaleModel('Google Pixel 8a 128GB').resaleKey, 'pixel-8-a-128gb');
+  });
+
+  it('extracts premium headphones (Sony / Bose)', () => {
+    const sony = extractResaleModel('Sony WH-1000XM4 trådlösa brusreducerande hörlurar, svart');
+    assert.equal(sony.resaleKey, 'sony-wh-1000xm4');
+    assert.equal(sony.demandCategory, 'Headphones');
+    assert.equal(extractResaleModel('Sony WF-1000XM5 in-ear').resaleKey, 'sony-wf-1000xm5');
+    assert.equal(extractResaleModel('Bose QuietComfort Ultra trådlösa hörlurar over-ear (svart)').resaleKey, 'bose-qc-ultra');
+  });
+
+  it('extracts Dyson vacuums and hair tools, rejecting parts', () => {
+    assert.equal(extractResaleModel('Dyson V10 Absolute (2022) skaftdammsugare').resaleKey, 'dyson-v10');
+    assert.equal(extractResaleModel('Dyson Airwrap Origin Multistyler (koppar)').resaleKey, 'dyson-airwrap');
+    assert.equal(extractResaleModel('Dyson V11 ersättningsfilter'), null);
+  });
+
+  it('extracts Meta Quest, rejecting straps', () => {
+    assert.equal(extractResaleModel('Meta Quest 3 128GB VR-headset').resaleKey, 'meta-quest-3-128gb');
+    assert.equal(extractResaleModel('Meta Quest 3S 256GB').resaleKey, 'meta-quest-3s-256gb');
+    assert.equal(extractResaleModel('Meta Quest 3 Elite-rem med batteri'), null);
+  });
+
+  it('extracts Apple Mac desktops by chip', () => {
+    const m = extractResaleModel('Mac mini M2 Pro 512GB');
+    assert.equal(m.resaleKey, 'mac-mini-m2-pro');
+    assert.equal(m.demandCategory, 'Apple — Mac desktop');
+    assert.equal(extractResaleModel('Apple Mac Studio M2 Max').resaleKey, 'mac-studio-m2-max');
+  });
+
   it('returns null for non-resale items', () => {
     assert.equal(extractResaleModel('Tvättmaskin Samsung 8kg'), null);
     assert.equal(extractResaleModel('HDMI-kabel 2m'), null);

@@ -367,13 +367,175 @@ function matchCpu(norm) {
   return null;
 }
 
+// ── Additional high-demand resale categories ───────────────────
+// All are HIGH-PRECISION (brand + model number are deterministic), so they
+// bypass the LLM gap-filler like the Apple/GPU/CPU extractors. Accessories
+// (cases, chargers, mounts, bands, screen protectors) are already rejected
+// globally by ACCESSORY_PATTERN / ACCESSORY_BRAND_PATTERN / REPAIR_OR_PARTS_PATTERN
+// before any extractor runs; a few category-specific peripherals (filters, straps)
+// are guarded inline below.
+const titleCase = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase());
+
+function matchSamsungGalaxyPhone(norm) {
+  if (!/\bgalaxy\b/.test(norm)) return null;
+  const storage = extractStorage(norm);
+  // Foldables: Galaxy Z Fold / Z Flip (optional generation).
+  const z = norm.match(/\bz\s*(fold|flip)\s*(\d{1,2})?/);
+  if (z) {
+    const gen = z[2] ?? '';
+    return {
+      resaleKey: `galaxy-z-${z[1]}${gen ? '-' + gen : ''}${storage ? '-' + storage : ''}`,
+      modelLabel: `Galaxy Z ${titleCase(z[1])}${gen ? ' ' + gen : ''}${storage ? ' ' + storage.toUpperCase() : ''}`
+    };
+  }
+  // Note series (older flagships, still high demand).
+  const note = norm.match(/\bnote\s*(\d{1,2})/);
+  if (note) {
+    const ultra = /\bultra\b/.test(norm) ? '-ultra' : '';
+    return {
+      resaleKey: `galaxy-note-${note[1]}${ultra}${storage ? '-' + storage : ''}`,
+      modelLabel: `Galaxy Note ${note[1]}${ultra ? ' Ultra' : ''}${storage ? ' ' + storage.toUpperCase() : ''}`
+    };
+  }
+  // S series: "galaxy s22", "galaxy s24 ultra", "galaxy s23 fe".
+  const s = norm.match(/galaxy\s*s\s*(\d{1,2})\b/);
+  if (s) {
+    const num = s[1];
+    const variant = /\bultra\b/.test(norm) ? 'ultra'
+      : /\bfe\b/.test(norm) ? 'fe'
+      : /\bplus\b/.test(norm) ? 'plus' : 'base';
+    const vLabel = variant === 'base' ? '' : ' ' + titleCase(variant === 'fe' ? 'FE' : variant);
+    return {
+      resaleKey: `galaxy-s${num}-${variant}${storage ? '-' + storage : ''}`,
+      modelLabel: `Galaxy S${num}${vLabel}${storage ? ' ' + storage.toUpperCase() : ''}`
+    };
+  }
+  return null;
+}
+
+function matchSamsungGalaxyTab(norm) {
+  const m = norm.match(/galaxy\s*tab\s*([sa])\s*(\d{1,2})\s*(ultra|plus|fe|lite)?/);
+  if (!m) return null;
+  const series = m[1].toUpperCase();
+  const num = m[2];
+  const variant = (m[3] ?? '').trim();
+  const storage = extractStorage(norm);
+  const vKey = variant ? '-' + variant : '';
+  return {
+    resaleKey: `galaxy-tab-${series.toLowerCase()}${num}${vKey}${storage ? '-' + storage : ''}`,
+    modelLabel: `Galaxy Tab ${series}${num}${variant ? ' ' + titleCase(variant) : ''}${storage ? ' ' + storage.toUpperCase() : ''}`
+  };
+}
+
+function matchSamsungGalaxyWatch(norm) {
+  if (!/galaxy\s*watch/.test(norm)) return null;
+  const size = norm.match(/\b(40|42|43|44|45|46|47)\s*mm\b/);
+  const sizeKey = size ? `-${size[1]}mm` : '';
+  const sizeLabel = size ? ` ${size[1]}mm` : '';
+  if (/\bultra\b/.test(norm)) {
+    return { resaleKey: `galaxy-watch-ultra${sizeKey}`, modelLabel: `Galaxy Watch Ultra${sizeLabel}` };
+  }
+  const m = norm.match(/galaxy\s*watch\s*(\d{1,2})?\s*(classic|active\s*2|active|pro|fe)?/);
+  const gen = m?.[1] ?? '';
+  const variant = (m?.[2] ?? '').replace(/\s+/g, ' ').trim();
+  const vKey = variant ? '-' + variant.replace(/\s+/g, '') : '';
+  return {
+    resaleKey: `galaxy-watch${gen ? '-' + gen : ''}${vKey}${sizeKey}`,
+    modelLabel: `Galaxy Watch${gen ? ' ' + gen : ''}${variant ? ' ' + titleCase(variant) : ''}${sizeLabel}`
+  };
+}
+
+function matchPixel(norm) {
+  const m = norm.match(/\bpixel\s*(\d{1,2})\s*(pro\s*xl|pro|xl|a)?/);
+  if (!m) return null;
+  const num = m[1];
+  const variant = (m[2] ?? '').replace(/\s+/g, ' ').trim();
+  const storage = extractStorage(norm);
+  const vKey = variant ? '-' + variant.replace(/\s+/g, '-') : '';
+  return {
+    resaleKey: `pixel-${num}${vKey}${storage ? '-' + storage : ''}`,
+    modelLabel: `Pixel ${num}${variant ? ' ' + titleCase(variant) : ''}${storage ? ' ' + storage.toUpperCase() : ''}`
+  };
+}
+
+function matchHeadphones(norm) {
+  // Sony WH-1000XM / WF-1000XM (over-ear / in-ear premium ANC).
+  const sony = norm.match(/\bw([hf])\s*1000\s*xm\s*(\d)\b/);
+  if (sony) {
+    const type = sony[1] === 'h' ? 'wh' : 'wf';
+    return { resaleKey: `sony-${type}-1000xm${sony[2]}`, modelLabel: `Sony ${type.toUpperCase()}-1000XM${sony[2]}` };
+  }
+  // Bose QuietComfort Ultra (headphones vs earbuds) and numbered QuietComfort.
+  if (/bose\s*(?:quietcomfort|qc)\s*ultra/.test(norm)) {
+    const earbuds = /earbud|in.?ear|oortelefoon|proppar/.test(norm) ? '-earbuds' : '';
+    return { resaleKey: `bose-qc-ultra${earbuds}`, modelLabel: `Bose QuietComfort Ultra${earbuds ? ' Earbuds' : ''}` };
+  }
+  const qc = norm.match(/bose\s*(?:quietcomfort|qc)\s*(\d{1,2})/);
+  if (qc) return { resaleKey: `bose-qc-${qc[1]}`, modelLabel: `Bose QuietComfort ${qc[1]}` };
+  return null;
+}
+
+function matchDyson(norm) {
+  if (!/\bdyson\b/.test(norm)) return null;
+  // Reject Dyson spare parts / accessories that share the model name.
+  if (/[a-z]*filter\b|munstycke|borste|borsthuvud|golvmunstycke|vaggfaste|vaggdocka|laddstation|dockningsstation|tillbehor|reservdel|\bbatteri\b|\bdok\b/.test(norm)) return null;
+  // Hair-care tools.
+  if (/airwrap/.test(norm)) return { resaleKey: 'dyson-airwrap', modelLabel: 'Dyson Airwrap' };
+  if (/supersonic/.test(norm)) return { resaleKey: 'dyson-supersonic', modelLabel: 'Dyson Supersonic' };
+  if (/corrale/.test(norm)) return { resaleKey: 'dyson-corrale', modelLabel: 'Dyson Corrale' };
+  if (/airstrait/.test(norm)) return { resaleKey: 'dyson-airstrait', modelLabel: 'Dyson Airstrait' };
+  // Cordless stick vacuums.
+  const v = norm.match(/\bv(7|8|10|11|12|15)\b/);
+  if (v) return { resaleKey: `dyson-v${v[1]}`, modelLabel: `Dyson V${v[1]}` };
+  if (/\bgen\s*5\b|\bgen5\b/.test(norm)) return { resaleKey: 'dyson-gen5', modelLabel: 'Dyson Gen5' };
+  return null;
+}
+
+function matchMetaQuest(norm) {
+  if (!/(?:meta|oculus)\s*quest|\bquest\s*[23]\b/.test(norm)) return null;
+  // Reject Quest straps / facial interfaces / controllers / lenses.
+  if (/elite.?rem|\brem\b|pannband|head\s*strap|\bstrap\b|controller|kontroller|\bgrepp|link\s*kabel|\bcable\b|ansikt|facial|interface|mask\b|granssnitt|vaddering|\btyg\b|overdrag|laddstation|laddningsstation|charge|\bstation\b|\bmount\b|lins(?:er)?\b|prescription|skyddsglas/.test(norm)) return null;
+  if (/quest\s*3s/.test(norm)) {
+    const storage = extractStorage(norm);
+    return { resaleKey: `meta-quest-3s${storage ? '-' + storage : ''}`, modelLabel: `Meta Quest 3S${storage ? ' ' + storage.toUpperCase() : ''}` };
+  }
+  const m = norm.match(/quest\s*(\d)/);
+  const gen = m ? m[1] : '';
+  const storage = extractStorage(norm);
+  return {
+    resaleKey: `meta-quest${gen ? '-' + gen : ''}${storage ? '-' + storage : ''}`,
+    modelLabel: `Meta Quest${gen ? ' ' + gen : ''}${storage ? ' ' + storage.toUpperCase() : ''}`
+  };
+}
+
+function matchMacDesktop(norm) {
+  // Apple silicon desktops: Mac mini, Mac Studio, iMac. Chip is the price driver.
+  let line = null;
+  if (/\bmac\s*mini\b/.test(norm)) line = { key: 'mac-mini', label: 'Mac mini' };
+  else if (/\bmac\s*studio\b/.test(norm)) line = { key: 'mac-studio', label: 'Mac Studio' };
+  else if (/\bimac\b/.test(norm)) line = { key: 'imac', label: 'iMac' };
+  if (!line) return null;
+  const chip = norm.match(/\bm([1-4])\s*(pro|max|ultra)?\b/);
+  const chipKey = chip ? `-m${chip[1]}${chip[2] ? '-' + chip[2] : ''}` : '';
+  const chipLabel = chip ? ` M${chip[1]}${chip[2] ? ' ' + titleCase(chip[2]) : ''}` : '';
+  return { resaleKey: `${line.key}${chipKey}`, modelLabel: `${line.label}${chipLabel}` };
+}
+
 // Ordered dispatch — most specific / least ambiguous first.
 const EXTRACTORS = [
   ['Apple — iPhone', matchIphone],
   ['Apple — iPad', matchIpad],
   ['Apple — MacBook', matchMacbook],
+  ['Apple — Mac desktop', matchMacDesktop],
   ['Apple — AirPods', matchAirpods],
   ['Apple — Watch', matchAppleWatch],
+  ['Samsung — Galaxy Tab', matchSamsungGalaxyTab],
+  ['Samsung — Galaxy Watch', matchSamsungGalaxyWatch],
+  ['Samsung — Galaxy phone', matchSamsungGalaxyPhone],
+  ['Google Pixel', matchPixel],
+  ['Headphones', matchHeadphones],
+  ['Dyson', matchDyson],
+  ['VR — Meta Quest', matchMetaQuest],
   ['Graphics cards', matchGpu],
   ['Game consoles', matchConsole],
   ['Handhelds', matchHandheld],
