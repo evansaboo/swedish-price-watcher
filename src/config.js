@@ -142,11 +142,15 @@ export async function loadConfig() {
     },
     llm: {
       enabled: (process.env.LLM_CLASSIFIER_ENABLED ?? 'true') !== 'false',
+      provider: (process.env.LLM_PROVIDER || 'gemini').toLowerCase(),
       apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
       model: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
+      ollamaUrl: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
+      ollamaModel: process.env.OLLAMA_MODEL || 'qwen2.5:3b',
       cacheFile: path.resolve(rootDir, process.env.LLM_CACHE_FILE ?? 'data/llm-model-cache.json'),
       batchSize: parsePositiveInt(process.env.LLM_BATCH_SIZE, 25),
       maxTitlesPerRun: parsePositiveInt(process.env.LLM_MAX_TITLES_PER_RUN, 400),
+      requestTimeoutMs: parsePositiveInt(process.env.LLM_REQUEST_TIMEOUT_MS, 30000),
       minRequestIntervalMs: parseNonNegativeInt(process.env.LLM_MIN_REQUEST_INTERVAL_MS, 6000)
     },
     sources: await loadSources(sourcesFile)

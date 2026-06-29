@@ -47,12 +47,13 @@ state.deals = computeDeals(state, config.thresholds);
 const productCache = new ProductCache(config.resale);
 const sourceLabelMap = new Map(config.sources.map(s => [s.id, s.label || s.id]));
 
-// Optional Gemini-backed resale-model resolver (deterministic-first, LLM gap-fill).
-// Null when no GEMINI_API_KEY / disabled — the deterministic matcher is used alone.
+// Optional LLM-backed resale-model resolver (deterministic-first, LLM gap-fill).
+// Provider is Gemini (hosted) or Ollama (local). Null when disabled / no Gemini
+// key — the deterministic matcher is then used alone.
 const llmClassifier = createLlmClassifier({ ...config.llm });
 if (llmClassifier) {
   productCache.setModelResolver(llmClassifier.resolveModel);
-  console.log(`[llm] classifier enabled (model=${config.llm.model})`);
+  console.log(`[llm] classifier enabled (provider=${llmClassifier.provider}, model=${llmClassifier.model})`);
 }
 
 productCache.rebuild(state, sourceLabelMap);

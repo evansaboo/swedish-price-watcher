@@ -1,9 +1,16 @@
 // ═══════════════════════════════════════════════════════════════
-// llmClassifier — hosted Gemini fallback for resale-model extraction
+// llmClassifier — LLM fallback for resale-model extraction
 // ───────────────────────────────────────────────────────────────
+// Supports two interchangeable providers, selected by `provider`:
+//   • 'gemini' — hosted Google Generative Language API (needs GEMINI_API_KEY;
+//                free tier is rate-limited to ~20 req/min, hence the pacing).
+//   • 'ollama' — a LOCAL model served by Ollama (e.g. on the Raspberry Pi).
+//                No API key, no cost, no rate limit. Slower per request, but the
+//                on-disk cache means each unique title is classified only once.
+//
 // The deterministic `extractResaleModel` matcher (resaleEngine.js) is the fast,
 // free, authoritative path. It is conservative: noisy Blocket titles it cannot
-// parse return null. This module recovers those by asking Gemini to CLEAN a
+// parse return null. This module recovers those by asking the LLM to CLEAN a
 // noisy title into a canonical product label — it never invents resale keys.
 //
 // Key-consistency invariant: the cleaned label is fed BACK through
@@ -31,8 +38,9 @@ const LOW_PRECISION_CATEGORIES = new Set(['Game consoles', 'Handhelds']);
 
 // Bump whenever the prompt / classification semantics change so stale on-disk
 // classifications from an older prompt are discarded and re-classified. (v2 made
-// the prompt game/peripheral-aware, fixing games mislabelled as the console.)
-const CACHE_VERSION = 2;
+// the prompt game/peripheral-aware; v3 added few-shot examples so small LOCAL
+// models reliably null named game titles like "Mario Kart" instead of echoing them.)
+const CACHE_VERSION = 3;
 
 // Cheap pre-filter: only titles that plausibly name a flip-relevant product are
 // ever sent to the LLM, so we never spend tokens on TVs, cables, fridges, etc.
@@ -57,10 +65,22 @@ const SYSTEM_INSTRUCTION =
   '"Steam Deck OLED 512GB", "AMD Ryzen 7 5800X3D", "AirPods Pro 2"). ' +
   'Return null (not a label) when the title is a WHOLE computer/laptop/prebuilt/gaming build (e.g. "gamingdator", "speldator", ' +
   '"nybyggd dator", a Lenovo Legion / ASUS ROG laptop, or a CPU+GPU bundle), an accessory (case/skal/fodral/charger/cable/strap/screen protector), ' +
-  'a VIDEO GAME or game disc/cartridge (e.g. "FIFA 23", "Elden Ring", "Mario Kart 8", "Dragons Dogma 2", "Funko Fusion" — software, not the console), ' +
+  'a VIDEO GAME or game disc/cartridge (software, not the console), ' +
   'a console PERIPHERAL (controller/handkontroll/gamepad/DualSense/Joy-Con/headset/racing wheel/charging dock/face-plate/memory card), ' +
   'broken / for-parts, or anything outside the listed categories. ' +
+  'CRITICAL: a named VIDEO GAME is software even when it names a console — if the title is a game TITLE/FRANCHISE ' +
+  '(e.g. Mario Kart, Zelda, Pokémon, Super Mario, FIFA / EA Sports FC, Call of Duty, Hogwarts Legacy, Elden Ring, ' +
+  'God of War, Spider-Man, Minecraft, Grand Theft Auto/GTA, Dragons Dogma, Funko Fusion), return null — NEVER echo it as the console. ' +
   'A real console listing names the HARDWARE itself (e.g. "PlayStation 5 Slim", "Xbox Series X konsol", "Nintendo Switch OLED spelkonsol"); a game or accessory merely mentions the platform. ' +
+  'Worked examples (input -> output): ' +
+  '"Mario Kart 8 Deluxe Nintendo Switch" -> null; ' +
+  '"EA Sports FC 25 spel till PlayStation 5" -> null; ' +
+  '"Sony DualSense handkontroll till PS5" -> null; ' +
+  '"Nintendo Switch OLED Joy-Con par" -> null; ' +
+  '"PlayStation 5 Slim Digital Edition konsol" -> "PlayStation 5 Digital"; ' +
+  '"Säljer min GeForce RTX 3070 Ti grafikkort fint skick" -> "RTX 3070 Ti"; ' +
+  '"Nybyggd gamingdator RTX 4070 Ti Ryzen 7 7800X3D" -> null; ' +
+  '"iPhone 13 Pro 128GB grafit med laddare" -> "iPhone 13 Pro 128GB". ' +
   'Respond ONLY with a JSON array, one element per input, in the same order.';
 
 const RESPONSE_SCHEMA = {
@@ -72,6 +92,21 @@ const RESPONSE_SCHEMA = {
       cleanLabel: { type: 'string', nullable: true }
     },
     required: ['index']
+  }
+};
+
+// Ollama structured-outputs schema. Ollama follows standard JSON Schema, so a
+// nullable field is expressed as a union type (not OpenAPI's `nullable`), and we
+// REQUIRE cleanLabel so small local models always emit it (null when rejected).
+const OLLAMA_FORMAT = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      index: { type: 'integer' },
+      cleanLabel: { type: ['string', 'null'] }
+    },
+    required: ['index', 'cleanLabel']
   }
 };
 
@@ -106,9 +141,12 @@ async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
  */
 export function createLlmClassifier(opts = {}) {
   const {
+    provider = 'gemini',
     apiKey = '',
     enabled = true,
     model = 'gemini-2.5-flash-lite',
+    ollamaUrl = 'http://127.0.0.1:11434',
+    ollamaModel = 'qwen2.5:3b',
     cacheFile = null,
     batchSize = 25,
     maxTitlesPerRun = 400,
@@ -121,7 +159,17 @@ export function createLlmClassifier(opts = {}) {
     logger = console
   } = opts;
 
-  if (!enabled || !apiKey || typeof fetchImpl !== 'function') return null;
+  const isOllama = provider === 'ollama';
+
+  if (!enabled || typeof fetchImpl !== 'function') return null;
+  // Gemini needs an API key; Ollama runs locally and needs none.
+  if (!isOllama && !apiKey) return null;
+
+  // Local models are slower per request but unmetered. Smaller batches keep their
+  // structured output reliable; a longer timeout absorbs CPU-only inference latency.
+  const effectiveBatchSize = isOllama ? Math.min(batchSize, 8) : batchSize;
+  const effectiveTimeoutMs = isOllama ? Math.max(requestTimeoutMs, 180000) : requestTimeoutMs;
+  const activeModel = isOllama ? ollamaModel : model;
 
   // normTitle -> string (clean label) | null (rejected). Absent = not yet seen.
   const cache = new Map();
@@ -270,6 +318,53 @@ export function createLlmClassifier(opts = {}) {
     throw lastErr ?? new Error('classification failed');
   }
 
+  // Local Ollama provider (OpenAI-free, no rate limit). Uses structured outputs
+  // (`format` schema) so even a small model returns valid JSON. Serialized by the
+  // Ollama server itself, so no client-side pacing is needed.
+  async function callOllama(titles) {
+    const numbered = titles.map((t, i) => `${i + 1}. ${t}`).join('\n');
+    const body = {
+      model: ollamaModel,
+      stream: false,
+      format: OLLAMA_FORMAT,
+      options: { temperature: 0 },
+      messages: [
+        { role: 'system', content: SYSTEM_INSTRUCTION },
+        { role: 'user', content: `Titles:\n${numbered}\n\nReturn a JSON array with one object {"index","cleanLabel"} per title, in order.` }
+      ]
+    };
+    const url = `${ollamaUrl.replace(/\/+$/, '')}/api/chat`;
+
+    let lastErr = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await fetchWithTimeout(fetchImpl, url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }, effectiveTimeoutMs);
+
+        if (!res.ok) {
+          lastErr = new Error(`HTTP ${res.status}`);
+          await new Promise(r => setTimeout(r, serverErrorBackoffMs * (attempt + 1)));
+          continue;
+        }
+        const data = await res.json();
+        const text = data?.message?.content;
+        if (!text) throw new Error('empty response');
+        const parsed = JSON.parse(text);
+        if (!Array.isArray(parsed)) throw new Error('response not an array');
+        return parsed;
+      } catch (err) {
+        lastErr = err;
+        if (err.name === 'AbortError') await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
+    throw lastErr ?? new Error('classification failed');
+  }
+
+  const callModel = isOllama ? callOllama : callGemini;
+
   async function enrich(titles) {
     // Coalesce concurrent runs: overlapping enrich loops (boot + post-scan) would
     // each pace independently and blow the provider's per-minute request cap.
@@ -301,13 +396,13 @@ export function createLlmClassifier(opts = {}) {
     }
     if (pending.length === 0) return stats;
 
-    logger.log?.(`[llm] classifying ${pending.length} new title(s) via ${model}`);
+    logger.log?.(`[llm] classifying ${pending.length} new title(s) via ${activeModel}`);
 
-    for (let i = 0; i < pending.length; i += batchSize) {
-      const batch = pending.slice(i, i + batchSize);
+    for (let i = 0; i < pending.length; i += effectiveBatchSize) {
+      const batch = pending.slice(i, i + effectiveBatchSize);
       let parsed;
       try {
-        parsed = await callGemini(batch);
+        parsed = await callModel(batch);
       } catch (err) {
         // Leave this batch uncached so it retries on a later run.
         stats.errors += batch.length;
@@ -339,5 +434,5 @@ export function createLlmClassifier(opts = {}) {
     return stats;
   }
 
-  return { resolveModel, getCleanLabel, enrich, size: () => cache.size };
+  return { resolveModel, getCleanLabel, enrich, size: () => cache.size, provider: isOllama ? 'ollama' : 'gemini', model: activeModel };
 }

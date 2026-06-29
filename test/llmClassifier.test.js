@@ -38,6 +38,41 @@ test('createLlmClassifier returns null without an api key or when disabled', () 
   assert.equal(createLlmClassifier({ apiKey: 'x', enabled: false }), null);
 });
 
+// Build a fake fetch returning an Ollama /api/chat-shaped response.
+function mockOllamaFetch(labelByTitle, { calls } = {}) {
+  return async (url, options) => {
+    assert.ok(String(url).endsWith('/api/chat'), 'ollama provider must hit /api/chat');
+    const body = JSON.parse(options.body);
+    assert.equal(body.stream, false);
+    assert.ok(body.format, 'ollama must request structured output');
+    const text = body.messages[1].content;
+    const titles = text.split('\n')
+      .map(l => l.replace(/^\d+\.\s/, ''))
+      .filter(l => l && l !== 'Titles:' && !/^Return a JSON/.test(l));
+    if (calls) calls.push(titles);
+    const arr = titles.map((t, i) => ({
+      index: i + 1,
+      cleanLabel: t in labelByTitle ? labelByTitle[t] : null
+    }));
+    return { ok: true, status: 200, async json() { return { message: { content: JSON.stringify(arr) } }; } };
+  };
+}
+
+test('ollama provider classifies via local /api/chat without an api key', async () => {
+  const calls = [];
+  const c = createLlmClassifier({
+    provider: 'ollama', ollamaModel: 'qwen2.5:3b',
+    fetchImpl: mockOllamaFetch({ 'Säljer min gamla GeForce 3060 Ti grafikkort fint skick': 'RTX 3060 Ti' }, { calls }),
+    logger: silentLogger
+  });
+  assert.ok(c, 'ollama classifier needs no api key');
+  assert.equal(c.provider, 'ollama');
+  await c.enrich(['Säljer min gamla GeForce 3060 Ti grafikkort fint skick']);
+  assert.equal(calls.length, 1, 'missed title must be sent to the local model');
+  const r = c.resolveModel('Säljer min gamla GeForce 3060 Ti grafikkort fint skick');
+  assert.equal(r.resaleKey, 'rtx-3060-ti');
+});
+
 test('isFlipRelevantTitle pre-filters to plausible flip products', () => {
   assert.equal(isFlipRelevantTitle('Nybyggd gamingdator RTX 5060 Ryzen 5'), true);
   assert.equal(isFlipRelevantTitle('iPhone 14 Pro 256GB'), true);
