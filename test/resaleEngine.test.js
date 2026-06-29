@@ -47,6 +47,18 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('Apple iPhone 15 Pro 256GB Blå Titan').resaleKey, 'iphone-15-pro-256gb');
   });
 
+  it('rejects repair services, spare parts, and for-parts listings', () => {
+    // Real production false positives that polluted iPhone comps/candidates.
+    assert.equal(extractResaleModel('Byt skärm på din iPhone X, XS, XR eller 11 – klart medan du väntar'), null);
+    assert.equal(extractResaleModel('Linocell Mobilplånbok för iPhone 11'), null);
+    assert.equal(extractResaleModel('Skärm till iPhone 11 original'), null);
+    assert.equal(extractResaleModel('Batteri till iPhone 12'), null);
+    assert.equal(extractResaleModel('iPhone 11 reparation skärmbyte'), null);
+    assert.equal(extractResaleModel('Trasig iPhone 11 för delar'), null);
+    // …but a genuine phone that merely mentions a new screen/battery stays in.
+    assert.equal(extractResaleModel('iPhone 11 , ny skärm och nytt batteri 100%. i fint skick').resaleKey, 'iphone-11-base');
+  });
+
   it('keys MacBook by line + Apple silicon chip', () => {
     const m = extractResaleModel('MacBook Air M2 13" 8GB 256GB');
     assert.equal(m.resaleKey, 'macbook-air-m2');

@@ -64,9 +64,27 @@ const ACCESSORY_PATTERN = new RegExp('\\b[a-z]*(?:' + [
   'laddare', 'kabel', 'adapter', 'dongle', 'dockningsstation', 'docka', 'hubb',
   // mounts / stands / peripherals
   'stativ', 'hallare', 'faste', 'tangentbord', 'fjarrkontroll', 'pencil',
+  // wallet / folio cases ("mobilplånbok", "plånboksfodral")
+  'planbok', 'holster', 'korthallare',
   // wearables straps (Apple Watch etc.)
   'armband', 'sportband', 'milanese'
 ].join('|') + ')\\b');
+
+// Repair/refurb SERVICES, spare PARTS, and broken / for-parts listings. These
+// are not the sellable device: "Byt skärm på din iPhone 11" (a screen-swap
+// service) or "Skärm till iPhone 11" (a part) must never be priced as a phone.
+// Tuned to be high-precision — a genuine phone described as having a "ny skärm
+// och nytt batteri" stays IN (we only match service verbs, "X till <device>"
+// part phrasing, and explicit broken/for-parts wording).
+const REPAIR_OR_PARTS_PATTERN = new RegExp([
+  '\\bbyt(?:er|a)?\\s+(?:skarm|batteri|glas|baksida|laddport)',
+  '\\bskarmbyte\\b', '\\bbatteribyte\\b', '\\bbyte av\\b',
+  '\\brepar(?:ation|ationer|era|erar|eras)\\b',
+  '\\bvi (?:lagar|byter|fixar|reparerar)\\b', '\\blagar din\\b', '\\bservice av\\b',
+  '\\b(?:skarm|batteri|baksida|baksideglas|laddport|moderkort|kretskort|flexkabel|laddkontakt)\\s+till\\b',
+  '\\breservdel', '\\btrasig\\b', '\\bdefekt\\b', '\\bfor delar\\b', '\\btill delar\\b',
+  '\\bfungerar ej\\b', '\\bspracka?d\\b'
+].join('|'));
 
 // ── Per-category extractors ────────────────────────────────────
 // Each returns { resaleKey, modelLabel } or null. demandCategory is attached
@@ -280,6 +298,8 @@ export function extractResaleModel(title) {
   if (!norm) return null;
   // Reject accessories outright so a case/charger/strap is never priced as the device.
   if (ACCESSORY_PATTERN.test(norm)) return null;
+  // Reject repair services, spare parts, and broken / for-parts listings.
+  if (REPAIR_OR_PARTS_PATTERN.test(norm)) return null;
   for (const [demandCategory, extractor] of EXTRACTORS) {
     const result = extractor(norm);
     if (result?.resaleKey) {
