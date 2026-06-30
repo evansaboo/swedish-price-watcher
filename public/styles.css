@@ -1761,6 +1761,52 @@ body.scanning { --scan-bar-height: 28px; }
 
 .modal-body { padding: 20px; }
 
+/* ── Flip insights modal ── */
+.modal-dialog-wide { max-width: 880px; }
+.fi-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.fi-total {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-sm);
+}
+.fi-total strong { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.fi-total span { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.3px; }
+.fi-section-title {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 18px 0 8px;
+  color: var(--text-secondary);
+}
+.fi-table-wrap { overflow-x: auto; }
+.fi-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fi-table th {
+  text-align: right;
+  padding: 6px 8px;
+  color: var(--text-tertiary);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-light);
+  white-space: nowrap;
+}
+.fi-table th:nth-child(1), .fi-table th:nth-child(2) { text-align: left; }
+.fi-table td { padding: 7px 8px; border-bottom: 1px solid var(--border-light); }
+.fi-rank { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.fi-label { font-weight: 600; color: var(--text-primary); }
+.fi-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fi-strong { font-weight: 700; color: var(--green, #16a34a); }
+.fi-best-cell { max-width: 240px; }
+.fi-best { color: var(--blue); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 240px; }
+.fi-best:hover { text-decoration: underline; }
+.fi-loading, .fi-empty { color: var(--text-tertiary); font-size: 13px; }
+
 .ph-chart-container { width: 100%; margin-bottom: 16px; }
 .ph-chart { width: 100%; height: auto; }
 .ph-chart .chart-label {

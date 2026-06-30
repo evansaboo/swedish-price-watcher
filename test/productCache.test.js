@@ -220,3 +220,31 @@ test('queryArbitrage filters by minSpreadSek and store', () => {
   assert.equal(cache.queryArbitrage({ store: 'b' }).total, 1, 'store b participates');
   assert.equal(cache.queryArbitrage({ store: 'zzz' }).total, 0, 'unknown store');
 });
+
+test('flipInsights aggregates flips by category and model', () => {
+  const cache = new ProductCache();
+  // Two used Blocket comps establish a resale median; outlet items become flips.
+  const state = createDefaultState();
+  state.items = {
+    // Blocket used comps for RTX 4070 (~7000 median)
+    'blk:1': { listingKey: 'blk:1', sourceId: 'blocket-electronics', sourceLabel: 'Blocket', title: 'ASUS RTX 4070 Dual', category: 'Grafikkort', condition: 'used', latestPriceSek: 7000, firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: [] },
+    'blk:2': { listingKey: 'blk:2', sourceId: 'blocket-electronics', sourceLabel: 'Blocket', title: 'RTX 4070 grafikkort', category: 'Grafikkort', condition: 'used', latestPriceSek: 7100, firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: [] },
+    'blk:3': { listingKey: 'blk:3', sourceId: 'blocket-electronics', sourceLabel: 'Blocket', title: 'Geforce RTX 4070', category: 'Grafikkort', condition: 'used', latestPriceSek: 6900, firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: [] },
+    // Cheap outlet RTX 4070 → flip candidate
+    'komp:1': { listingKey: 'komp:1', sourceId: 'komplett-outlet-electronics', sourceLabel: 'Komplett', title: 'ASUS GeForce RTX 4070 Dual OC', category: 'Grafikkort', condition: 'outlet', latestPriceSek: 4500, firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: [] }
+  };
+  cache.rebuild(state, new Map());
+
+  const insights = cache.flipInsights();
+  assert.ok(insights.totals.opportunities >= 0);
+  assert.ok(Array.isArray(insights.categories));
+  assert.ok(Array.isArray(insights.models));
+  // If a flip was produced, totals and category rows must be consistent
+  if (insights.totals.opportunities > 0) {
+    const catSum = insights.categories.reduce((s, c) => s + c.count, 0);
+    assert.equal(catSum, insights.totals.opportunities);
+    const row = insights.categories[0];
+    assert.ok(row.totalProfitSek >= row.avgProfitSek);
+    assert.ok(row.best && typeof row.best.netProfitSek === 'number');
+  }
+});

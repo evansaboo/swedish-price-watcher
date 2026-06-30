@@ -289,6 +289,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     });
   });
 
+  app.get('/api/flip-insights', async () => productCache.flipInsights());
+
   // ── CSV Export (same filters as /api/outlet-products) ──────────
   app.get('/api/export.csv', async (request, reply) => {
     const state = store.getState();

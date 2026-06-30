@@ -165,6 +165,7 @@
             <option value="buyPriceSek-asc">Buy price: low → high</option>
             <option value="sampleCount-desc">Most Blocket comps</option>
           </select>
+          <button type="button" id="flip-insights-btn" class="field-select" title="Demand leaderboard — where the resale money is" style="cursor:pointer;white-space:nowrap">📊 Insights</button>
         </div>
       </div>
     </nav>
@@ -330,6 +331,23 @@
         <div class="modal-body">
           <div id="ph-chart-container" class="ph-chart-container"></div>
           <div id="ph-stats" class="ph-stats"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== FLIP INSIGHTS MODAL ===== -->
+    <div id="flip-insights-modal" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-wide">
+        <div class="modal-header">
+          <h3>⚡ Flip Insights — demand leaderboard</h3>
+          <button id="fi-modal-close" type="button" class="modal-close" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="fi-totals" class="fi-totals"></div>
+          <h4 class="fi-section-title">By product category</h4>
+          <div id="fi-categories" class="fi-table-wrap"></div>
+          <h4 class="fi-section-title">Top resale models</h4>
+          <div id="fi-models" class="fi-table-wrap"></div>
         </div>
       </div>
     </div>

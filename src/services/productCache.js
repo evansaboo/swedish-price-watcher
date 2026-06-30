@@ -3,7 +3,7 @@
 // Rebuilt only on state mutation (after scan/save), not per-request.
 // ═══════════════════════════════════════════════════════════════
 
-import { firstFinite } from '../lib/utils.js';
+import { firstFinite, median } from '../lib/utils.js';
 import { buildIdentityGroups, computeArbitrage } from './dealEngine.js';
 import { buildResaleIndex, computeFlips, DEFAULT_RESALE_OPTIONS } from './resaleEngine.js';
 
@@ -432,6 +432,67 @@ export class ProductCache {
       ...c,
       favorite: favoriteCategorySet.has(c.key)
     }));
+  }
+
+  /**
+   * Aggregate flip opportunities into a demand leaderboard:
+   * per demand category and per resale model — counts, total/avg/median net
+   * profit, avg ROI, best opportunity. Powers the "Insights" panel so the user
+   * can see where the resale money concentrates.
+   */
+  flipInsights() {
+    const byCategory = new Map();
+    const byModel = new Map();
+
+    const bump = (map, key, label, flip) => {
+      let row = map.get(key);
+      if (!row) {
+        row = { key, label, count: 0, totalProfitSek: 0, profits: [], rois: [], bestProfitSek: 0, best: null };
+        map.set(key, row);
+      }
+      row.count++;
+      row.totalProfitSek += flip.netProfitSek;
+      row.profits.push(flip.netProfitSek);
+      row.rois.push(flip.roiPercent);
+      if (flip.netProfitSek > row.bestProfitSek) {
+        row.bestProfitSek = flip.netProfitSek;
+        row.best = { title: flip.title, sourceLabel: flip.sourceLabel, netProfitSek: flip.netProfitSek, roiPercent: flip.roiPercent, url: flip.url ?? null, listingKey: flip.listingKey };
+      }
+    };
+
+    for (const flip of this._flips) {
+      bump(byCategory, String(flip.demandCategory ?? 'Övrigt'), String(flip.demandCategory ?? 'Övrigt'), flip);
+      bump(byModel, String(flip.resaleKey ?? flip.modelLabel ?? flip.title), String(flip.modelLabel ?? flip.title), flip);
+    }
+
+    const finalize = (row) => ({
+      key: row.key,
+      label: row.label,
+      count: row.count,
+      totalProfitSek: Math.round(row.totalProfitSek),
+      avgProfitSek: row.count ? Math.round(row.totalProfitSek / row.count) : 0,
+      medianProfitSek: Math.round(median(row.profits) ?? 0),
+      avgRoiPercent: row.rois.length ? Math.round(row.rois.reduce((s, r) => s + r, 0) / row.rois.length) : 0,
+      bestProfitSek: Math.round(row.bestProfitSek),
+      best: row.best
+    });
+
+    const categories = [...byCategory.values()].map(finalize).sort((a, b) => b.totalProfitSek - a.totalProfitSek);
+    const models = [...byModel.values()].map(finalize).sort((a, b) => b.totalProfitSek - a.totalProfitSek).slice(0, 25);
+
+    const totalProfitSek = categories.reduce((s, c) => s + c.totalProfitSek, 0);
+    const totalCount = categories.reduce((s, c) => s + c.count, 0);
+
+    return {
+      categories,
+      models,
+      totals: {
+        opportunities: totalCount,
+        totalProfitSek: Math.round(totalProfitSek),
+        categoryCount: categories.length,
+        modelCount: byModel.size
+      }
+    };
   }
 
   /** Full filtered + sorted result set (no pagination) — used for CSV export. */

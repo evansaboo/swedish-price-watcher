@@ -1208,6 +1208,71 @@ function closePriceHistoryModal() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
+// ── FLIP INSIGHTS MODAL ─────────────────────────────────────────
+async function openFlipInsightsModal() {
+  const modal = document.getElementById('flip-insights-modal');
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+
+  const totalsEl = document.getElementById('fi-totals');
+  const catEl = document.getElementById('fi-categories');
+  const modelEl = document.getElementById('fi-models');
+  totalsEl.innerHTML = '<span class="fi-loading">Loading…</span>';
+  catEl.innerHTML = '';
+  modelEl.innerHTML = '';
+
+  try {
+    const data = await fetchJson('/api/flip-insights');
+    const t = data.totals ?? {};
+    totalsEl.innerHTML = [
+      [t.opportunities ?? 0, 'opportunities'],
+      [formatSek(t.totalProfitSek ?? 0), 'total potential profit'],
+      [t.categoryCount ?? 0, 'categories'],
+      [t.modelCount ?? 0, 'models']
+    ].map(([v, l]) => `<div class="fi-total"><strong>${escapeHtml(String(v))}</strong><span>${escapeHtml(l)}</span></div>`).join('');
+
+    catEl.innerHTML = renderInsightsTable(data.categories ?? [], 'Category');
+    modelEl.innerHTML = renderInsightsTable(data.models ?? [], 'Model');
+  } catch (err) {
+    totalsEl.innerHTML = `<span class="fi-loading">Failed to load insights: ${escapeHtml(err.message)}</span>`;
+  }
+}
+
+function renderInsightsTable(rows, firstColLabel) {
+  if (!rows.length) return '<p class="fi-empty">No flip opportunities yet — run a scan with Blocket/Tradera comps.</p>';
+  const body = rows.map((r, i) => {
+    const best = r.best
+      ? `<a class="fi-best" href="${r.best.url ? escapeHtml(r.best.url) : '#'}" target="_blank" rel="noreferrer" title="${escapeHtml(r.best.title)}">${escapeHtml(r.best.title.slice(0, 40))} · +${formatSek(r.best.netProfitSek)}</a>`
+      : '—';
+    return `
+      <tr>
+        <td class="fi-rank">${i + 1}</td>
+        <td class="fi-label">${escapeHtml(r.label)}</td>
+        <td class="fi-num">${r.count}</td>
+        <td class="fi-num fi-strong">${formatSek(r.totalProfitSek)}</td>
+        <td class="fi-num">${formatSek(r.avgProfitSek)}</td>
+        <td class="fi-num">${formatSek(r.medianProfitSek)}</td>
+        <td class="fi-num">${r.avgRoiPercent}%</td>
+        <td class="fi-best-cell">${best}</td>
+      </tr>`;
+  }).join('');
+  return `
+    <table class="fi-table">
+      <thead><tr>
+        <th>#</th><th>${escapeHtml(firstColLabel)}</th><th title="Number of flip opportunities">Count</th>
+        <th title="Sum of net profit across all opportunities">Total profit</th>
+        <th>Avg</th><th>Median</th><th>Avg ROI</th><th>Top opportunity</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+}
+
+function closeFlipInsightsModal() {
+  const modal = document.getElementById('flip-insights-modal');
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
 // ── RENDER: FILTERS ─────────────────────────────────────────────
 function renderCategoryFilter(categories) {
   if (state.category && !categories.some(c => c.key === state.category)) {
@@ -2124,6 +2189,8 @@ function bindEvents() {
       el.searchInput.focus();
     }
     if (e.key === 'Escape') {
+      const fiModal = document.getElementById('flip-insights-modal');
+      if (!fiModal.classList.contains('hidden')) { closeFlipInsightsModal(); return; }
       const phModal = document.getElementById('price-history-modal');
       if (!phModal.classList.contains('hidden')) { closePriceHistoryModal(); return; }
       if (!el.settingsDrawer.classList.contains('hidden')) closeDrawer();
@@ -2135,6 +2202,13 @@ function bindEvents() {
   document.getElementById('ph-modal-close')?.addEventListener('click', closePriceHistoryModal);
   document.getElementById('price-history-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'price-history-modal') closePriceHistoryModal();
+  });
+
+  // Flip insights modal
+  document.getElementById('flip-insights-btn')?.addEventListener('click', () => openFlipInsightsModal().catch(err => showToast(err.message, 'error')));
+  document.getElementById('fi-modal-close')?.addEventListener('click', closeFlipInsightsModal);
+  document.getElementById('flip-insights-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'flip-insights-modal') closeFlipInsightsModal();
   });
 }
 
