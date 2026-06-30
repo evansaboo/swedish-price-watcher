@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const supportedSourceTypes = new Set(['rss', 'html-page', 'html-list', 'komplett-category', 'komplett-sitemap', 'apify-elgiganten', 'apify-komplett', 'elgiganten-algolia', 'elgiganten-campaigns', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals', 'gg-deals-games', 'blocket', 'sweclockers-dagensfynd', 'inet-fyndhornan', 'kjell-outlet', 'dustin-fyndvaror', 'tradera-sold']);
+const supportedSourceTypes = new Set(['rss', 'komplett-category', 'apify-elgiganten', 'elgiganten-algolia', 'elgiganten-campaigns', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals', 'gg-deals-games', 'blocket', 'sweclockers-dagensfynd', 'inet-fyndhornan', 'kjell-outlet', 'dustin-fyndvaror', 'tradera-sold']);
 const supportedNotificationModes = new Set(['new-listings', 'favorite-events', 'none']);
 const isContainerRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.DOCKER === '1' || process.env.container);
 

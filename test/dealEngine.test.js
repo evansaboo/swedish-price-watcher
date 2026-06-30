@@ -19,7 +19,7 @@ test('flags a strong outlet deal as amazing', () => {
       {
         sourceId: 'store-a',
         sourceLabel: 'Store A',
-        sourceType: 'html-page',
+        sourceType: 'elgiganten-algolia',
         externalId: 'listing-a',
         productKey: 'sony-wh1000xm5',
         title: 'Sony WH-1000XM5 outlet',
@@ -37,7 +37,7 @@ test('flags a strong outlet deal as amazing', () => {
       {
         sourceId: 'store-b',
         sourceLabel: 'Store B',
-        sourceType: 'html-page',
+        sourceType: 'elgiganten-algolia',
         externalId: 'listing-b',
         productKey: 'sony-wh1000xm5',
         title: 'Sony WH-1000XM5 new',
@@ -73,7 +73,7 @@ test('does not flag a weak deal', () => {
       {
         sourceId: 'store-c',
         sourceLabel: 'Store C',
-        sourceType: 'html-page',
+        sourceType: 'elgiganten-algolia',
         externalId: 'listing-c',
         productKey: 'cheap-mouse',
         title: 'Cheap mouse',
