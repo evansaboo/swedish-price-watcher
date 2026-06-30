@@ -94,24 +94,28 @@ test('resolveModel prefers the deterministic matcher and never calls the LLM for
 
 test('enrich classifies missed titles and re-keys via the deterministic matcher', async () => {
   const labels = {
-    'Gamingdator – MSI RTX 5060 | Intel i5-11400F': null,            // whole build → reject
     'Säljer min gamla GeForce 3060 Ti grafikkort fint skick': 'RTX 3060 Ti'
   };
   const c = createLlmClassifier({
     apiKey: 'k', fetchImpl: mockFetch(labels), logger: silentLogger
   });
-  // A structural accessory is filtered out before the LLM (never sent/classified).
-  const titles = [...Object.keys(labels), 'Silikonskal iPhone 14'];
+  // A structural accessory and a whole build are both filtered out before the LLM
+  // (never sent/classified) — only the noisy bare-GPU title needs cleaning.
+  const titles = [
+    ...Object.keys(labels),
+    'Silikonskal iPhone 14',
+    'Gamingdator – MSI RTX 5060 | Intel i5-11400F'
+  ];
   const stats = await c.enrich(titles);
   assert.equal(stats.classified, 1);
-  assert.equal(stats.rejected, 1);
+  assert.equal(stats.rejected, 0);
 
   // The cleaned label is re-keyed through the deterministic matcher.
   const r = c.resolveModel('Säljer min gamla GeForce 3060 Ti grafikkort fint skick');
   assert.equal(r.resaleKey, 'rtx-3060-ti');
   assert.equal(r.demandCategory, 'Graphics cards');
 
-  // The build (LLM null) and the accessory (deterministic veto) both resolve null.
+  // The build (system veto) and the accessory (accessory veto) both resolve null.
   assert.equal(c.resolveModel('Gamingdator – MSI RTX 5060 | Intel i5-11400F'), null);
   assert.equal(c.resolveModel('Silikonskal iPhone 14'), null);
 });
@@ -158,6 +162,34 @@ test('a hallucinated whole-system label is still rejected by deterministic guard
   });
   await c.enrich(['Stökig gamingdator-annons RTX 4070']);
   assert.equal(c.resolveModel('Stökig gamingdator-annons RTX 4070'), null);
+});
+
+test('a build cleaned into a BARE card label is vetoed (build comp pollution fix)', async () => {
+  // The real failure mode: a small model strips a build/laptop down to a clean
+  // bare-card label ("RTX 5070") that DOES re-key to a bare card. The system/build
+  // veto must block it so whole-build prices never enter the bare-GPU comp index.
+  const calls = [];
+  const buildTitle = 'Gigabyte A16 gaming laptop 16" svart i7 16GB 1TB RTX 5070';
+  const c = createLlmClassifier({
+    apiKey: 'k',
+    fetchImpl: mockFetch({ [buildTitle]: 'RTX 5070' }, { calls }),
+    logger: silentLogger
+  });
+  // Build/laptop titles must never be sent to the LLM in the first place.
+  await c.enrich([buildTitle]);
+  assert.equal(calls.length, 0, 'system/build titles must be skipped before the LLM');
+
+  // Seed a stale "RTX 5070" cache label (as an older prompt could have produced)
+  // and prove resolveModel's veto — not an empty cache — is what blocks it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-build-veto-'));
+  const cacheFile = path.join(dir, 'cache.json');
+  fs.writeFileSync(cacheFile, JSON.stringify({
+    version: 3,
+    entries: { [cacheKeyForTitle(buildTitle)]: 'RTX 5070' }
+  }));
+  const seeded = createLlmClassifier({ apiKey: 'k', cacheFile, fetchImpl: mockFetch({}), logger: silentLogger });
+  assert.equal(seeded.getCleanLabel(buildTitle), 'RTX 5070', 'cache really holds the bad label');
+  assert.equal(seeded.resolveModel(buildTitle), null, 'veto blocks the stale bare-card label');
 });
 
 test('classifications persist to disk and reload', async () => {

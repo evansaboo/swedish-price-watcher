@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import {
   extractResaleModel,
   buildResaleIndex,
-  computeFlips
+  computeFlips,
+  looksLikeSystemOrBuild
 } from '../src/services/resaleEngine.js';
 
 describe('extractResaleModel', () => {
@@ -23,6 +24,14 @@ describe('extractResaleModel', () => {
       extractResaleModel('RTX 4070').resaleKey,
       extractResaleModel('RTX 4070 Ti').resaleKey
     );
+  });
+
+  it('rejects full builds / laptops so a bare-GPU bucket is not polluted', () => {
+    // Real comps that polluted the rtx-5070 bucket (median jumped to 11500 kr).
+    assert.equal(extractResaleModel('Gamingdator – RTX 5070 & Ryzen 7 9800X3D säljes.'), null);
+    assert.equal(extractResaleModel('Gigabyte A16 gaming laptop 16" svart i7 16GB 1TB RTX 5070'), null);
+    assert.equal(extractResaleModel('Lenovo LOQ 15IRX10 (RTX 5060) 15,6" bärbar gamingdator'), null);
+    assert.equal(extractResaleModel('Speldator: Ryzen 9800X3D, RTX 5070, 32GB DDR5'), null);
   });
 
   it('extracts iPhone model + variant + storage', () => {
@@ -313,5 +322,28 @@ describe('computeFlips', () => {
     );
     assert.equal(flips[0].listingKey, 'o:b');
     assert.ok(flips[0].netProfitSek > flips[1].netProfitSek);
+  });
+});
+
+describe('looksLikeSystemOrBuild', () => {
+  it('flags desktops, laptops, and CPU+GPU bundles', () => {
+    assert.equal(looksLikeSystemOrBuild('Gamingdator RTX 5070 Ryzen 7 9800X3D'), true);
+    assert.equal(looksLikeSystemOrBuild('Gigabyte A16 gaming laptop RTX 5070'), true);
+    assert.equal(looksLikeSystemOrBuild('ASUS Vivobook X1504 i3-1315U 8GB 128GB'), true);
+    assert.equal(looksLikeSystemOrBuild('Speldator: Ryzen 9800X3D, RTX 5070'), true);
+  });
+
+  it('does not flag a bare component', () => {
+    assert.equal(looksLikeSystemOrBuild('ASUS Dual GeForce RTX 5070 12GB GDDR7 OC grafikkort'), false);
+    assert.equal(looksLikeSystemOrBuild('AMD Ryzen 7 7800X3D processor'), false);
+  });
+
+  it('blocks a stale LLM build→bare-card label via the resolveModel veto', () => {
+    // Even if a cleaned "RTX 5070" label exists, a build title must stay null.
+    const buildTitle = 'Gamingdator – RTX 5070 & Ryzen 7 9800X3D säljes.';
+    assert.equal(extractResaleModel(buildTitle), null);
+    // The cleaned label on its own IS a bare card — proving the veto (not the
+    // matcher) is what protects the index when an LLM mislabels a build.
+    assert.equal(extractResaleModel('RTX 5070').resaleKey, 'rtx-5070');
   });
 });

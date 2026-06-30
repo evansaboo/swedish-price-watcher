@@ -585,6 +585,23 @@ export function looksLikeAccessoryOrRepair(title) {
 }
 
 /**
+ * True when a title describes a complete system / laptop / build rather than a
+ * bare component. Used to VETO LLM gap-fill recovery: small local models often
+ * "clean" a build title ("Gamingdator RTX 5070 Ryzen 7", "Gigabyte gaming laptop
+ * … RTX 5070") down to a bare-card label ("RTX 5070"), which would re-key as a
+ * bare GPU and pollute its comp index with whole-build prices. The deterministic
+ * build guard (looksLikeBareComponent) already rejects these, so the LLM must
+ * never override it. Mirrors looksLikeAccessoryOrRepair.
+ */
+export function looksLikeSystemOrBuild(title) {
+  const norm = normalize(title);
+  if (!norm) return false;
+  if (SYSTEM_OR_LAPTOP_PATTERN.test(norm)) return true;
+  if (HAS_GPU_TOKEN.test(norm) && HAS_CPU_TOKEN.test(norm)) return true; // CPU+GPU bundle
+  return false;
+}
+
+/**
  * Robust price bounds for a comp bucket using the median absolute deviation
  * (MAD) — resists contamination from a whole-system / mispriced comp that slips
  * past the structural (keyword) filters, so a bare-part median is not skewed.

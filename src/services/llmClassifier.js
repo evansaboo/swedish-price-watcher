@@ -25,7 +25,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import fs from 'node:fs';
-import { extractResaleModel, looksLikeAccessoryOrRepair } from './resaleEngine.js';
+import { extractResaleModel, looksLikeAccessoryOrRepair, looksLikeSystemOrBuild } from './resaleEngine.js';
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -255,6 +255,11 @@ export function createLlmClassifier(opts = {}) {
       // Veto: never let the LLM "recover" a structural accessory/repair title by
       // cleaning the accessory word away (e.g. "Swivel Case för iPad" → "iPad").
       if (looksLikeAccessoryOrRepair(title)) return null;
+      // Veto: never let the LLM "recover" a complete system/laptop/build into a
+      // bare component (e.g. "Gamingdator RTX 5070 Ryzen 7" → "RTX 5070"). Small
+      // local models routinely do this, which would pollute the bare-card comp
+      // index with whole-build prices. The deterministic build guard is authoritative.
+      if (looksLikeSystemOrBuild(title)) return null;
       return extractResaleModel(clean); // may still be null if it re-fails guards
     }
     return null;
@@ -386,6 +391,9 @@ export function createLlmClassifier(opts = {}) {
       // Never classify structural accessories/repairs — they are unambiguous and
       // must not be recoverable as the device, so there is nothing for the LLM to do.
       if (looksLikeAccessoryOrRepair(title)) continue;
+      // Never classify complete systems/laptops/builds — unambiguously not a bare
+      // component; sending them to a small model only risks hallucinated card labels.
+      if (looksLikeSystemOrBuild(title)) continue;
       // Skip titles the deterministic matcher already resolves to a HIGH-precision
       // category; low-precision console/handheld positives still need LLM review.
       const direct = extractResaleModel(title);
