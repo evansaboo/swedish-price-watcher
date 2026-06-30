@@ -583,9 +583,21 @@ function renderProducts(response) {
     // Reference price
     let refHtml = '';
     if (Number.isFinite(product.initialPriceSek) && product.initialPriceSek > product.currentPriceSek) {
+      const conf = product.referenceConfidence;
+      const refTitle = conf === 'verified'
+        ? 'Reference price corroborated by a catalog match, cross-store prices, or a historical low'
+        : conf === 'claimed'
+          ? 'Reference price reported by the store only — not independently confirmed'
+          : 'Reference price';
+      const verifiedMark = conf === 'verified'
+        ? '<span class="card-ref-verified" title="Verified reference price">✓</span>'
+        : conf === 'claimed'
+          ? '<span class="card-ref-claimed" title="Store-reported price, unconfirmed">?</span>'
+          : '';
       refHtml = `
-        <div class="card-price-ref">
+        <div class="card-price-ref" title="${escapeHtml(refTitle)}">
           <span class="card-price-was">${formatSek(product.initialPriceSek)}</span>
+          ${verifiedMark}
           ${Number.isFinite(product.discountSek) && product.discountSek > 0 ? `<span class="card-price-save">Save ${formatSek(product.discountSek)}</span>` : ''}
         </div>`;
     }

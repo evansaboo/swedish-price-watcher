@@ -864,6 +864,27 @@ body.scanning { --scan-bar-height: 28px; }
   font-weight: 600;
   color: var(--accent);
 }
+.card-ref-verified {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+  cursor: help;
+}
+.card-ref-claimed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  border: 1px solid var(--text-tertiary);
+  line-height: 1;
+  cursor: help;
+}
 
 /* Cross-store price comparison */
 .card-cross-store {

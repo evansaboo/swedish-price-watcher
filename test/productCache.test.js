@@ -248,3 +248,34 @@ test('flipInsights aggregates flips by category and model', () => {
     assert.ok(row.best && typeof row.best.netProfitSek === 'number');
   }
 });
+
+test('strips implausible reference prices and labels reference confidence', () => {
+  const state = createDefaultState();
+  state.items = {
+    // 95% implied discount — bad data (scaling/mismatch); reference must be dropped.
+    'src-a:bad': {
+      listingKey: 'src-a:bad', sourceId: 'src-a', sourceLabel: 'Store A', title: 'Mystery cable',
+      category: 'Tillbehör', condition: 'outlet', latestPriceSek: 50, referencePriceSek: 1000,
+      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
+    },
+    // Plausible single-source outlet reference — accepted but only "claimed".
+    'src-a:ok': {
+      listingKey: 'src-a:ok', sourceId: 'src-a', sourceLabel: 'Store A', title: 'Headset Pro',
+      category: 'Ljud', condition: 'outlet', latestPriceSek: 700, referencePriceSek: 1000,
+      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
+    }
+  };
+  const cache = new ProductCache();
+  cache.rebuild(state, new Map());
+  const result = cache.query({}, NO_FAVS, null, new Set());
+  const bad = result.items.find((p) => p.listingKey === 'src-a:bad');
+  const ok = result.items.find((p) => p.listingKey === 'src-a:ok');
+
+  assert.equal(bad.initialPriceSek, null, 'implausible reference is dropped');
+  assert.equal(bad.discountPercent, null);
+  assert.equal(bad.referenceConfidence, 'none');
+
+  assert.equal(ok.initialPriceSek, 1000, 'plausible reference is kept');
+  assert.equal(ok.discountPercent, 30);
+  assert.equal(ok.referenceConfidence, 'claimed');
+});

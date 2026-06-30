@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { firstFinite, median } from '../lib/utils.js';
+import { validateReferencePrice } from '../lib/referencePrice.js';
 import { buildIdentityGroups, computeArbitrage } from './dealEngine.js';
 import { buildResaleIndex, computeFlips, DEFAULT_RESALE_OPTIONS } from './resaleEngine.js';
 
@@ -92,7 +93,6 @@ export class ProductCache {
 
     // Build products
     const products = [];
-    const includedItems = []; // raw items parallel to products — for identity grouping
     const searchIndex = [];
     const byCategory = new Map();
     const byStore = new Map();
@@ -101,14 +101,40 @@ export class ProductCache {
     const sourceMap = new Map();
     const campaignSet = new Set();
 
-    for (const item of Object.values(items)) {
-      if (!['outlet', 'digital', 'deal', 'used'].includes(item.condition)) continue;
-      // Sold comps (e.g. Tradera ended auctions) feed the resale index but are not
-      // buyable, so keep them out of the product grid.
-      if (item.soldComp || item.availability === 'sold') continue;
-      if (!Number.isFinite(item.latestPriceSek)) continue;
+    // Buyable items only — precompute identity groups once so we can both
+    // validate reference prices against genuine cross-store peers and annotate
+    // cross-store pricing below without grouping twice.
+    const buyableItems = Object.values(items).filter(
+      (item) =>
+        ['outlet', 'digital', 'deal', 'used'].includes(item.condition) &&
+        !item.soldComp &&
+        item.availability !== 'sold' &&
+        Number.isFinite(item.latestPriceSek)
+    );
+    const identityGroups = [...buildIdentityGroups(buyableItems).values()];
+    const peerStatsByKey = new Map();
+    for (const group of identityGroups) {
+      const prices = group.map((i) => i.latestPriceSek).filter((v) => Number.isFinite(v));
+      if (!prices.length) continue;
+      const stat = { median: median(prices), count: prices.length };
+      for (const i of group) peerStatsByKey.set(i.listingKey, stat);
+    }
 
-      const initialPriceSek = firstFinite(item.referencePriceSek, item.marketValueSek);
+    for (const item of buyableItems) {
+      const sourceReference = firstFinite(item.referencePriceSek, item.marketValueSek);
+      const peer = peerStatsByKey.get(item.listingKey);
+      const atHistoricalLow =
+        Number.isFinite(item.lowestPriceSek) &&
+        item.latestPriceSek <= Math.round(item.lowestPriceSek * 1.02);
+      const { trustedReference, confidence: referenceConfidence } = validateReferencePrice({
+        sourceReference,
+        currentPriceSek: item.latestPriceSek,
+        peerMedian: peer?.median ?? null,
+        peerCount: peer?.count ?? 0,
+        hasCatalogMatch: Boolean(item.referenceMatchType || item.referenceTitle),
+        atHistoricalLow
+      });
+      const initialPriceSek = Number.isFinite(trustedReference) ? trustedReference : null;
       const discountSek = Number.isFinite(initialPriceSek)
         ? Math.max(0, initialPriceSek - item.latestPriceSek)
         : null;
@@ -131,6 +157,7 @@ export class ProductCache {
         discountSek,
         discountPercent,
         referenceMatched: Number.isFinite(initialPriceSek),
+        referenceConfidence,
         referenceMatchType: item.referenceMatchType ?? null,
         referenceTitle: item.referenceTitle ?? null,
         referenceUrl: item.referenceUrl ?? null,
@@ -150,7 +177,6 @@ export class ProductCache {
 
       const idx = products.length;
       products.push(product);
-      includedItems.push(item);
 
       // Pre-compute search text
       const searchText = normalizeForSearch(
@@ -194,7 +220,7 @@ export class ProductCache {
     // Products sharing a GTIN / manufacturer part number / productKey across
     // at least two stores get cheapest-store info for the card UI.
     const productByListingKey = new Map(products.map((p) => [p.listingKey, p]));
-    for (const group of buildIdentityGroups(includedItems).values()) {
+    for (const group of identityGroups) {
       if (group.length < 2) continue;
       const groupProducts = group.map((item) => productByListingKey.get(item.listingKey)).filter(Boolean);
       const distinctSources = new Set(groupProducts.map((p) => p.sourceId));
@@ -218,7 +244,7 @@ export class ProductCache {
     // ── Retail arbitrage view ────────────────────────────────────
     // Same product across 2+ stores with a real price spread — buy cheap, the
     // dearer store's price is the arbitrage headroom.
-    this._arbitrage = computeArbitrage(includedItems, productByListingKey);
+    this._arbitrage = computeArbitrage(buyableItems, productByListingKey);
     this._arbitrageStores = (() => {
       const map = new Map();
       for (const a of this._arbitrage) {

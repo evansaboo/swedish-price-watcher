@@ -1,4 +1,5 @@
 import { buildListingKey, clamp, firstFinite, formatSek, median } from '../lib/utils.js';
+import { validateReferencePrice } from '../lib/referencePrice.js';
 
 function isGenericCategoryLabel(category) {
   const normalized = String(category ?? '').trim().toLowerCase();
@@ -342,21 +343,40 @@ export function computeDeals(state, thresholds) {
     const stats = {
       currentMedian: median(peerCurrentPrices),
       historyMedian: median(historyPrices(peers)),
-      bestCurrentSek: peerCurrentPrices.length ? Math.min(...peerCurrentPrices) : null
+      bestCurrentSek: peerCurrentPrices.length ? Math.min(...peerCurrentPrices) : null,
+      count: peerCurrentPrices.length
     };
     for (const peer of peers) statsByListingKey.set(peer.listingKey, stats);
   }
 
   return items
     .map((item) => {
-      const stats = statsByListingKey.get(item.listingKey) ?? { currentMedian: null, historyMedian: null, bestCurrentSek: null };
+      const stats = statsByListingKey.get(item.listingKey) ?? { currentMedian: null, historyMedian: null, bestCurrentSek: null, count: 0 };
+      const atHistoricalLow =
+        Number.isFinite(item.lowestPriceSek) && item.latestPriceSek <= Math.round(item.lowestPriceSek * 1.02);
+      // Validate the source-provided reference before trusting it for discount
+      // math — rejects scaling errors and inflated campaign "before" prices.
+      const sourceReference = firstFinite(item.marketValueSek, item.referencePriceSek);
+      const { trustedReference, confidence } = validateReferencePrice({
+        sourceReference,
+        currentPriceSek: item.latestPriceSek,
+        peerMedian: firstFinite(stats.currentMedian, stats.historyMedian),
+        peerCount: stats.count,
+        hasCatalogMatch: Boolean(item.referenceMatchType || item.referenceTitle),
+        atHistoricalLow
+      });
       const comparisonPriceSek = firstFinite(
-        item.marketValueSek,
-        item.referencePriceSek,
+        trustedReference,
         stats.currentMedian,
         stats.historyMedian,
         item.latestPriceSek
       );
+      // When no source reference survived but a cross-store median sits above the
+      // buy price, the discount is an estimate rather than a verified/claimed one.
+      let referenceConfidence = confidence;
+      if (referenceConfidence === 'none' && comparisonPriceSek > item.latestPriceSek) {
+        referenceConfidence = 'estimated';
+      }
       const bestCurrentSek = stats.bestCurrentSek ?? item.latestPriceSek;
       const estimatedPrivateSaleSek =
         item.resaleEstimateSek ?? Math.round(comparisonPriceSek * resaleFactorForCondition(item.condition));
@@ -364,8 +384,6 @@ export function computeDeals(state, thresholds) {
       const profitSek = estimatedPrivateSaleSek - totalCostSek;
       const discountPercent =
         comparisonPriceSek > 0 ? Math.round(((comparisonPriceSek - item.latestPriceSek) / comparisonPriceSek) * 100) : 0;
-      const atHistoricalLow =
-        Number.isFinite(item.lowestPriceSek) && item.latestPriceSek <= Math.round(item.lowestPriceSek * 1.02);
       const bestCurrent = item.latestPriceSek <= bestCurrentSek;
 
       let score = 0;
@@ -421,6 +439,7 @@ export function computeDeals(state, thresholds) {
         feesEstimateSek: item.feesEstimateSek ?? 0,
         totalCostSek,
         comparisonPriceSek,
+        referenceConfidence,
         referenceUrl: item.referenceUrl ?? null,
         referenceTitle: item.referenceTitle ?? null,
         referenceSourceLabel: item.referenceSourceLabel ?? null,
