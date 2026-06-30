@@ -7,8 +7,13 @@
       "label": "Elgiganten Weekly Deals",
       "category": "electronics",
       "condition": "deal",
-      "campaignTypes": ["W", "S"],
-      "campaignIds": ["SSA2617S03"],
+      "campaignTypes": [
+        "W",
+        "S"
+      ],
+      "campaignIds": [
+        "SSA2617S03"
+      ],
       "minDiscountPct": 10,
       "maxProducts": 5000,
       "scanIntervalMinutes": 60,
@@ -156,7 +161,11 @@
       "apiTokenEnvVar": "GG_DEALS_API_KEY",
       "region": "se",
       "scanIntervalMinutes": 120,
-      "platforms": ["steam", "ps5", "xbox-series-x"],
+      "platforms": [
+        "steam",
+        "ps5",
+        "xbox-series-x"
+      ],
       "discoverPages": 10,
       "discoverIntervalHours": 168,
       "maxGamesPerScan": 500,
@@ -199,6 +208,17 @@
         "datorkomponenter"
       ],
       "notes": "Uses Blocket's internal BFF JSON API (no auth required). Searches for electronics keywords and paginates up to maxPagesPerKeyword pages each. ~53 results per page. Good for spotting resale deals on second-hand Swedish electronics."
+    },
+    {
+      "id": "tradera-sold",
+      "type": "tradera-sold",
+      "enabled": true,
+      "label": "Tradera (sålda auktioner)",
+      "category": "electronics",
+      "condition": "used",
+      "maxPagesPerKeyword": 2,
+      "maxProducts": 1500,
+      "notes": "Scrapes Tradera ended-auction (itemStatus=Ended) search HTML for high-demand resale models. Displayed prices are realized winning bids = actual sold prices, which feed the resale comp index (condition used, availability sold) for far more accurate flip valuations. Sold comps never appear in the buyable products grid."
     },
     {
       "id": "approved-rss-feed",
@@ -252,7 +272,9 @@
       "label": "Dustin Fyndvaror",
       "category": "electronics",
       "condition": "outlet",
-      "listPaths": ["/group/ovrigt/fyndvaror"],
+      "listPaths": [
+        "/group/ovrigt/fyndvaror"
+      ],
       "maxPages": 10,
       "pageDelayMs": 2000,
       "requireTitlePattern": "fyndvara",

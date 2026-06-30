@@ -100,6 +100,9 @@ export class ProductCache {
 
     for (const item of Object.values(items)) {
       if (!['outlet', 'digital', 'deal', 'used'].includes(item.condition)) continue;
+      // Sold comps (e.g. Tradera ended auctions) feed the resale index but are not
+      // buyable, so keep them out of the product grid.
+      if (item.soldComp || item.availability === 'sold') continue;
       if (!Number.isFinite(item.latestPriceSek)) continue;
 
       const initialPriceSek = firstFinite(item.referencePriceSek, item.marketValueSek);
