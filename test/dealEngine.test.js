@@ -342,3 +342,17 @@ test('computeArbitrage excludes same-retailer feeds (e.g. elgiganten-outlet vs e
   ]);
   assert.deepEqual(computeArbitrage(items, productByListingKey), [], 'same retailer is not cross-store arbitrage');
 });
+
+test('computeArbitrage excludes used-marketplace listings (Blocket) from retail arbitrage', async () => {
+  const { computeArbitrage } = await import('../src/services/dealEngine.js');
+  const items = [
+    { listingKey: 'blocket:1', productKey: 'iphone-15-128', gtin: '1940000000001' },
+    { listingKey: 'power:1', productKey: 'iphone-15-128', gtin: '1940000000001' }
+  ];
+  const productByListingKey = new Map([
+    ['blocket:1', { listingKey: 'blocket:1', title: 'iPhone 15 128GB', category: 'Mobil', sourceId: 'blocket-electronics', sourceLabel: 'Blocket', currentPriceSek: 4500, url: 'u1', condition: 'used' }],
+    ['power:1', { listingKey: 'power:1', title: 'Apple iPhone 15 128 GB', category: 'Mobil', sourceId: 'power-deals', sourceLabel: 'Power Outlet', currentPriceSek: 7587, url: 'u2', condition: 'outlet' }]
+  ]);
+  // Only one non-used retailer remains → not an arbitrage opportunity.
+  assert.deepEqual(computeArbitrage(items, productByListingKey), []);
+});

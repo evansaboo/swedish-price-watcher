@@ -141,6 +141,10 @@ export function computeArbitrage(items, productByListingKey, options = {}) {
     for (const item of group) {
       const product = productByListingKey.get(item.listingKey);
       if (!product || !Number.isFinite(product.currentPriceSek)) continue;
+      // Retail arbitrage compares like-for-like retail stock. Used-marketplace
+      // listings (Blocket) are cheaper *because* they're used — that's a Flip
+      // signal, not arbitrage — so keep them out of this view.
+      if (product.condition === 'used') continue;
       const retailer = retailerKey(product.sourceId);
       const existing = bestPerRetailer.get(retailer);
       if (!existing || product.currentPriceSek < existing.currentPriceSek) {
