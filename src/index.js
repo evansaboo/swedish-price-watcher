@@ -205,12 +205,17 @@ async function triggerScan(trigger, options = {}) {
 
   async function flushPending() {
     if (!dirtySinceRecompute) return;
+    const t0 = Date.now();
     state.deals = computeDeals(state, config.thresholds);
     productCache.rebuild(state, sourceLabelMap);
+    const recomputeMs = Date.now() - t0;
     lastHeavyRecomputeAt = Date.now();
     dirtySinceRecompute = false;
 
     const batch = pendingNotify.splice(0);
+    if (batch.length > 0) {
+      console.log(`[scan] Coalesced recompute ${recomputeMs}ms for ${batch.length} source(s): ${batch.map((c) => c.source.id).join(', ')}`);
+    }
     for (const ctx of batch) {
       if (ctx.skipDiscordNotifications) {
         if (ctx.isFirstSuccessfulRun) console.log(`[${ctx.source.id}] Skipping Discord notifications on first successful run.`);
