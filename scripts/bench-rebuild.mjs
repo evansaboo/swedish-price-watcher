@@ -1,3 +1,7 @@
+// Perf-regression bench for the per-source scan recompute.
+// Measures computeDeals + productCache.rebuild over the live store so we can
+// track the event-loop cost that a scan incurs after each source.
+//   Usage (on a host with data/store.db):  node scripts/bench-rebuild.mjs
 import process from 'node:process';
 import { SqliteStore } from '../src/lib/store.js';
 import { loadConfig } from '../src/config.js';
