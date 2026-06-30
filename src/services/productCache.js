@@ -65,6 +65,7 @@ export class ProductCache {
     this._arbitrageStores = [];   // Unique stores appearing in arbitrage offers
     this._resaleOptions = { ...DEFAULT_RESALE_OPTIONS, ...resaleOptions };
     this._resolveModel = null;    // optional LLM-backed resolver (set via setModelResolver)
+    this._searchTextCache = new Map(); // input string → normalized search text (stable across rebuilds)
     this._version = 0;            // Incremented on rebuild
   }
 
@@ -178,10 +179,16 @@ export class ProductCache {
       const idx = products.length;
       products.push(product);
 
-      // Pre-compute search text
-      const searchText = normalizeForSearch(
-        [item.title, item.category, item.sourceLabel].filter(Boolean).join(' ')
-      );
+      // Pre-compute search text. normalizeForSearch is NFKD + Unicode-regex heavy
+      // (~400ms over 27k items) but its inputs are stable across rebuilds, so cache
+      // the normalized result by the (cheap) concatenated input string.
+      const searchInput = [item.title, item.category, item.sourceLabel].filter(Boolean).join(' ');
+      let searchText = this._searchTextCache.get(searchInput);
+      if (searchText === undefined) {
+        searchText = normalizeForSearch(searchInput);
+        if (this._searchTextCache.size > 100000) this._searchTextCache.clear();
+        this._searchTextCache.set(searchInput, searchText);
+      }
       searchIndex.push(searchText);
 
       // Index by category

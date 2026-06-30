@@ -636,7 +636,24 @@ const EXTRACTORS = [
  * Extract a canonical resale model signature from a product title.
  * @returns {{ resaleKey: string, modelLabel: string, demandCategory: string } | null}
  */
+// Memoized: extractResaleModel is a pure function of the title (only module-level
+// constant regexes / pure helpers), but it's regex-heavy and runs over every flip
+// candidate (~25k) on every product-cache rebuild. Cache by title so repeated
+// rebuilds reuse the result instead of re-running the extractors each time.
+const _resaleModelMemo = new Map();
+
 export function extractResaleModel(title) {
+  const key = String(title ?? '');
+  const cached = _resaleModelMemo.get(key);
+  if (cached !== undefined) return cached;
+  const result = extractResaleModelImpl(key);
+  // Bound memory on very long-lived processes; titles churn slowly so this is rare.
+  if (_resaleModelMemo.size > 100000) _resaleModelMemo.clear();
+  _resaleModelMemo.set(key, result);
+  return result;
+}
+
+function extractResaleModelImpl(title) {
   const norm = normalize(title);
   if (!norm) return null;
   // Reject accessories outright so a case/charger/strap is never priced as the device.
