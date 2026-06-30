@@ -429,41 +429,59 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   app.put('/api/notification-settings', async (request, reply) => {
     const body = request.body ?? {};
     const state = store.getState();
-    const notificationsEnabled = body.notificationsEnabled !== false;
+    const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
+    const existing = state.preferences?.notificationSettings ?? {};
 
-    const alertRules = Array.isArray(body.alertRules)
-      ? body.alertRules.map(r => {
-          const keywords = (Array.isArray(r.keywords) ? r.keywords : []).filter(k => typeof k === 'string' && k.trim()).map(k => k.trim());
-          const categories = (Array.isArray(r.categories) ? r.categories : []).filter(c => typeof c === 'string' && c.trim()).map(c => c.trim());
-          const webhooks = (Array.isArray(r.webhooks) ? r.webhooks : []).filter(w => typeof w === 'string' && w.trim()).map(w => w.trim());
-          // Migrate old excludedSources → filteredSources with mode='exclude'
-          const rawFiltered = Array.isArray(r.filteredSources) ? r.filteredSources : (Array.isArray(r.excludedSources) ? r.excludedSources : []);
-          const filteredSources = rawFiltered.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim());
-          const sourceFilterMode = r.sourceFilterMode === 'include' ? 'include' : 'exclude';
-          return {
-            id: typeof r.id === 'string' && r.id ? r.id : `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            label: typeof r.label === 'string' ? r.label.trim() : '',
-            enabled: r.enabled !== false,
-            keywords, categories, webhooks, filteredSources, sourceFilterMode,
-            notifyPriceDrops: r.notifyPriceDrops !== false,
-            ...(typeof r.minDiscountPercent === 'number' && Number.isFinite(r.minDiscountPercent) && r.minDiscountPercent > 0 ? { minDiscountPercent: r.minDiscountPercent } : {}),
-            ...(typeof r.minPriceDropPercent === 'number' && Number.isFinite(r.minPriceDropPercent) && r.minPriceDropPercent >= 0 ? { minPriceDropPercent: r.minPriceDropPercent } : {})
-          };
-        })
-      : [];
+    // Merge-by-default: only fields explicitly present in the body are replaced;
+    // omitted fields preserve their existing persisted value. This prevents a
+    // partial PUT (e.g. one that omits alertRules) from wiping other settings.
+    const notificationsEnabled = has('notificationsEnabled')
+      ? body.notificationsEnabled !== false
+      : existing.notificationsEnabled !== false;
 
-    const rawDigest = body.digest;
-    const digest = rawDigest && typeof rawDigest === 'object' && !Array.isArray(rawDigest)
-      ? {
-          enabled: rawDigest.enabled === true,
-          time: TIME_OF_DAY_PATTERN.test(String(rawDigest.time ?? '').trim()) ? String(rawDigest.time).trim() : '08:00',
-          webhook: typeof rawDigest.webhook === 'string' ? rawDigest.webhook.trim() : '',
-          ...(Number.isFinite(Number(rawDigest.minScore)) && Number(rawDigest.minScore) > 0 ? { minScore: Number(rawDigest.minScore) } : {}),
-          ...(Number.isFinite(Number(rawDigest.maxItems)) && Number(rawDigest.maxItems) > 0 ? { maxItems: Math.min(25, Number(rawDigest.maxItems)) } : {})
-        }
-      : null;
+    const alertRules = has('alertRules')
+      ? (Array.isArray(body.alertRules)
+        ? body.alertRules.map(r => {
+            const keywords = (Array.isArray(r.keywords) ? r.keywords : []).filter(k => typeof k === 'string' && k.trim()).map(k => k.trim());
+            const categories = (Array.isArray(r.categories) ? r.categories : []).filter(c => typeof c === 'string' && c.trim()).map(c => c.trim());
+            const webhooks = (Array.isArray(r.webhooks) ? r.webhooks : []).filter(w => typeof w === 'string' && w.trim()).map(w => w.trim());
+            // Migrate old excludedSources → filteredSources with mode='exclude'
+            const rawFiltered = Array.isArray(r.filteredSources) ? r.filteredSources : (Array.isArray(r.excludedSources) ? r.excludedSources : []);
+            const filteredSources = rawFiltered.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim());
+            const sourceFilterMode = r.sourceFilterMode === 'include' ? 'include' : 'exclude';
+            return {
+              id: typeof r.id === 'string' && r.id ? r.id : `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              label: typeof r.label === 'string' ? r.label.trim() : '',
+              enabled: r.enabled !== false,
+              keywords, categories, webhooks, filteredSources, sourceFilterMode,
+              notifyPriceDrops: r.notifyPriceDrops !== false,
+              ...(typeof r.minDiscountPercent === 'number' && Number.isFinite(r.minDiscountPercent) && r.minDiscountPercent > 0 ? { minDiscountPercent: r.minDiscountPercent } : {}),
+              ...(typeof r.minPriceDropPercent === 'number' && Number.isFinite(r.minPriceDropPercent) && r.minPriceDropPercent >= 0 ? { minPriceDropPercent: r.minPriceDropPercent } : {})
+            };
+          })
+        : [])
+      : (Array.isArray(existing.alertRules) ? existing.alertRules : []);
 
-    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules, ...(digest ? { digest } : {}), flipAlerts: normalizeFlipAlertsConfig(body.flipAlerts), wishlistAlerts: normalizeWishlistAlertsConfig(body.wishlistAlerts) } };
+    let digest;
+    if (has('digest')) {
+      const rawDigest = body.digest;
+      digest = rawDigest && typeof rawDigest === 'object' && !Array.isArray(rawDigest)
+        ? {
+            enabled: rawDigest.enabled === true,
+            time: TIME_OF_DAY_PATTERN.test(String(rawDigest.time ?? '').trim()) ? String(rawDigest.time).trim() : '08:00',
+            webhook: typeof rawDigest.webhook === 'string' ? rawDigest.webhook.trim() : '',
+            ...(Number.isFinite(Number(rawDigest.minScore)) && Number(rawDigest.minScore) > 0 ? { minScore: Number(rawDigest.minScore) } : {}),
+            ...(Number.isFinite(Number(rawDigest.maxItems)) && Number(rawDigest.maxItems) > 0 ? { maxItems: Math.min(25, Number(rawDigest.maxItems)) } : {})
+          }
+        : null;
+    } else {
+      digest = existing.digest ?? null;
+    }
+
+    const flipAlerts = has('flipAlerts') ? normalizeFlipAlertsConfig(body.flipAlerts) : normalizeFlipAlertsConfig(existing.flipAlerts);
+    const wishlistAlerts = has('wishlistAlerts') ? normalizeWishlistAlertsConfig(body.wishlistAlerts) : normalizeWishlistAlertsConfig(existing.wishlistAlerts);
+
+    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules, ...(digest ? { digest } : {}), flipAlerts, wishlistAlerts } };
 
     if (typeof store.savePreferences === 'function') {
       await store.savePreferences();
@@ -471,7 +489,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       await store.save();
     }
 
-    return { notificationsEnabled, alertRules, digest, flipAlerts: normalizeFlipAlertsConfig(body.flipAlerts), wishlistAlerts: normalizeWishlistAlertsConfig(body.wishlistAlerts) };
+    return { notificationsEnabled, alertRules, digest, flipAlerts, wishlistAlerts };
   });
 
   // ── Scheduler ──────────────────────────────────────────────────

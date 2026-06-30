@@ -348,3 +348,64 @@ test('scheduler settings can be read and updated through API', async () => {
 
   await app.close();
 });
+
+test('PUT /api/notification-settings merges by default and never wipes omitted fields', async () => {
+  const state = createDefaultState();
+  state.preferences = {
+    notificationSettings: {
+      notificationsEnabled: true,
+      alertRules: [
+        { id: 'default-deals', label: 'Best Deals (>=20% off)', enabled: true, keywords: [], categories: [], webhooks: ['https://discord.example/hook'], filteredSources: [], sourceFilterMode: 'exclude', notifyPriceDrops: true, minDiscountPercent: 20 }
+      ],
+      flipAlerts: { enabled: true, minNetProfitSek: 800, minRoiPercent: 20, webhook: 'https://discord.example/flip' },
+      wishlistAlerts: { enabled: false, webhook: '' }
+    }
+  };
+
+  let saved = 0;
+  const app = await buildApp({
+    config: { publicDir, sources: [] },
+    store: {
+      getState() { return state; },
+      async save() { saved++; },
+      async savePreferences() { saved++; }
+    },
+    productCache: buildTestCache(state),
+    scanState: { running: false, lastError: null, startedAt: null, currentSourceId: null, completedSources: 0, totalSources: 0 },
+    triggerScan: async () => ({}),
+    scheduler: { getState() { return {}; }, async update() { return {}; } }
+  });
+
+  // A partial PUT that only toggles wishlistAlerts must NOT drop the alert rules or flipAlerts.
+  const res = await app.inject({
+    method: 'PUT',
+    url: '/api/notification-settings',
+    payload: { wishlistAlerts: { enabled: true, webhook: 'https://discord.example/wish' } }
+  });
+
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.alertRules.length, 1, 'alert rules preserved');
+  assert.equal(body.alertRules[0].id, 'default-deals');
+  assert.equal(body.flipAlerts.enabled, true, 'flipAlerts preserved');
+  assert.equal(body.flipAlerts.minNetProfitSek, 800);
+  assert.equal(body.wishlistAlerts.enabled, true, 'wishlistAlerts updated');
+  assert.equal(body.wishlistAlerts.webhook, 'https://discord.example/wish');
+  // Persisted state matches
+  assert.equal(state.preferences.notificationSettings.alertRules.length, 1);
+  assert.equal(state.preferences.notificationSettings.wishlistAlerts.enabled, true);
+  assert.ok(saved > 0, 'preferences saved');
+
+  // An explicit empty alertRules array still clears them (explicit intent honored).
+  const clearRes = await app.inject({
+    method: 'PUT',
+    url: '/api/notification-settings',
+    payload: { alertRules: [] }
+  });
+  assert.equal(clearRes.statusCode, 200);
+  assert.equal(clearRes.json().alertRules.length, 0, 'explicit empty array clears rules');
+  // flipAlerts still preserved because it was omitted
+  assert.equal(clearRes.json().flipAlerts.minNetProfitSek, 800);
+
+  await app.close();
+});
