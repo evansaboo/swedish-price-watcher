@@ -1280,6 +1280,33 @@ body.scanning { --scan-bar-height: 28px; }
   border-radius: 8px;
   background: var(--bg-secondary, transparent);
 }
+.flip-alert-section { margin-top: 14px; }
+.section-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
+.wishlist-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.wishlist-target .wt-icon { font-size: 12px; line-height: 1; }
+.wishlist-target .wt-input {
+  width: 86px;
+  padding: 3px 6px;
+  font-size: 11px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+}
+.wishlist-target .wt-input:focus {
+  outline: none;
+  border-color: var(--accent, #6366f1);
+}
 .rules-toolbar {
   display: flex;
   align-items: center;

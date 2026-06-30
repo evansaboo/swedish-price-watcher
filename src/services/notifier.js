@@ -111,7 +111,7 @@ export class DiscordNotifier {
     this.webhookRetryCapMs = Math.max(this.webhookRetryBaseMs, Number(webhookRetryCapMs) || this.webhookRetryBaseMs);
   }
 
-  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings }) {
+  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings, flips = [], wishlistTargets = {} }) {
     const settings = notificationSettings ?? {};
 
     // Respect global notifications-enabled flag (default: true for backward compat)
@@ -122,13 +122,148 @@ export class DiscordNotifier {
     const alertRules = Array.isArray(settings.alertRules) ? settings.alertRules.filter((r) => r.enabled !== false) : [];
     const alertSummary = await this.notifyAlertRules({ newItems, priceDrops, state, alertRules });
 
+    // Feature 4: flip alerts — high-margin resale opportunities to a dedicated channel.
+    const flipSummary = await this.notifyFlipAlerts({ flips, state, config: settings.flipAlerts });
+
+    // Feature 3: wishlist target-price alerts — a tracked item dropped to/below the user's target.
+    const wishlistSummary = await this.notifyWishlistTargets({ newItems, priceDrops, state, wishlistTargets, config: settings.wishlistAlerts });
+
     return {
-      sent: alertSummary.sent,
-      skipped: alertSummary.skipped,
-      failed: alertSummary.failed,
-      errors: alertSummary.errors,
-      alertRules: alertSummary
+      sent: alertSummary.sent + flipSummary.sent + wishlistSummary.sent,
+      skipped: alertSummary.skipped + flipSummary.skipped + wishlistSummary.skipped,
+      failed: alertSummary.failed + flipSummary.failed + wishlistSummary.failed,
+      errors: [...alertSummary.errors, ...flipSummary.errors, ...wishlistSummary.errors],
+      alertRules: alertSummary,
+      flipAlerts: flipSummary,
+      wishlistAlerts: wishlistSummary
     };
+  }
+
+  /**
+   * Feature 4 — Flip alerts.
+   * Posts high-margin resale opportunities (net profit / ROI above the configured
+   * thresholds) to a dedicated Discord webhook. Deduped per listing per cooldown.
+   */
+  async notifyFlipAlerts({ flips = [], state, config }) {
+    const empty = { sent: 0, skipped: 0, failed: 0, errors: [] };
+    if (!config || config.enabled !== true) return { ...empty, reason: 'disabled' };
+    const webhook = typeof config.webhook === 'string' ? config.webhook.trim() : '';
+    if (!webhook) return { ...empty, reason: 'no-webhook' };
+    if (!Array.isArray(flips) || !flips.length) return empty;
+
+    const minNetProfit = Number.isFinite(config.minNetProfitSek) ? config.minNetProfitSek : 500;
+    const minRoi = Number.isFinite(config.minRoiPercent) ? config.minRoiPercent : 15;
+    const now = Date.now();
+    let sent = 0, skipped = 0, failed = 0;
+    const errors = [];
+
+    for (const flip of flips) {
+      if (!Number.isFinite(flip.netProfitSek) || flip.netProfitSek < minNetProfit) continue;
+      if (!Number.isFinite(flip.roiPercent) || flip.roiPercent < minRoi) continue;
+
+      // Dedupe per listing per buy price so a re-listing at a new price can re-alert.
+      const notificationKey = `${flip.listingKey}:flip:${flip.buyPriceSek}`;
+      const previousSentAt = state.notifications[notificationKey];
+      if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) { skipped++; continue; }
+
+      try {
+        await this.#postWebhook({
+          username: 'Price Watcher',
+          content: `⚡ **Flip opportunity** — ${flip.modelLabel ?? flip.title}`,
+          embeds: [
+            {
+              title: flip.title,
+              url: flip.url,
+              description: `${flip.sourceLabel} • ${flip.demandCategory ?? ''}`,
+              color: 0xfaa61a,
+              fields: [
+                { name: 'Buy now', value: formatSek(flip.buyPriceSek), inline: true },
+                { name: 'Resale median', value: formatSek(flip.resaleMedianSek), inline: true },
+                { name: 'Net profit', value: `+${formatSek(flip.netProfitSek)}`, inline: true },
+                { name: 'ROI', value: `${flip.roiPercent}%`, inline: true },
+                { name: 'Comps', value: `${flip.sampleCount} Blocket`, inline: true }
+              ],
+              image: flip.imageUrl ? { url: flip.imageUrl } : undefined
+            }
+          ]
+        }, webhook);
+        state.notifications[notificationKey] = new Date(now).toISOString();
+        sent++;
+      } catch (error) {
+        failed++;
+        this.#recordError(errors, error);
+      }
+    }
+
+    return { sent, skipped, failed, errors };
+  }
+
+  /**
+   * Feature 3 — Wishlist target-price alerts.
+   * When a wishlisted item appears (new) or drops to/below the user's target
+   * price, post an alert to a dedicated Discord webhook. Deduped per listing per
+   * target per cooldown.
+   */
+  async notifyWishlistTargets({ newItems = [], priceDrops = [], state, wishlistTargets = {}, config }) {
+    const empty = { sent: 0, skipped: 0, failed: 0, errors: [] };
+    if (!config || config.enabled !== true) return { ...empty, reason: 'disabled' };
+    const webhook = typeof config.webhook === 'string' ? config.webhook.trim() : '';
+    if (!webhook) return { ...empty, reason: 'no-webhook' };
+    const targets = wishlistTargets && typeof wishlistTargets === 'object' ? wishlistTargets : {};
+    if (!Object.keys(targets).length) return empty;
+
+    const now = Date.now();
+    let sent = 0, skipped = 0, failed = 0;
+    const errors = [];
+
+    // Candidate = any new item or price-dropped item that is on the wishlist with a target.
+    const seen = new Set();
+    const candidates = [];
+    for (const item of newItems) candidates.push(item);
+    for (const drop of priceDrops) candidates.push(state.items[drop.listingKey] ?? drop);
+
+    for (const item of candidates) {
+      const listingKey = item.listingKey;
+      if (!listingKey || seen.has(listingKey)) continue;
+      const target = Number(targets[listingKey]);
+      if (!Number.isFinite(target) || target <= 0) continue;
+
+      const price = Number(item.latestPriceSek ?? item.priceSek ?? item.newPriceSek);
+      if (!Number.isFinite(price) || price > target) continue;
+      seen.add(listingKey);
+
+      const notificationKey = `${listingKey}:target:${target}`;
+      const previousSentAt = state.notifications[notificationKey];
+      if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) { skipped++; continue; }
+
+      try {
+        await this.#postWebhook({
+          username: 'Price Watcher',
+          content: `🎯 **Wishlist target hit** — ${item.title}`,
+          embeds: [
+            {
+              title: item.title,
+              url: item.url,
+              description: `${item.sourceLabel ?? ''} • ${item.category ?? ''}`,
+              color: 0xeb459e,
+              fields: [
+                { name: 'Price', value: formatSek(price), inline: true },
+                { name: 'Your target', value: formatSek(target), inline: true },
+                { name: 'Under target by', value: formatSek(Math.max(0, target - price)), inline: true }
+              ],
+              image: item.imageUrl ? { url: item.imageUrl } : undefined
+            }
+          ]
+        }, webhook);
+        state.notifications[notificationKey] = new Date(now).toISOString();
+        sent++;
+      } catch (error) {
+        failed++;
+        this.#recordError(errors, error);
+      }
+    }
+
+    return { sent, skipped, failed, errors };
   }
 
   /**

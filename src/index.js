@@ -341,13 +341,16 @@ async function triggerScan(trigger, options = {}) {
           }
 
           const effectiveNotificationSettings = { ...(state.preferences?.notificationSettings ?? {}) };
+          const sourceFlips = productCache.flips.filter((f) => f.sourceId === source.id);
           const sourceNotif = await notifier.notifyScan({
             deals: state.deals,
             newItems: mergeResult.newItems,
             priceDrops: mergeResult.priceDrops,
             sources: config.sources,
             state,
-            notificationSettings: effectiveNotificationSettings
+            notificationSettings: effectiveNotificationSettings,
+            flips: sourceFlips,
+            wishlistTargets: state.preferences?.wishlistTargets ?? {}
           });
           mergeNotif(aggregatedNotif, sourceNotif);
           mergeNotif(aggregatedNotif.alertRules, sourceNotif.alertRules);

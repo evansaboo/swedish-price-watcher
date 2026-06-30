@@ -273,6 +273,44 @@
             <button id="add-rule-btn" type="button" class="ghost-btn accent">+ Add alert</button>
           </div>
           <ul id="rules-list" class="rules-list"></ul>
+
+          <!-- Flip alerts (Feature 4) -->
+          <div class="digest-section flip-alert-section">
+            <label class="toggle-switch">
+              <input id="flip-alerts-enabled" type="checkbox" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">⚡ Flip alerts (high-margin resale)</span>
+            </label>
+            <p class="section-hint">Get pinged when a scanned item can be flipped for a profit above your thresholds.</p>
+            <div class="form-row" style="margin-top:0.5rem">
+              <div class="form-field">
+                <label for="flip-alerts-min-profit">Min net profit (SEK)</label>
+                <input id="flip-alerts-min-profit" type="number" class="field-input" min="0" step="50" placeholder="500" />
+              </div>
+              <div class="form-field">
+                <label for="flip-alerts-min-roi">Min ROI (%)</label>
+                <input id="flip-alerts-min-roi" type="number" class="field-input" min="0" step="1" placeholder="15" />
+              </div>
+            </div>
+            <div class="form-field" style="margin-top:0.5rem">
+              <label for="flip-alerts-webhook">Flip webhook</label>
+              <input id="flip-alerts-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
+            </div>
+          </div>
+
+          <!-- Wishlist target alerts (Feature 3) -->
+          <div class="digest-section wishlist-alert-section">
+            <label class="toggle-switch">
+              <input id="wishlist-alerts-enabled" type="checkbox" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">🎯 Wishlist target alerts</span>
+            </label>
+            <p class="section-hint">Get pinged when a wishlisted item drops to or below your target price. Set targets from the ★ wishlist on each product.</p>
+            <div class="form-field" style="margin-top:0.5rem">
+              <label for="wishlist-alerts-webhook">Wishlist webhook</label>
+              <input id="wishlist-alerts-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
+            </div>
+          </div>
         </div>
 
         <!-- Scheduler -->

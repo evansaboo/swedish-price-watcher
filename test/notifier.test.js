@@ -589,3 +589,139 @@ test('sourceFilterMode=include only notifies from listed sources', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+// ── Feature 4: Flip alerts ───────────────────────────────────────
+const FLIP_WEBHOOK = 'https://discord.example/flips';
+
+function makeFlip(overrides = {}) {
+  return {
+    listingKey: 'elgiganten-outlet:rtx5080',
+    sourceId: 'elgiganten-outlet',
+    sourceLabel: 'Elgiganten Outlet',
+    title: 'ASUS ROG RTX 5080 outlet',
+    url: 'https://www.elgiganten.se/product/rtx5080',
+    imageUrl: 'https://img/rtx5080.jpg',
+    modelLabel: 'RTX 5080',
+    demandCategory: 'Graphics cards',
+    resaleKey: 'rtx-5080',
+    buyPriceSek: 9000,
+    resaleMedianSek: 14000,
+    netProfitSek: 4200,
+    roiPercent: 46,
+    sampleCount: 8,
+    ...overrides
+  };
+}
+
+test('flip alerts send when profit and ROI exceed thresholds, deduped per buy price', async () => {
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { payloads.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 204 }; };
+
+  try {
+    const state = createDefaultState();
+    const notifier = makeNotifier();
+    const config = { enabled: true, minNetProfitSek: 500, minRoiPercent: 15, webhook: FLIP_WEBHOOK };
+
+    const first = await notifier.notifyScan({
+      deals: [], newItems: [], sources: [], state,
+      notificationSettings: { notificationsEnabled: true, alertRules: [], flipAlerts: config },
+      flips: [makeFlip(), makeFlip({ listingKey: 'x:low', netProfitSek: 100 }), makeFlip({ listingKey: 'x:lowroi', roiPercent: 5 })]
+    });
+
+    assert.equal(first.flipAlerts.sent, 1, 'only the high-margin flip alerts');
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].url, FLIP_WEBHOOK);
+    assert.match(payloads[0].body.content, /Flip opportunity/i);
+    assert.ok(state.notifications['elgiganten-outlet:rtx5080:flip:9000']);
+
+    // Re-running with same buy price is deduped
+    const second = await notifier.notifyScan({
+      deals: [], newItems: [], sources: [], state,
+      notificationSettings: { notificationsEnabled: true, alertRules: [], flipAlerts: config },
+      flips: [makeFlip()]
+    });
+    assert.equal(second.flipAlerts.sent, 0);
+    assert.equal(second.flipAlerts.skipped, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('flip alerts do not send when disabled or webhook missing', async () => {
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => { called = true; return { ok: true, status: 204 }; };
+  try {
+    const state = createDefaultState();
+    const notifier = makeNotifier();
+    const summary = await notifier.notifyScan({
+      deals: [], newItems: [], sources: [], state,
+      notificationSettings: { notificationsEnabled: true, alertRules: [], flipAlerts: { enabled: false, webhook: FLIP_WEBHOOK } },
+      flips: [makeFlip()]
+    });
+    assert.equal(summary.flipAlerts.sent, 0);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ── Feature 3: Wishlist target-price alerts ──────────────────────
+const WISHLIST_WEBHOOK = 'https://discord.example/wishlist';
+
+test('wishlist target alert fires when a new item is at or below target, deduped', async () => {
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { payloads.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 204 }; };
+
+  try {
+    const state = createDefaultState();
+    const notifier = makeNotifier();
+    const config = { enabled: true, webhook: WISHLIST_WEBHOOK };
+    const wishlistTargets = { [BASE_ITEM.listingKey]: 2000 };
+
+    const first = await notifier.notifyScan({
+      deals: [],
+      newItems: [BASE_ITEM, { ...BASE_ITEM, listingKey: 'other:1', latestPriceSek: 5000 }],
+      sources: [], state,
+      notificationSettings: { notificationsEnabled: true, alertRules: [], wishlistAlerts: config },
+      wishlistTargets
+    });
+
+    assert.equal(first.wishlistAlerts.sent, 1, 'only the wishlisted item under target');
+    assert.equal(payloads[0].url, WISHLIST_WEBHOOK);
+    assert.match(payloads[0].body.content, /Wishlist target hit/i);
+    assert.ok(state.notifications[`${BASE_ITEM.listingKey}:target:2000`]);
+
+    // Deduped on re-run
+    const second = await notifier.notifyScan({
+      deals: [], newItems: [BASE_ITEM], sources: [], state,
+      notificationSettings: { notificationsEnabled: true, alertRules: [], wishlistAlerts: config },
+      wishlistTargets
+    });
+    assert.equal(second.wishlistAlerts.sent, 0);
+    assert.equal(second.wishlistAlerts.skipped, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('wishlist target alert does not fire when price is above target', async () => {
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => { called = true; return { ok: true, status: 204 }; };
+  try {
+    const state = createDefaultState();
+    const notifier = makeNotifier();
+    const summary = await notifier.notifyScan({
+      deals: [], newItems: [BASE_ITEM], sources: [], state,
+      notificationSettings: { notificationsEnabled: true, alertRules: [], wishlistAlerts: { enabled: true, webhook: WISHLIST_WEBHOOK } },
+      wishlistTargets: { [BASE_ITEM.listingKey]: 1000 }
+    });
+    assert.equal(summary.wishlistAlerts.sent, 0);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

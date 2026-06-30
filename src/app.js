@@ -17,6 +17,40 @@ const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 // ── Shared helpers ─────────────────────────────────────────────
 
+// Feature 4 — flip alert config. { enabled, minNetProfitSek, minRoiPercent, webhook }
+function normalizeFlipAlertsConfig(raw) {
+  const cfg = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const minNetProfitSek = Number.isFinite(Number(cfg.minNetProfitSek)) && Number(cfg.minNetProfitSek) >= 0 ? Math.round(Number(cfg.minNetProfitSek)) : 500;
+  const minRoiPercent = Number.isFinite(Number(cfg.minRoiPercent)) && Number(cfg.minRoiPercent) >= 0 ? Math.round(Number(cfg.minRoiPercent)) : 15;
+  return {
+    enabled: cfg.enabled === true,
+    minNetProfitSek,
+    minRoiPercent,
+    webhook: typeof cfg.webhook === 'string' ? cfg.webhook.trim() : ''
+  };
+}
+
+// Feature 3 — wishlist target-price alert config. { enabled, webhook }
+function normalizeWishlistAlertsConfig(raw) {
+  const cfg = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    enabled: cfg.enabled === true,
+    webhook: typeof cfg.webhook === 'string' ? cfg.webhook.trim() : ''
+  };
+}
+
+// Feature 3 — set or clear a wishlist item's target price on state.preferences.wishlistTargets.
+function applyWishlistTarget(state, listingKey, rawTarget) {
+  state.preferences = state.preferences ?? {};
+  state.preferences.wishlistTargets = state.preferences.wishlistTargets ?? {};
+  const target = Number(rawTarget);
+  if (Number.isFinite(target) && target > 0) {
+    state.preferences.wishlistTargets[listingKey] = Math.round(target);
+  } else {
+    delete state.preferences.wishlistTargets[listingKey];
+  }
+}
+
 function normalizeCategoryKey(category) {
   return String(category ?? '').trim().toLowerCase();
 }
@@ -368,6 +402,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   // ── Notification Settings ──────────────────────────────────────
   app.get('/api/notification-settings', async () => {
     const settings = store.getState().preferences?.notificationSettings ?? {};
+    const flipAlerts = normalizeFlipAlertsConfig(settings.flipAlerts);
+    const wishlistAlerts = normalizeWishlistAlertsConfig(settings.wishlistAlerts);
 
     // Migrate legacy data to alertRules on first read
     if (!Array.isArray(settings.alertRules)) {
@@ -384,10 +420,10 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         if (!cw?.pattern || !cw?.webhook) continue;
         rules.push({ id: cw.id ?? `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, label: cw.label || cw.pattern, enabled: true, keywords: [], categories: [cw.pattern], webhooks: [cw.webhook] });
       }
-      return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: rules, digest: settings.digest ?? null };
+      return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: rules, digest: settings.digest ?? null, flipAlerts, wishlistAlerts };
     }
 
-    return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: settings.alertRules, digest: settings.digest ?? null };
+    return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: settings.alertRules, digest: settings.digest ?? null, flipAlerts, wishlistAlerts };
   });
 
   app.put('/api/notification-settings', async (request, reply) => {
@@ -427,7 +463,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         }
       : null;
 
-    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules, ...(digest ? { digest } : {}) } };
+    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules, ...(digest ? { digest } : {}), flipAlerts: normalizeFlipAlertsConfig(body.flipAlerts), wishlistAlerts: normalizeWishlistAlertsConfig(body.wishlistAlerts) } };
 
     if (typeof store.savePreferences === 'function') {
       await store.savePreferences();
@@ -435,7 +471,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       await store.save();
     }
 
-    return { notificationsEnabled, alertRules, digest };
+    return { notificationsEnabled, alertRules, digest, flipAlerts: normalizeFlipAlertsConfig(body.flipAlerts), wishlistAlerts: normalizeWishlistAlertsConfig(body.wishlistAlerts) };
   });
 
   // ── Scheduler ──────────────────────────────────────────────────
@@ -524,7 +560,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   // ── Wishlist ──────────────────────────────────────────────────
   app.get('/api/wishlist', async () => {
     const state = store.getState();
-    return { items: state.preferences?.wishlist ?? [] };
+    return { items: state.preferences?.wishlist ?? [], targets: state.preferences?.wishlistTargets ?? {} };
   });
 
   app.post('/api/wishlist/:listingKey', async (request, reply) => {
@@ -538,13 +574,34 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     if (!wishlist.includes(listingKey)) {
       wishlist.push(listingKey);
       state.preferences.wishlist = wishlist;
-      if (typeof store.savePreferences === 'function') {
-        await store.savePreferences();
-      } else {
-        await store.save();
-      }
     }
-    return { ok: true, listingKey, wishlisted: true };
+    // Optional target price (Feature 3). A value of 0/null clears the target.
+    if (request.body && Object.prototype.hasOwnProperty.call(request.body, 'targetPriceSek')) {
+      applyWishlistTarget(state, listingKey, request.body.targetPriceSek);
+    }
+    if (typeof store.savePreferences === 'function') {
+      await store.savePreferences();
+    } else {
+      await store.save();
+    }
+    return { ok: true, listingKey, wishlisted: true, targetPriceSek: state.preferences.wishlistTargets?.[listingKey] ?? null };
+  });
+
+  // Set/clear the target price for a wishlisted item (Feature 3).
+  app.put('/api/wishlist/:listingKey/target', async (request, reply) => {
+    const { listingKey } = request.params;
+    const state = store.getState();
+    state.preferences = state.preferences ?? {};
+    const wishlist = state.preferences.wishlist ?? [];
+    if (!wishlist.includes(listingKey)) { reply.code(404); return { message: 'Item is not on the wishlist.' }; }
+
+    applyWishlistTarget(state, listingKey, request.body?.targetPriceSek);
+    if (typeof store.savePreferences === 'function') {
+      await store.savePreferences();
+    } else {
+      await store.save();
+    }
+    return { ok: true, listingKey, targetPriceSek: state.preferences.wishlistTargets?.[listingKey] ?? null };
   });
 
   app.delete('/api/wishlist/:listingKey', async (request, reply) => {
@@ -556,11 +613,15 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     if (idx !== -1) {
       wishlist.splice(idx, 1);
       state.preferences.wishlist = wishlist;
-      if (typeof store.savePreferences === 'function') {
-        await store.savePreferences();
-      } else {
-        await store.save();
-      }
+    }
+    // Removing from the wishlist also clears any target.
+    if (state.preferences.wishlistTargets && listingKey in state.preferences.wishlistTargets) {
+      delete state.preferences.wishlistTargets[listingKey];
+    }
+    if (typeof store.savePreferences === 'function') {
+      await store.savePreferences();
+    } else {
+      await store.save();
     }
     return { ok: true, listingKey, wishlisted: false };
   });

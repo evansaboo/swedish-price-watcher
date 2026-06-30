@@ -34,6 +34,7 @@ const state = {
   activePreset: 'all',
   // Wishlist
   wishlist: new Set(),
+  wishlistTargets: {},
   // Scheduler
   schedulerEnabled: true,
   schedulerIntervalMinutes: 180,
@@ -653,6 +654,7 @@ function renderProducts(response) {
         <div class="card-footer">
           <span class="card-availability"><span class="avail-dot ${availDot}"></span>${escapeHtml(availLabel)}</span>
           ${seenText && availDot !== 'out' ? `<span>${escapeHtml(seenText)}</span>` : ''}
+          ${product.wishlisted ? `<div class="wishlist-target"><span class="wt-icon" title="Target price for Discord alert">🎯</span><input type="number" class="wt-input" min="0" step="50" placeholder="Target SEK" value="${state.wishlistTargets[product.listingKey] ?? ''}" data-listing-key="${escapeHtml(product.listingKey)}" /></div>` : ''}
         </div>
       </article>
     `;
@@ -676,6 +678,12 @@ function renderProducts(response) {
       e.stopPropagation();
       toggleWishlist(btn.getAttribute('data-listing-key'), btn);
     });
+  }
+
+  // Wire wishlist target-price inputs (Feature 3)
+  for (const input of el.productGrid.querySelectorAll('.wt-input')) {
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('change', () => saveWishlistTarget(input.getAttribute('data-listing-key'), input.value));
   }
 
   // Wire sparkline click → open price history modal
@@ -1089,27 +1097,74 @@ async function toggleWishlist(listingKey, btnEl) {
     await fetch(`/api/wishlist/${encodeURIComponent(listingKey)}`, { method });
     if (isWishlisted) {
       state.wishlist.delete(listingKey);
+      delete state.wishlistTargets[listingKey];
       btnEl.classList.remove('active');
       btnEl.textContent = '♡';
       btnEl.title = 'Add to wishlist';
-      btnEl.closest('.product-card')?.classList.remove('is-wishlisted');
+      const card = btnEl.closest('.product-card');
+      card?.classList.remove('is-wishlisted');
+      card?.querySelector('.wishlist-target')?.remove();
     } else {
       state.wishlist.add(listingKey);
       btnEl.classList.add('active');
       btnEl.textContent = '♥';
       btnEl.title = 'Remove from wishlist';
-      btnEl.closest('.product-card')?.classList.add('is-wishlisted');
+      const card = btnEl.closest('.product-card');
+      card?.classList.add('is-wishlisted');
+      injectWishlistTarget(card, listingKey);
     }
   } catch (err) {
     showToast('Failed to update wishlist', 'error');
   }
 }
 
+// Renders/refreshes the target-price control inside a wishlisted card's footer.
+function injectWishlistTarget(card, listingKey) {
+  if (!card) return;
+  card.querySelector('.wishlist-target')?.remove();
+  const footer = card.querySelector('.card-footer');
+  if (!footer) return;
+  const target = state.wishlistTargets[listingKey];
+  const wrap = document.createElement('div');
+  wrap.className = 'wishlist-target';
+  wrap.innerHTML = `
+    <span class="wt-icon" title="Target price for Discord alert">🎯</span>
+    <input type="number" class="wt-input" min="0" step="50" placeholder="Target SEK" value="${target ?? ''}" data-listing-key="${escapeHtml(listingKey)}" />
+  `;
+  footer.appendChild(wrap);
+  const input = wrap.querySelector('.wt-input');
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('change', () => saveWishlistTarget(listingKey, input.value));
+}
+
+async function saveWishlistTarget(listingKey, rawValue) {
+  const targetPriceSek = Number(rawValue);
+  try {
+    const res = await fetch(`/api/wishlist/${encodeURIComponent(listingKey)}/target`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ targetPriceSek: Number.isFinite(targetPriceSek) && targetPriceSek > 0 ? targetPriceSek : null })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.targetPriceSek) {
+      state.wishlistTargets[listingKey] = data.targetPriceSek;
+      showToast(`Target set: ${formatSek(data.targetPriceSek)}`, 'success');
+    } else {
+      delete state.wishlistTargets[listingKey];
+      showToast('Target cleared', 'info');
+    }
+  } catch {
+    showToast('Failed to save target price', 'error');
+  }
+}
+
 async function loadWishlist() {
   try {
-    const { items } = await fetchJson('/api/wishlist');
+    const { items, targets } = await fetchJson('/api/wishlist');
     state.wishlist = new Set(items ?? []);
-  } catch { state.wishlist = new Set(); }
+    state.wishlistTargets = targets && typeof targets === 'object' ? { ...targets } : {};
+  } catch { state.wishlist = new Set(); state.wishlistTargets = {}; }
 }
 
 // ── PRICE HISTORY MODAL ─────────────────────────────────────────
@@ -1713,6 +1768,24 @@ async function loadDrawerData() {
   if (digestWebhook) digestWebhook.value = digest.webhook ?? '';
   if (digestMaxItems) digestMaxItems.value = digest.maxItems ?? '';
 
+  // Flip alerts form (Feature 4)
+  const flipAlerts = notifSettings.flipAlerts ?? {};
+  const flipEnabled = document.getElementById('flip-alerts-enabled');
+  const flipMinProfit = document.getElementById('flip-alerts-min-profit');
+  const flipMinRoi = document.getElementById('flip-alerts-min-roi');
+  const flipWebhook = document.getElementById('flip-alerts-webhook');
+  if (flipEnabled) flipEnabled.checked = flipAlerts.enabled === true;
+  if (flipMinProfit) flipMinProfit.value = flipAlerts.minNetProfitSek ?? '';
+  if (flipMinRoi) flipMinRoi.value = flipAlerts.minRoiPercent ?? '';
+  if (flipWebhook) flipWebhook.value = flipAlerts.webhook ?? '';
+
+  // Wishlist target alerts form (Feature 3)
+  const wishlistAlerts = notifSettings.wishlistAlerts ?? {};
+  const wishlistEnabled = document.getElementById('wishlist-alerts-enabled');
+  const wishlistWebhook = document.getElementById('wishlist-alerts-webhook');
+  if (wishlistEnabled) wishlistEnabled.checked = wishlistAlerts.enabled === true;
+  if (wishlistWebhook) wishlistWebhook.value = wishlistAlerts.webhook ?? '';
+
   renderRuleList();
   renderFavoriteChips();
   renderFavoritesEditor();
@@ -1977,6 +2050,16 @@ async function saveAllSettings() {
       time: parseTimeOfDay(document.getElementById('digest-time')?.value) ?? '08:00',
       webhook: (document.getElementById('digest-webhook')?.value ?? '').trim(),
       maxItems: parsePositiveInteger(document.getElementById('digest-max-items')?.value) ?? undefined
+    };
+    notifSettings.flipAlerts = {
+      enabled: document.getElementById('flip-alerts-enabled')?.checked === true,
+      minNetProfitSek: parsePositiveInteger(document.getElementById('flip-alerts-min-profit')?.value) ?? 500,
+      minRoiPercent: parsePositiveInteger(document.getElementById('flip-alerts-min-roi')?.value) ?? 15,
+      webhook: (document.getElementById('flip-alerts-webhook')?.value ?? '').trim()
+    };
+    notifSettings.wishlistAlerts = {
+      enabled: document.getElementById('wishlist-alerts-enabled')?.checked === true,
+      webhook: (document.getElementById('wishlist-alerts-webhook')?.value ?? '').trim()
     };
     const res = await fetch('/api/notification-settings', {
       method: 'PUT',
