@@ -113,6 +113,89 @@ export function buildIdentityGroups(items) {
   return groups;
 }
 
+// ── Retail arbitrage ───────────────────────────────────────────
+// Same product offered by 2+ different stores at different prices. Buying the
+// cheapest offer and reselling (privately or simply spotting the underpriced
+// listing) is a low-risk arbitrage. We reuse the identity grouping above, so a
+// match requires a shared GTIN/MPN or the normalized-title productKey.
+
+/**
+ * Compute cross-store retail arbitrage opportunities.
+ *
+ * @param {Array} items raw buyable items (already filtered to the product grid)
+ * @param {Map}   productByListingKey listingKey → materialized product (price/label/url/img)
+ * @param {object} options { minSpreadSek = 1 }
+ * @returns {Array} arbitrage records sorted by absolute spread desc
+ */
+export function computeArbitrage(items, productByListingKey, options = {}) {
+  const minSpreadSek = Number.isFinite(options.minSpreadSek) ? options.minSpreadSek : 1;
+  const results = [];
+
+  for (const group of buildIdentityGroups(items).values()) {
+    if (group.length < 2) continue;
+
+    // Resolve to materialized products and keep the cheapest offer per store so a
+    // store stocking the same item twice doesn't masquerade as cross-store spread.
+    const bestPerStore = new Map();
+    for (const item of group) {
+      const product = productByListingKey.get(item.listingKey);
+      if (!product || !Number.isFinite(product.currentPriceSek)) continue;
+      const existing = bestPerStore.get(product.sourceId);
+      if (!existing || product.currentPriceSek < existing.currentPriceSek) {
+        bestPerStore.set(product.sourceId, product);
+      }
+    }
+    if (bestPerStore.size < 2) continue;
+
+    const offers = [...bestPerStore.values()].sort((a, b) => a.currentPriceSek - b.currentPriceSek);
+    const best = offers[0];
+    const high = offers[offers.length - 1];
+    const spreadSek = high.currentPriceSek - best.currentPriceSek;
+    if (spreadSek < minSpreadSek) continue;
+
+    const spreadPercent = high.currentPriceSek > 0
+      ? Math.round((spreadSek / high.currentPriceSek) * 100)
+      : 0;
+
+    // Prefer a non-generic category and the most descriptive (longest) title.
+    const category = offers.map((o) => o.category).find((c) => !isGenericCategoryLabel(c)) ?? best.category ?? null;
+    const title = offers.reduce((longest, o) => (String(o.title ?? '').length > String(longest ?? '').length ? o.title : longest), best.title);
+    const imageUrl = offers.map((o) => o.imageUrl).find(Boolean) ?? null;
+
+    results.push({
+      groupKey: best.listingKey,
+      title,
+      category,
+      imageUrl,
+      bestPriceSek: best.currentPriceSek,
+      bestSourceId: best.sourceId,
+      bestSourceLabel: best.sourceLabel,
+      bestUrl: best.url,
+      bestListingKey: best.listingKey,
+      bestCondition: best.condition,
+      bestConditionLabel: best.conditionLabel ?? null,
+      highPriceSek: high.currentPriceSek,
+      highSourceLabel: high.sourceLabel,
+      spreadSek,
+      spreadPercent,
+      storeCount: offers.length,
+      offerCount: offers.length,
+      offers: offers.map((o) => ({
+        sourceId: o.sourceId,
+        sourceLabel: o.sourceLabel,
+        priceSek: o.currentPriceSek,
+        url: o.url,
+        listingKey: o.listingKey,
+        condition: o.condition,
+        conditionLabel: o.conditionLabel ?? null
+      }))
+    });
+  }
+
+  results.sort((a, b) => b.spreadSek - a.spreadSek);
+  return results;
+}
+
 function historyPrices(items) {
   return items.flatMap((item) => item.history.map((entry) => entry.priceSek).filter((value) => Number.isFinite(value)));
 }

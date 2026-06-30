@@ -274,6 +274,21 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     });
   });
 
+  app.get('/api/arbitrage', async (request) => {
+    const q = request.query;
+    return productCache.queryArbitrage({
+      search: q.search,
+      store: q.store,
+      minSpreadSek: Number.parseInt(q.minSpreadSek ?? q.minSpread ?? '', 10),
+      minSpreadPercent: Number.parseInt(q.minSpreadPercent ?? '', 10),
+      maxBuyPriceSek: Number.parseInt(q.maxBuyPriceSek ?? q.maxPrice ?? '', 10),
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+      page: Number.parseInt(q.page ?? '1', 10),
+      pageSize: Number.parseInt(q.pageSize ?? '50', 10)
+    });
+  });
+
   // ── CSV Export (same filters as /api/outlet-products) ──────────
   app.get('/api/export.csv', async (request, reply) => {
     const state = store.getState();

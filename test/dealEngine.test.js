@@ -258,3 +258,74 @@ test('buildIdentityGroups ignores short or letter-only part numbers', async () =
   const groups = buildIdentityGroups(items);
   assert.equal(groups.size, 3, 'generic 3-letter tokens must not link unrelated items');
 });
+
+test('computeArbitrage finds cross-store spread and excludes single-store groups', async () => {
+  const { computeArbitrage } = await import('../src/services/dealEngine.js');
+  const items = [
+    // Same GPU at 3 stores via shared GTIN
+    { listingKey: 'a:1', productKey: 'asus-rtx-4070', gtin: '4711081898019' },
+    { listingKey: 'b:1', productKey: 'asus-rtx-4070', gtin: '4711081898019' },
+    { listingKey: 'c:1', productKey: 'asus-rtx-4070', gtin: '4711081898019' },
+    // Headphones only at one store (two listings, same store) → no arbitrage
+    { listingKey: 'x:1', productKey: 'sony-wh-1000xm5' },
+    { listingKey: 'x:2', productKey: 'sony-wh-1000xm5' }
+  ];
+  const productByListingKey = new Map([
+    ['a:1', { listingKey: 'a:1', title: 'ASUS RTX 4070', category: 'Grafikkort', sourceId: 'komplett', sourceLabel: 'Komplett', currentPriceSek: 6500, url: 'http://k/a', condition: 'outlet', imageUrl: 'img-a' }],
+    ['b:1', { listingKey: 'b:1', title: 'ASUS GeForce RTX 4070 Dual OC', category: 'Grafikkort', sourceId: 'netonnet', sourceLabel: 'NetOnNet', currentPriceSek: 6900, url: 'http://n/b', condition: 'outlet', imageUrl: 'img-b' }],
+    ['c:1', { listingKey: 'c:1', title: 'RTX 4070', category: 'Outlet', sourceId: 'webhallen', sourceLabel: 'Webhallen', currentPriceSek: 7300, url: 'http://w/c', condition: 'deal', imageUrl: null }],
+    ['x:1', { listingKey: 'x:1', title: 'Sony WH-1000XM5', category: 'Hörlurar', sourceId: 'komplett', sourceLabel: 'Komplett', currentPriceSek: 2400, url: 'http://k/x1', condition: 'outlet' }],
+    ['x:2', { listingKey: 'x:2', title: 'Sony WH-1000XM5', category: 'Hörlurar', sourceId: 'komplett', sourceLabel: 'Komplett', currentPriceSek: 2300, url: 'http://k/x2', condition: 'outlet' }]
+  ]);
+
+  const arb = computeArbitrage(items, productByListingKey);
+  assert.equal(arb.length, 1, 'only the 3-store GPU group is an arbitrage');
+  const a = arb[0];
+  assert.equal(a.bestPriceSek, 6500);
+  assert.equal(a.bestSourceLabel, 'Komplett');
+  assert.equal(a.highPriceSek, 7300);
+  assert.equal(a.spreadSek, 800);
+  assert.equal(a.spreadPercent, Math.round((800 / 7300) * 100));
+  assert.equal(a.storeCount, 3);
+  assert.equal(a.offers.length, 3);
+  // Offers sorted cheapest-first
+  assert.deepEqual(a.offers.map(o => o.priceSek), [6500, 6900, 7300]);
+  // Category prefers the non-generic label (not "Outlet")
+  assert.equal(a.category, 'Grafikkort');
+  // Title prefers the most descriptive (longest)
+  assert.equal(a.title, 'ASUS GeForce RTX 4070 Dual OC');
+  // Image falls back to first available
+  assert.equal(a.imageUrl, 'img-a');
+});
+
+test('computeArbitrage keeps only the cheapest offer per store', async () => {
+  const { computeArbitrage } = await import('../src/services/dealEngine.js');
+  const items = [
+    { listingKey: 'a:1', productKey: 'switch-oled', gtin: '0045496453435' },
+    { listingKey: 'a:2', productKey: 'switch-oled', gtin: '0045496453435' },
+    { listingKey: 'b:1', productKey: 'switch-oled', gtin: '0045496453435' }
+  ];
+  const productByListingKey = new Map([
+    ['a:1', { listingKey: 'a:1', title: 'Switch OLED', category: 'Konsol', sourceId: 'power', sourceLabel: 'Power', currentPriceSek: 3200, url: 'u1', condition: 'outlet' }],
+    ['a:2', { listingKey: 'a:2', title: 'Switch OLED', category: 'Konsol', sourceId: 'power', sourceLabel: 'Power', currentPriceSek: 3000, url: 'u2', condition: 'outlet' }],
+    ['b:1', { listingKey: 'b:1', title: 'Switch OLED', category: 'Konsol', sourceId: 'elgiganten', sourceLabel: 'Elgiganten', currentPriceSek: 3500, url: 'u3', condition: 'outlet' }]
+  ]);
+  const arb = computeArbitrage(items, productByListingKey);
+  assert.equal(arb.length, 1);
+  assert.equal(arb[0].storeCount, 2, 'two distinct stores after per-store dedupe');
+  assert.equal(arb[0].bestPriceSek, 3000, 'cheapest Power offer wins');
+  assert.equal(arb[0].spreadSek, 500);
+});
+
+test('computeArbitrage drops zero-spread groups', async () => {
+  const { computeArbitrage } = await import('../src/services/dealEngine.js');
+  const items = [
+    { listingKey: 'a:1', productKey: 'same-price-item', gtin: '1234567890123' },
+    { listingKey: 'b:1', productKey: 'same-price-item', gtin: '1234567890123' }
+  ];
+  const productByListingKey = new Map([
+    ['a:1', { listingKey: 'a:1', title: 'X', category: 'Y', sourceId: 's1', sourceLabel: 'S1', currentPriceSek: 1000, url: 'u', condition: 'outlet' }],
+    ['b:1', { listingKey: 'b:1', title: 'X', category: 'Y', sourceId: 's2', sourceLabel: 'S2', currentPriceSek: 1000, url: 'u', condition: 'outlet' }]
+  ]);
+  assert.deepEqual(computeArbitrage(items, productByListingKey), []);
+});

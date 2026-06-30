@@ -170,3 +170,53 @@ test('queryFlips honours demandCategory and minRoi filters', () => {
   assert.equal(cache.queryFlips({ demandCategory: 'Graphics cards' }).total, 1);
   assert.equal(cache.queryFlips({ minRoiPercent: 999 }).total, 0);
 });
+
+test('queryArbitrage materializes cross-store spread for same product', () => {
+  const cache = new ProductCache();
+  const state = createDefaultState();
+  state.items = {
+    'komplett:1': {
+      listingKey: 'komplett:1', sourceId: 'komplett', sourceLabel: 'Komplett', title: 'ASUS RTX 4070 Dual OC',
+      category: 'Grafikkort', condition: 'outlet', latestPriceSek: 6500, gtin: '4711081898019',
+      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
+    },
+    'netonnet:2': {
+      listingKey: 'netonnet:2', sourceId: 'netonnet', sourceLabel: 'NetOnNet', title: 'ASUS GeForce RTX 4070 Dual',
+      category: 'Grafikkort', condition: 'outlet', latestPriceSek: 7200, gtin: '4711081898019',
+      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
+    },
+    // Single-store item — must NOT appear in arbitrage
+    'komplett:3': {
+      listingKey: 'komplett:3', sourceId: 'komplett', sourceLabel: 'Komplett', title: 'Lonely item',
+      category: 'Ljud', condition: 'outlet', latestPriceSek: 999,
+      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
+    }
+  };
+  cache.rebuild(state, new Map());
+
+  assert.equal(cache.arbitrage.length, 1, 'one cross-store arbitrage group');
+  const res = cache.queryArbitrage({});
+  assert.equal(res.total, 1);
+  const a = res.items[0];
+  assert.equal(a.bestPriceSek, 6500);
+  assert.equal(a.bestSourceLabel, 'Komplett');
+  assert.equal(a.highPriceSek, 7200);
+  assert.equal(a.spreadSek, 700);
+  assert.equal(a.storeCount, 2);
+  assert.equal(res.aggregates.bestSpreadSek, 700);
+  assert.ok(res.stores.some(s => s.id === 'komplett') && res.stores.some(s => s.id === 'netonnet'));
+});
+
+test('queryArbitrage filters by minSpreadSek and store', () => {
+  const cache = new ProductCache();
+  const state = createDefaultState();
+  state.items = {
+    'a:1': { listingKey: 'a:1', sourceId: 'a', sourceLabel: 'A', title: 'Switch OLED', category: 'Konsol', condition: 'outlet', latestPriceSek: 3000, gtin: '0045496453435', firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: [] },
+    'b:1': { listingKey: 'b:1', sourceId: 'b', sourceLabel: 'B', title: 'Switch OLED', category: 'Konsol', condition: 'outlet', latestPriceSek: 3100, gtin: '0045496453435', firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: [] }
+  };
+  cache.rebuild(state, new Map());
+  assert.equal(cache.queryArbitrage({ minSpreadSek: 200 }).total, 0, 'spread 100 filtered out by min 200');
+  assert.equal(cache.queryArbitrage({ minSpreadSek: 50 }).total, 1);
+  assert.equal(cache.queryArbitrage({ store: 'b' }).total, 1, 'store b participates');
+  assert.equal(cache.queryArbitrage({ store: 'zzz' }).total, 0, 'unknown store');
+});

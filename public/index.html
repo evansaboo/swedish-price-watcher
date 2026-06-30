@@ -65,6 +65,7 @@
         <div class="mode-switch" role="group" aria-label="View mode">
           <button type="button" class="mode-btn active" data-mode="deals">Deals</button>
           <button type="button" class="mode-btn" data-mode="flip">⚡ Flip</button>
+          <button type="button" class="mode-btn" data-mode="arbitrage">⇄ Arbitrage</button>
         </div>
         <div class="filter-pills" id="filter-pills">
           <button type="button" class="filter-pill active" data-filter-preset="all">All</button>
@@ -163,6 +164,27 @@
             <option value="roiPercent-desc">ROI %: high → low</option>
             <option value="buyPriceSek-asc">Buy price: low → high</option>
             <option value="sampleCount-desc">Most Blocket comps</option>
+          </select>
+        </div>
+      </div>
+    </nav>
+
+    <!-- ===== ARBITRAGE CONTROLS BAR ===== -->
+    <nav class="flip-bar hidden" id="arbitrage-bar">
+      <div class="flip-bar-inner">
+        <div class="flip-bar-intro" title="Same product sold by 2+ stores at different prices — buy the cheapest">
+          <span class="flip-bolt">⇄</span> Cross-store arbitrage — same product, cheapest store wins
+        </div>
+        <div class="flip-bar-controls">
+          <select id="arb-store-filter" class="field-select" aria-label="Store"><option value="">All stores</option></select>
+          <input id="arb-min-spread" type="number" class="field-input flip-num" min="0" step="50" placeholder="Min spread kr" />
+          <input id="arb-min-spread-pct" type="number" class="field-input flip-num" min="0" max="99" step="1" placeholder="Min spread %" />
+          <input id="arb-max-price" type="number" class="field-input flip-num" min="0" step="100" placeholder="Max buy kr" />
+          <select id="arb-sort" class="sort-select" aria-label="Sort arbitrage by">
+            <option value="spreadSek-desc">Spread kr: high → low</option>
+            <option value="spreadPercent-desc">Spread %: high → low</option>
+            <option value="bestPriceSek-asc">Buy price: low → high</option>
+            <option value="storeCount-desc">Most stores</option>
           </select>
         </div>
       </div>

@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { firstFinite } from '../lib/utils.js';
-import { buildIdentityGroups } from './dealEngine.js';
+import { buildIdentityGroups, computeArbitrage } from './dealEngine.js';
 import { buildResaleIndex, computeFlips, DEFAULT_RESALE_OPTIONS } from './resaleEngine.js';
 
 // Conditions whose items can be bought and re-sold privately (flip candidates).
@@ -60,6 +60,8 @@ export class ProductCache {
     this._campaigns = [];         // Unique campaigns [{label, value}]
     this._flips = [];             // Materialized flip/resale opportunities
     this._flipDemandCategories = []; // Unique demand categories among flips
+    this._arbitrage = [];         // Materialized cross-store arbitrage opportunities
+    this._arbitrageStores = [];   // Unique stores appearing in arbitrage offers
     this._resaleOptions = { ...DEFAULT_RESALE_OPTIONS, ...resaleOptions };
     this._resolveModel = null;    // optional LLM-backed resolver (set via setModelResolver)
     this._version = 0;            // Incremented on rebuild
@@ -78,6 +80,7 @@ export class ProductCache {
   get campaigns() { return this._campaigns; }
   get flips() { return this._flips; }
   get flipDemandCategories() { return this._flipDemandCategories; }
+  get arbitrage() { return this._arbitrage; }
 
   // Rebuild the entire cache from raw state. Call after scan completes or state loads.
   // sourceLabelMap: optional Map(sourceId → label) from config for label overrides
@@ -212,6 +215,19 @@ export class ProductCache {
       }
     }
 
+    // ── Retail arbitrage view ────────────────────────────────────
+    // Same product across 2+ stores with a real price spread — buy cheap, the
+    // dearer store's price is the arbitrage headroom.
+    this._arbitrage = computeArbitrage(includedItems, productByListingKey);
+    this._arbitrageStores = (() => {
+      const map = new Map();
+      for (const a of this._arbitrage) {
+        for (const o of a.offers) if (!map.has(o.sourceId)) map.set(o.sourceId, o.sourceLabel);
+      }
+      return [...map.entries()].map(([id, label]) => ({ id, label }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'sv-SE'));
+    })();
+
     // Pre-compute fast sort keys on each product (avoids per-comparison work in the hot sort loop)
     for (let i = 0; i < products.length; i++) {
       products[i]._titleKey = searchIndex[i]; // already normalized, reuse for tiebreaker
@@ -336,6 +352,76 @@ export class ProductCache {
         totalProfitSek: Math.round(profitSum),
         bestProfitSek: Math.round(bestProfit),
         avgProfitSek: totalFiltered ? Math.round(profitSum / totalFiltered) : 0
+      }
+    };
+  }
+
+  // Fast filtered + sorted + paginated query over cross-store arbitrage opportunities
+  queryArbitrage(params = {}) {
+    const {
+      search = '',
+      store = '',
+      minSpreadSek = NaN,
+      minSpreadPercent = NaN,
+      maxBuyPriceSek = NaN,
+      sortBy = 'spreadSek',
+      sortDir = 'desc',
+      page = 1,
+      pageSize = 50
+    } = params;
+
+    const searchTokens = tokenize(search);
+    const storeKey = String(store ?? '').trim();
+
+    let filtered = this._arbitrage.filter((a) => {
+      // Store filter matches any offer in the group (the deal is relevant if this store participates).
+      if (storeKey && !a.offers.some((o) => o.sourceId === storeKey)) return false;
+      if (Number.isFinite(minSpreadSek) && a.spreadSek < minSpreadSek) return false;
+      if (Number.isFinite(minSpreadPercent) && a.spreadPercent < minSpreadPercent) return false;
+      if (Number.isFinite(maxBuyPriceSek) && maxBuyPriceSek > 0 && a.bestPriceSek > maxBuyPriceSek) return false;
+      if (searchTokens.length) {
+        const hay = normalizeForSearch([a.title, a.category, ...a.offers.map((o) => o.sourceLabel)].filter(Boolean).join(' '));
+        for (const t of searchTokens) if (!hay.includes(t)) return false;
+      }
+      return true;
+    });
+
+    const validSortColumns = new Set(['spreadSek', 'spreadPercent', 'bestPriceSek', 'storeCount']);
+    const col = validSortColumns.has(sortBy) ? sortBy : 'spreadSek';
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (!(col === 'spreadSek' && dir === -1)) {
+      filtered = filtered.slice().sort((a, b) => {
+        const cmp = (Number(a[col]) || 0) - (Number(b[col]) || 0);
+        return cmp !== 0 ? cmp * dir : b.spreadSek - a.spreadSek;
+      });
+    }
+
+    const totalFiltered = filtered.length;
+    let spreadSum = 0;
+    let bestSpread = 0;
+    for (const a of filtered) {
+      spreadSum += a.spreadSek;
+      if (a.spreadSek > bestSpread) bestSpread = a.spreadSek;
+    }
+
+    const safePageSize = Number.isFinite(pageSize) ? pageSize : 50;
+    const safePage = Number.isFinite(page) ? page : 1;
+    const clampedPageSize = Math.min(200, Math.max(1, safePageSize));
+    const totalPages = Math.ceil(totalFiltered / clampedPageSize) || 1;
+    const clampedPage = Math.min(Math.max(1, safePage), totalPages);
+    const offset = (clampedPage - 1) * clampedPageSize;
+
+    return {
+      items: filtered.slice(offset, offset + clampedPageSize),
+      total: totalFiltered,
+      page: clampedPage,
+      pageSize: clampedPageSize,
+      totalPages,
+      stores: this._arbitrageStores,
+      aggregates: {
+        totalSpreadSek: Math.round(spreadSum),
+        bestSpreadSek: Math.round(bestSpread),
+        avgSpreadSek: totalFiltered ? Math.round(spreadSum / totalFiltered) : 0
       }
     };
   }

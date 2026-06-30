@@ -54,7 +54,15 @@ const state = {
   flipMaxPrice: '',
   flipSortBy: 'netProfitSek',
   flipSortDir: 'desc',
-  flipPage: 1
+  flipPage: 1,
+  // Arbitrage view
+  arbStore: '',
+  arbMinSpread: '',
+  arbMinSpreadPct: '',
+  arbMaxPrice: '',
+  arbSortBy: 'spreadSek',
+  arbSortDir: 'desc',
+  arbPage: 1
 };
 
 const STORAGE_KEY = 'pricewatch-ui-v2';
@@ -133,7 +141,14 @@ const el = {
   flipMinProfit: $('#flip-min-profit'),
   flipMinRoi: $('#flip-min-roi'),
   flipMaxPrice: $('#flip-max-price'),
-  flipSort: $('#flip-sort')
+  flipSort: $('#flip-sort'),
+  // Arbitrage view
+  arbBar: $('#arbitrage-bar'),
+  arbStoreFilter: $('#arb-store-filter'),
+  arbMinSpread: $('#arb-min-spread'),
+  arbMinSpreadPct: $('#arb-min-spread-pct'),
+  arbMaxPrice: $('#arb-max-price'),
+  arbSort: $('#arb-sort')
 };
 
 let scanPollTimer = null;
@@ -277,7 +292,7 @@ function hydratePrefs() {
   if (s.sortDirection === 'asc' || s.sortDirection === 'desc') state.sortDirection = s.sortDirection;
   if (s.viewMode === 'grid' || s.viewMode === 'list') state.viewMode = s.viewMode;
   if (typeof s.activePreset === 'string') state.activePreset = s.activePreset;
-  if (s.mode === 'deals' || s.mode === 'flip') state.mode = s.mode;
+  if (s.mode === 'deals' || s.mode === 'flip' || s.mode === 'arbitrage') state.mode = s.mode;
 
   // Sync UI
   el.searchInput.value = state.search;
@@ -704,7 +719,9 @@ function renderPagination(response) {
     btn.addEventListener('click', () => {
       const target = Number(btn.getAttribute('data-page'));
       if (!Number.isFinite(target) || target < 1) return;
-      if (state.mode === 'flip') state.flipPage = target; else state.currentPage = target;
+      if (state.mode === 'flip') state.flipPage = target;
+      else if (state.mode === 'arbitrage') state.arbPage = target;
+      else state.currentPage = target;
       loadActiveView().catch(err => showToast(err.message, 'error'));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -867,21 +884,26 @@ async function loadFlips() {
   renderFlips(response);
 }
 
-// Dispatch list refresh to the active view (deals or flip).
+// Dispatch list refresh to the active view (deals, flip or arbitrage).
 function loadActiveView() {
-  return state.mode === 'flip' ? loadFlips() : loadProducts();
+  if (state.mode === 'flip') return loadFlips();
+  if (state.mode === 'arbitrage') return loadArbitrage();
+  return loadProducts();
 }
 
 function applyModeUI(mode) {
   const isFlip = mode === 'flip';
+  const isArb = mode === 'arbitrage';
+  const isList = isFlip || isArb; // non-deals modes hide the deals chrome
   for (const b of el.modeButtons) b.classList.toggle('active', b.dataset.mode === mode);
   el.flipBar.classList.toggle('hidden', !isFlip);
-  document.getElementById('filter-pills').classList.toggle('hidden', isFlip);
-  document.querySelector('.filter-bar-right').classList.toggle('hidden', isFlip);
-  el.searchInput.placeholder = isFlip ? 'Search flips…' : 'Search deals...';
+  if (el.arbBar) el.arbBar.classList.toggle('hidden', !isArb);
+  document.getElementById('filter-pills').classList.toggle('hidden', isList);
+  document.querySelector('.filter-bar-right').classList.toggle('hidden', isList);
+  el.searchInput.placeholder = isFlip ? 'Search flips…' : isArb ? 'Search arbitrage…' : 'Search deals...';
 
-  // Close the deals filter panel when entering flip mode
-  if (isFlip && state.filterPanelOpen) {
+  // Close the deals filter panel when leaving deals mode
+  if (isList && state.filterPanelOpen) {
     state.filterPanelOpen = false;
     el.filterPanel.classList.add('hidden');
     el.filterExpandBtn.classList.remove('active');
@@ -890,7 +912,7 @@ function applyModeUI(mode) {
 }
 
 function setMode(mode) {
-  if (mode !== 'deals' && mode !== 'flip') return;
+  if (mode !== 'deals' && mode !== 'flip' && mode !== 'arbitrage') return;
   state.mode = mode;
   applyModeUI(mode);
   savePrefs();
@@ -914,6 +936,147 @@ function updateFlipFilters({ debounce = false } = {}) {
     return;
   }
   loadFlips().catch(err => showToast(err.message, 'error'));
+}
+
+// ── ARBITRAGE VIEW ──────────────────────────────────────────────
+function buildArbitrageQuery() {
+  const params = new URLSearchParams();
+  const minSpread = parsePositiveInteger(state.arbMinSpread);
+  const minSpreadPct = parsePositiveInteger(state.arbMinSpreadPct);
+  const maxPrice = parsePositiveInteger(state.arbMaxPrice);
+
+  if (state.search) params.set('search', state.search);
+  if (state.arbStore) params.set('store', state.arbStore);
+  if (minSpread) params.set('minSpreadSek', String(minSpread));
+  if (minSpreadPct) params.set('minSpreadPercent', String(minSpreadPct));
+  if (maxPrice) params.set('maxBuyPriceSek', String(maxPrice));
+
+  params.set('sortBy', state.arbSortBy);
+  params.set('sortDir', state.arbSortDir);
+  params.set('page', String(state.arbPage));
+  params.set('pageSize', String(state.pageSize));
+  return `?${params.toString()}`;
+}
+
+function renderArbitrageStoreFilter(stores) {
+  if (!el.arbStoreFilter || !Array.isArray(stores)) return;
+  el.arbStoreFilter.innerHTML = ['<option value="">All stores</option>']
+    .concat(stores.map(s => `<option value="${escapeHtml(s.id)}"${s.id === state.arbStore ? ' selected' : ''}>${escapeHtml(s.label)}</option>`))
+    .join('');
+}
+
+function renderArbitrageStats(response) {
+  const agg = response?.aggregates ?? {};
+  const total = response?.total ?? 0;
+  const pills = [
+    [total, 'opportunities'],
+    [formatSek(agg.bestSpreadSek ?? 0), 'best spread'],
+    [formatSek(agg.avgSpreadSek ?? 0), 'avg spread'],
+    [formatSek(agg.totalSpreadSek ?? 0), 'total spread']
+  ];
+  el.statsPills.innerHTML = pills
+    .map(([val, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(val))}</strong> ${escapeHtml(label)}</span>`)
+    .join('');
+  el.productsCount.textContent = `${total} arbitrage opportunities`;
+  el.activeFilterTags.innerHTML = '';
+  el.filterCountBadge.classList.add('hidden');
+}
+
+function renderArbitrage(response) {
+  const items = response?.items ?? [];
+  const total = response?.total ?? items.length;
+
+  if (!total) {
+    el.productGrid.innerHTML = '';
+    el.paginationArea.innerHTML = '';
+    el.emptyState.classList.remove('hidden');
+    return;
+  }
+  el.emptyState.classList.add('hidden');
+
+  const cards = items.map((a, idx) => {
+    const imgSrc = a.imageUrl;
+    const imageHtml = imgSrc
+      ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder-img\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'" />`
+      : `<div class="card-placeholder-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+
+    const bestUrl = a.bestUrl ? escapeHtml(a.bestUrl) : '';
+    const titleLink = bestUrl
+      ? `<a href="${bestUrl}" target="_blank" rel="noreferrer">${escapeHtml(a.title)}</a>`
+      : escapeHtml(a.title);
+
+    const offersHtml = a.offers.map((o, i) => {
+      const url = o.url ? escapeHtml(o.url) : '';
+      const label = url ? `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(o.sourceLabel)}</a>` : escapeHtml(o.sourceLabel);
+      const cls = i === 0 ? 'arb-offer arb-offer-best' : 'arb-offer';
+      const tag = i === 0 ? '<span class="arb-offer-tag">cheapest</span>' : '';
+      return `<li class="${cls}"><span class="arb-offer-store">${label}${tag}</span><span class="arb-offer-price">${formatSek(o.priceSek)}</span></li>`;
+    }).join('');
+
+    const delay = Math.min(idx * 25, 300);
+
+    return `
+      <article class="product-card flip-card arb-card" style="animation-delay:${delay}ms">
+        <div class="card-image">
+          ${imageHtml}
+          <div class="card-badges"><div class="card-badges-left"><span class="badge badge-model" title="Stores offering this product">${a.storeCount} stores</span></div></div>
+        </div>
+        <div class="card-body">
+          <span class="card-store">${escapeHtml(a.category ?? 'Elektronik')}</span>
+          <h3 class="card-title">${titleLink}</h3>
+          <div class="card-pricing">
+            <div class="flip-prices">
+              <div class="flip-price-block">
+                <span class="flip-price-label">Buy at ${escapeHtml(a.bestSourceLabel)}</span>
+                <span class="flip-price-buy">${formatSek(a.bestPriceSek)}</span>
+              </div>
+              <div class="flip-price-block" style="text-align:right">
+                <span class="flip-price-label">Dearest (${escapeHtml(a.highSourceLabel)})</span>
+                <span class="flip-price-resale">${formatSek(a.highPriceSek)}</span>
+              </div>
+            </div>
+            <div class="flip-profit-row">
+              <div class="flip-profit-main">
+                <span class="flip-profit-value">${formatSek(a.spreadSek)}</span>
+                <span class="flip-profit-label">price spread</span>
+              </div>
+              <span class="flip-roi" title="Cheapest vs. dearest store">−${a.spreadPercent}%</span>
+            </div>
+            <ul class="arb-offers">${offersHtml}</ul>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  el.productGrid.innerHTML = cards;
+  renderPagination(response);
+}
+
+async function loadArbitrage() {
+  const response = await fetchJson(`/api/arbitrage${buildArbitrageQuery()}`);
+  latestProducts = response;
+  renderArbitrageStoreFilter(response?.stores ?? []);
+  renderArbitrageStats(response);
+  renderArbitrage(response);
+}
+
+function updateArbFilters({ debounce = false } = {}) {
+  state.arbStore = el.arbStoreFilter.value;
+  state.arbMinSpread = el.arbMinSpread.value.trim();
+  state.arbMinSpreadPct = el.arbMinSpreadPct.value.trim();
+  state.arbMaxPrice = el.arbMaxPrice.value.trim();
+  state.arbPage = 1;
+
+  if (debounce) {
+    if (filterApplyTimer) clearTimeout(filterApplyTimer);
+    filterApplyTimer = setTimeout(() => {
+      filterApplyTimer = null;
+      loadArbitrage().catch(err => showToast(err.message, 'error'));
+    }, 250);
+    return;
+  }
+  loadArbitrage().catch(err => showToast(err.message, 'error'));
 }
 
 // ── WISHLIST ────────────────────────────────────────────────────
@@ -1419,6 +1582,8 @@ async function loadDashboard() {
 
   if (state.mode === 'flip') {
     await loadFlips();
+  } else if (state.mode === 'arbitrage') {
+    await loadArbitrage();
   } else {
     renderStats(status, response);
     renderActiveFilterTags();
@@ -1809,12 +1974,17 @@ function bindEvents() {
       state.flipPage = 1;
       if (filterApplyTimer) clearTimeout(filterApplyTimer);
       filterApplyTimer = setTimeout(() => { filterApplyTimer = null; loadFlips().catch(err => showToast(err.message, 'error')); }, 250);
+    } else if (state.mode === 'arbitrage') {
+      state.search = el.searchInput.value.trim();
+      state.arbPage = 1;
+      if (filterApplyTimer) clearTimeout(filterApplyTimer);
+      filterApplyTimer = setTimeout(() => { filterApplyTimer = null; loadArbitrage().catch(err => showToast(err.message, 'error')); }, 250);
     } else {
       updateFilters({ debounce: true });
     }
   });
 
-  // Deals / Flip mode switch
+  // Deals / Flip / Arbitrage mode switch
   for (const btn of el.modeButtons) {
     btn.addEventListener('click', () => setMode(btn.dataset.mode));
   }
@@ -1831,6 +2001,19 @@ function bindEvents() {
     state.flipSortDir = dir;
     state.flipPage = 1;
     loadFlips().catch(err => showToast(err.message, 'error'));
+  });
+
+  // Arbitrage controls
+  el.arbStoreFilter?.addEventListener('change', () => updateArbFilters());
+  el.arbMinSpread?.addEventListener('input', () => updateArbFilters({ debounce: true }));
+  el.arbMinSpreadPct?.addEventListener('input', () => updateArbFilters({ debounce: true }));
+  el.arbMaxPrice?.addEventListener('input', () => updateArbFilters({ debounce: true }));
+  el.arbSort?.addEventListener('change', () => {
+    const [col, dir] = el.arbSort.value.split('-');
+    state.arbSortBy = col;
+    state.arbSortDir = dir;
+    state.arbPage = 1;
+    loadArbitrage().catch(err => showToast(err.message, 'error'));
   });
 
   // Filter selects

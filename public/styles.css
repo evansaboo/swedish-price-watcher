@@ -1991,6 +1991,42 @@ body.scanning { --scan-bar-height: 28px; }
   white-space: nowrap;
 }
 .flip-comps a:hover { text-decoration: underline; }
+
+/* ── Arbitrage offers list ── */
+.arb-offers {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--border, #e5e7eb);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.arb-offer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #4b5563);
+}
+.arb-offer-store { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.arb-offer-store a { color: var(--text-secondary, #4b5563); font-weight: 600; }
+.arb-offer-store a:hover { color: var(--blue); text-decoration: underline; }
+.arb-offer-price { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.arb-offer-best .arb-offer-store a,
+.arb-offer-best .arb-offer-store { color: var(--green, #16a34a); font-weight: 700; }
+.arb-offer-best .arb-offer-price { color: var(--green, #16a34a); font-weight: 700; }
+.arb-offer-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  color: #fff;
+  background: var(--green, #16a34a);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
 .badge-model {
   background: var(--blue-soft);
   color: var(--blue);
