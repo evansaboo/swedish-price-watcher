@@ -120,7 +120,10 @@ describe('extractResaleModel', () => {
     assert.equal(extractResaleModel('Switch OLED vit').resaleKey, 'nintendo-switch-oled');
     assert.equal(extractResaleModel('Nintendo Switch Lite Korall').resaleKey, 'nintendo-switch-lite');
     assert.equal(extractResaleModel('ASUS ROG Ally 512 GB handhållen konsol').resaleKey, 'rog-ally');
-    assert.equal(extractResaleModel('PlayStation 5 Slim Console – Ghost of Yotei Gold Limited Edition Bundle').resaleKey, 'ps5-slim');
+    // A console + pack-in GAME bundle ("… Ghost of Yotei … Bundle") carries a game
+    // name, so it is conservatively NOT keyed as the bare console — this keeps
+    // multi-game Blocket bundles out of the bare-console comp median.
+    assert.equal(extractResaleModel('PlayStation 5 Slim Console – Ghost of Yotei Gold Limited Edition Bundle'), null);
   });
 
   it('extracts AMD and Intel CPU model signatures', () => {
@@ -140,6 +143,34 @@ describe('extractResaleModel', () => {
     const watch = extractResaleModel('Samsung Galaxy Watch4 Classic 46 mm BT, silver');
     assert.equal(watch.resaleKey, 'galaxy-watch-4-classic-46mm');
     assert.equal(watch.demandCategory, 'Samsung — Galaxy Watch');
+  });
+
+  it('keeps games and bundles that only NAME the platform out of the console index', () => {
+    // Real production comps that polluted the PS5 / Xbox / Switch bare-console buckets.
+    assert.equal(extractResaleModel('Playstation 5 - Evil Dead - ps5'), null);
+    assert.equal(extractResaleModel('Avatar Frontiers of Pandora Playstation 5'), null);
+    assert.equal(extractResaleModel('NBA 2K23 (Xbox Series X)'), null);
+    assert.equal(extractResaleModel('Valkyrie Elysium (PS5)'), null);
+    assert.equal(extractResaleModel('Xbox Series S paket med TMR'), null);
+    assert.equal(extractResaleModel('Mario Tennis Fever Nintendo Switch 2'), null);
+    assert.equal(extractResaleModel('Wonder Boy Anniversary Collection - Nintendo Switch'), null);
+    assert.equal(extractResaleModel('Playstation 5 utbytes mot XBOX SERIES X eller 5000kr'), null);
+    assert.equal(extractResaleModel('PlayStation 5 Portal med tillbehör i nyskick'), null);
+    // …but the bare hardware (incl. plain colours / storage / condition) still matches.
+    assert.equal(extractResaleModel('Microsoft Xbox Series X Spelkonsol').resaleKey, 'xbox-series-x');
+    assert.equal(extractResaleModel('Sony PlayStation 5 spelkonsol vit').resaleKey, 'ps5');
+    assert.equal(extractResaleModel('Xbox Series X 1TB').resaleKey, 'xbox-series-x');
+    assert.equal(extractResaleModel('Nintendo switch fint skick FYND').resaleKey, 'nintendo-switch');
+    assert.equal(extractResaleModel('Valve Steam Deck OLED 1TB').resaleKey, 'steam-deck-oled');
+  });
+
+  it('rejects multi-device bundles that would inflate a single device median', () => {
+    // iPad + Magic Keyboard bundle (9 500 kr) must not be priced as a bare iPad.
+    assert.equal(extractResaleModel('Apple iPad Air 13” surfplatta 128 GB + Magic Keyboard'), null);
+    // Phone + watch bundle must not be priced as the watch alone.
+    assert.equal(extractResaleModel('Samsung Galaxy S24 Ultra 256 GB Med galaxy watch'), null);
+    // The bare watch still matches.
+    assert.equal(extractResaleModel('Samsung Galaxy Watch Ultra blå').resaleKey, 'galaxy-watch-ultra');
   });
 
   it('extracts Google Pixel phones', () => {

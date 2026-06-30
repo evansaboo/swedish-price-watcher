@@ -120,26 +120,36 @@ test('enrich classifies missed titles and re-keys via the deterministic matcher'
   assert.equal(c.resolveModel('Silikonskal iPhone 14'), null);
 });
 
-test('low-precision console positives are re-verified by the LLM', async () => {
+test('console game-vs-hardware is decided deterministically, not by the LLM', async () => {
   const calls = [];
-  // A bare-named game the deterministic matcher keys as a console (low precision),
-  // and a real console the matcher also keys — the LLM confirms one, rejects one.
-  const labels = {
-    'PS5 Dragons Dogma 2': null,                        // video game → reject
-    'PlayStation 5 Slim Digital Edition': 'PlayStation 5 Digital'
-  };
   const c = createLlmClassifier({
-    apiKey: 'k', fetchImpl: mockFetch(labels, { calls }), logger: silentLogger
+    apiKey: 'k', fetchImpl: mockFetch({}, { calls }), logger: silentLogger
   });
+  // The deterministic hardware gate rejects the game and keeps the console, so the
+  // unreliable local model is never consulted for either.
+  await c.enrich(['PS5 Dragons Dogma 2', 'PlayStation 5 Slim Digital Edition']);
+  assert.equal(calls.length, 0, 'console titles must NOT be sent to the LLM');
 
-  // Both are deterministic console matches, but both must still be sent for review.
-  await c.enrich(Object.keys(labels));
-  assert.equal(calls.length, 1, 'low-precision console titles must be sent to the LLM');
-  assert.deepEqual(calls[0].sort(), Object.keys(labels).sort());
-
-  // The game is dropped; the real console is re-keyed from its cleaned label.
+  // The game (leftover "dragons dogma" tokens) is dropped; the bare console matches.
   assert.equal(c.resolveModel('PS5 Dragons Dogma 2'), null);
   assert.equal(c.resolveModel('PlayStation 5 Slim Digital Edition').resaleKey, 'ps5-digital');
+});
+
+test('the LLM may not CREATE a console from a non-console title', async () => {
+  // A KVM/network "switch" or a game with a parenthetical platform tag must never
+  // become a console even if a stale cache holds a hallucinated console label.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-console-veto-'));
+  const cacheFile = path.join(dir, 'cache.json');
+  fs.writeFileSync(cacheFile, JSON.stringify({
+    version: 3,
+    entries: {
+      [cacheKeyForTitle('KVM-switch med VGA och USB')]: 'Nintendo Switch',
+      [cacheKeyForTitle('NBA 2K23 (Xbox Series X)')]: 'Xbox Series X'
+    }
+  }));
+  const c = createLlmClassifier({ apiKey: 'k', cacheFile, fetchImpl: mockFetch({}), logger: silentLogger });
+  assert.equal(c.resolveModel('KVM-switch med VGA och USB'), null);
+  assert.equal(c.resolveModel('NBA 2K23 (Xbox Series X)'), null);
 });
 
 test('high-precision (non-console) positives bypass the LLM', async () => {

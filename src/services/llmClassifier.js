@@ -25,7 +25,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import fs from 'node:fs';
-import { extractResaleModel, looksLikeAccessoryOrRepair, looksLikeSystemOrBuild } from './resaleEngine.js';
+import { extractResaleModel, looksLikeAccessoryOrRepair, looksLikeSystemOrBuild, looksLikeConsoleGameOrPeripheralTitle, mentionsLowPrecisionPlatform } from './resaleEngine.js';
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -236,20 +236,11 @@ export function createLlmClassifier(opts = {}) {
   // re-keys through the deterministic matcher so resaleKeys stay consistent.
   function resolveModel(title) {
     const direct = extractResaleModel(title);
-    if (direct) {
-      // High-precision categories (Apple/GPU/CPU): trust the matcher directly.
-      if (!LOW_PRECISION_CATEGORIES.has(direct.demandCategory)) return direct;
-      // Low-precision (consoles/handhelds): re-verify against the LLM verdict.
-      const key = cacheKeyForTitle(title);
-      if (cache.has(key)) {
-        const clean = cache.get(key);
-        if (clean === null) return null;                 // LLM: game/peripheral → drop
-        if (typeof clean === 'string' && clean) {
-          return extractResaleModel(clean) ?? direct;    // re-key cleaned label
-        }
-      }
-      return direct; // not yet classified → keep optimistically (cleaned next run)
-    }
+    // The deterministic matcher is authoritative for EVERY category. Console /
+    // handheld correctness now comes from the deterministic hardware gate
+    // (looksLikeConsoleHardware) — NOT from the small local LLM, which hallucinates
+    // wildly on game/console titles — so a direct match is always trusted.
+    if (direct) return direct;
     const clean = cache.get(cacheKeyForTitle(title));
     if (typeof clean === 'string' && clean) {
       // Veto: never let the LLM "recover" a structural accessory/repair title by
@@ -260,7 +251,18 @@ export function createLlmClassifier(opts = {}) {
       // local models routinely do this, which would pollute the bare-card comp
       // index with whole-build prices. The deterministic build guard is authoritative.
       if (looksLikeSystemOrBuild(title)) return null;
-      return extractResaleModel(clean); // may still be null if it re-fails guards
+      // Veto: never let the LLM "recover" a console game/peripheral into the bare
+      // console (e.g. "NBA 2K23 (Xbox Series X)" → "Xbox Series X").
+      if (looksLikeConsoleGameOrPeripheralTitle(title)) return null;
+      const reModel = extractResaleModel(clean);
+      if (!reModel) return null;
+      // Veto: the LLM may never CREATE a console/handheld match from a title the
+      // deterministic matcher rejected. A genuine console always names the platform
+      // literally (so it matches directly); an LLM turning a non-console title into
+      // a console (KVM switch → Nintendo Switch, keyboard → Xbox controller) is a
+      // hallucination that would pollute the console index.
+      if (LOW_PRECISION_CATEGORIES.has(reModel.demandCategory)) return null;
+      return reModel;
     }
     return null;
   }
@@ -394,10 +396,18 @@ export function createLlmClassifier(opts = {}) {
       // Never classify complete systems/laptops/builds — unambiguously not a bare
       // component; sending them to a small model only risks hallucinated card labels.
       if (looksLikeSystemOrBuild(title)) continue;
-      // Skip titles the deterministic matcher already resolves to a HIGH-precision
-      // category; low-precision console/handheld positives still need LLM review.
+      // Never classify console games/peripherals — the deterministic guards handle
+      // them; sending them only risks the model echoing the platform as the console.
+      if (looksLikeConsoleGameOrPeripheralTitle(title)) continue;
+      // Skip ANY console/handheld platform title: those resolve deterministically
+      // via the hardware gate, so the unreliable local model has nothing to add and
+      // would only waste the per-run inference budget.
+      if (mentionsLowPrecisionPlatform(title)) continue;
+      // Skip every title the deterministic matcher already resolves: all categories
+      // (including consoles/handhelds, via the hardware gate) are now authoritative,
+      // so there is nothing for the unreliable local model to add.
       const direct = extractResaleModel(title);
-      if (direct && !LOW_PRECISION_CATEGORIES.has(direct.demandCategory)) continue;
+      if (direct) continue;
       seen.add(key);
       pending.push(title);
       if (pending.length >= maxTitlesPerRun) break;

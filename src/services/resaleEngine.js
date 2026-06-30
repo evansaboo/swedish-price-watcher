@@ -68,7 +68,7 @@ const ACCESSORY_PATTERN = new RegExp('\\b[a-z]*(?:' + [
   // power / cabling / connectivity
   'laddare', 'kabel', 'adapter', 'dongle', 'dockningsstation', 'docka', 'hubb',
   // mounts / stands / peripherals
-  'stativ', 'hallare', 'faste', 'tangentbord', 'fjarrkontroll', 'pencil',
+  'stativ', 'hallare', 'faste', 'tangentbord', 'keyboard', 'fjarrkontroll', 'pencil',
   'gamepad', 'grepp', 'handkontroll', 'stylus', 'penna', 'crayon',
   // folio cases / watch bands ("Leather Folio", "Alpine Loop"/"Bergsloop", "Sportloop")
   'folio', 'loop',
@@ -168,7 +168,91 @@ function looksLikeConsoleGameOrPeripheral(rawTitle, norm) {
   return true;
 }
 
+// Title-only wrapper so the LLM layer can refuse to "recover" a console game /
+// peripheral title into the bare console (e.g. "NBA 2K23 (Xbox Series X)" → the
+// game name stripped to "Xbox Series X"). Mirrors looksLikeAccessoryOrRepair.
+export function looksLikeConsoleGameOrPeripheralTitle(title) {
+  const raw = String(title ?? '');
+  const norm = normalize(raw);
+  if (!norm) return false;
+  return looksLikeConsoleGameOrPeripheral(raw, norm);
+}
+
+// Vocabulary that legitimately appears in a *bare console/handheld* listing:
+// the platform name, configuration/condition/colour words, storage, packaging,
+// bundled controllers/cables, and generic selling chatter. A REAL console title
+// is essentially the console name plus only these filler words; a GAME or an
+// ACCESSORY listing additionally carries a game name or product noun (e.g. "Evil
+// Dead", "Mario Tennis", "Portal", "TMR"). So if any non-filler "content" token
+// survives, the title is NOT the bare console and must not be priced as one. This
+// is deterministic and high-precision — it does NOT depend on the (unreliable)
+// LLM to tell a 99 kr game apart from a 5 000 kr console.
+const CONSOLE_HARDWARE_FILLER = new Set([
+  // platform identity
+  'playstation', 'ps', 'ps5', 'ps4', 'xbox', 'series', 'nintendo', 'switch',
+  'sony', 'microsoft', 'steam', 'deck', 'rog', 'ally', 'valve', 'asus', 'x', 's',
+  'handhallen', 'handhall', 'handhallna', 'handheld', 'barbar',
+  // variants / config
+  'pro', 'slim', 'digital', 'disc', 'edition', 'standard', 'version', 'modell',
+  'model', 'generation', 'gen', 'basenhet', 'basmodell', 'oled', 'lite', 'fat', 'v1', 'v2',
+  // hardware nouns
+  'konsol', 'spelkonsol', 'console', 'spelkonsoll',
+  // colours
+  'vit', 'svart', 'bla', 'gra', 'gron', 'rod', 'roda', 'rosa', 'lila', 'gul', 'beige',
+  'white', 'black', 'blue', 'grey', 'gray', 'red', 'green', 'pink', 'farg', 'fargen', 'fargad',
+  'korall', 'coral', 'turkos', 'orange', 'guld', 'gold', 'silver', 'lavendel', 'lavender', 'neon',
+  // condition
+  'ny', 'nytt', 'nya', 'nyskick', 'skick', 'fin', 'fint', 'fina', 'bra', 'toppskick',
+  'topskick', 'mint', 'helt', 'hel', 'som', 'oanvand', 'oanvant', 'oppnad', 'oppen',
+  'begagnad', 'begagnat', 'anvand', 'anvande', 'snygg', 'snyggt', 'prima', 'topp',
+  'perfekt', 'perfekta', 'fungerar', 'fungerande', 'funkar', 'renoverad',
+  // packaging / warranty
+  'kvitto', 'kvitton', 'garanti', 'kartong', 'originalkartong', 'originalforpackning',
+  'forpackning', 'forpackad', 'org', 'originalet', 'original', 'originalkartongen',
+  'inplastad', 'forseglad', 'plomberad', 'plomb', 'lada', 'box', 'medfoljer', 'medfoljande',
+  // bundle / accessory filler (a console may include these)
+  'med', 'och', 'utan', 'inkl', 'inklusive', 'tillbehor', 'tillbehoren', 'komplett',
+  'paket', 'bundle', 'extra', 'plus', 'samt', 'st', 'stycken', 'par', 'sett', 'set',
+  'allt', 'alla', 'originalkablar', 'kablar', 'kabel', 'laddare', 'strom', 'stromkabel', 'hdmi',
+  // controllers / cables included with a console
+  'handkontroll', 'handkontroller', 'kontroll', 'kontroller', 'controller', 'controllers',
+  'dualsense', 'dualshock', 'joycon', 'joy', 'con', 'tradlos', 'tradlosa',
+  // generic selling chatter
+  'saljes', 'saljs', 'salja', 'saljer', 'min', 'mitt', 'mina', 'fynd', 'fyndvara', 'rea',
+  'billig', 'billigt', 'billigare', 'i', 'till', 'for', 'av', 'en', 'ett', 'den', 'det',
+  'mycket', 'super', 'snabb', 'snabbt', 'affar', 'finns', 'kop', 'kopt', 'kopes', 'direkt',
+  'privat', 'spel', 'spelet', 'samtliga', 'knappt', 'nastan', 'endast', 'bara', 'ovrigt',
+  'm', 'gb', 'tb'
+]);
+const CONSOLE_STORAGE_TOKEN = /^\d+(?:gb|tb)$/;
+
+// True when a console/handheld title is the BARE hardware (no leftover game/extra
+// product tokens) — see CONSOLE_HARDWARE_FILLER. Used to keep games/accessories
+// that merely mention the platform out of the console comp/candidate index.
+function looksLikeConsoleHardware(norm) {
+  for (const t of norm.split(/\s+/)) {
+    if (t.length < 2) continue;                 // single letters (x, s, i) are platform/filler
+    if (/^\d+$/.test(t)) continue;              // bare numbers (generation, year, count)
+    if (CONSOLE_STORAGE_TOKEN.test(t)) continue; // 1tb / 512gb
+    if (!CONSOLE_HARDWARE_FILLER.has(t)) return false; // a real content word → not bare hardware
+  }
+  return true;
+}
+
+// True when a title names a console/handheld PLATFORM at all (hardware, game or
+// accessory). Such titles can only ever resolve to a console/handheld, which is
+// now decided deterministically by the hardware gate above — so the (unreliable)
+// LLM has nothing to add and they can be skipped during enrichment.
+const LOW_PRECISION_PLATFORM_PATTERN =
+  /\b(?:ps5|ps4|playstation|xbox|nintendo|steam\s*deck|rog\s*ally)\b|\bswitch\b/;
+export function mentionsLowPrecisionPlatform(title) {
+  const norm = normalize(title);
+  return !!norm && LOW_PRECISION_PLATFORM_PATTERN.test(norm);
+}
+
 // ── Per-category extractors ────────────────────────────────────
+// Each returns { resaleKey, modelLabel } or null. demandCategory is attached
+// by the dispatcher below.
 // Each returns { resaleKey, modelLabel } or null. demandCategory is attached
 // by the dispatcher below.
 
@@ -378,6 +462,9 @@ const titleCase = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 
 function matchSamsungGalaxyPhone(norm) {
   if (!/\bgalaxy\b/.test(norm)) return null;
+  // A phone + watch bundle ("Galaxy S24 Ultra … med Galaxy Watch") is ambiguous and
+  // priced higher than the bare phone — reject it (the watch matcher rejects it too).
+  if (/galaxy\s*watch/.test(norm)) return null;
   const storage = extractStorage(norm);
   // Foldables: Galaxy Z Fold / Z Flip (optional generation).
   const z = norm.match(/\bz\s*(fold|flip)\s*(\d{1,2})?/);
@@ -429,6 +516,9 @@ function matchSamsungGalaxyTab(norm) {
 
 function matchSamsungGalaxyWatch(norm) {
   if (!/galaxy\s*watch/.test(norm)) return null;
+  // A phone+watch bundle ("Galaxy S24 Ultra … med Galaxy Watch") is dominated by
+  // the phone's price — never key it as the watch alone.
+  if (/galaxy\s*(?:s\d|z\s*(?:flip|fold)|note)/.test(norm)) return null;
   const size = norm.match(/\b(40|42|43|44|45|46|47)\s*mm\b/);
   const sizeKey = size ? `-${size[1]}mm` : '';
   const sizeLabel = size ? ` ${size[1]}mm` : '';
@@ -559,10 +649,13 @@ export function extractResaleModel(title) {
     const result = extractor(norm);
     if (result?.resaleKey) {
       // Console/handheld titles share the platform name with games & peripherals;
-      // reject those so they are never priced as the hardware itself.
-      if ((demandCategory === 'Game consoles' || demandCategory === 'Handhelds')
-          && looksLikeConsoleGameOrPeripheral(String(title ?? ''), norm)) {
-        return null;
+      // reject those so they are never priced as the hardware itself. ALSO require
+      // the title to look like the BARE console (no leftover game/extra tokens) so
+      // a 99 kr game or a 150 kr accessory that merely names the platform never
+      // pollutes the console comp/candidate index.
+      if (demandCategory === 'Game consoles' || demandCategory === 'Handhelds') {
+        if (looksLikeConsoleGameOrPeripheral(String(title ?? ''), norm)) return null;
+        if (!looksLikeConsoleHardware(norm)) return null;
       }
       return { ...result, demandCategory };
     }
