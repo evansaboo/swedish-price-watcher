@@ -329,3 +329,16 @@ test('computeArbitrage drops zero-spread groups', async () => {
   ]);
   assert.deepEqual(computeArbitrage(items, productByListingKey), []);
 });
+
+test('computeArbitrage excludes same-retailer feeds (e.g. elgiganten-outlet vs elgiganten-campaigns)', async () => {
+  const { computeArbitrage } = await import('../src/services/dealEngine.js');
+  const items = [
+    { listingKey: 'eo:1', productKey: 'samsung-tv-qn90f', gtin: '8806094895001' },
+    { listingKey: 'ec:1', productKey: 'samsung-tv-qn90f', gtin: '8806094895001' }
+  ];
+  const productByListingKey = new Map([
+    ['eo:1', { listingKey: 'eo:1', title: 'Samsung QN90F', category: 'TV', sourceId: 'elgiganten-outlet', sourceLabel: 'Elgiganten Outlet', currentPriceSek: 9594, url: 'u1', condition: 'outlet' }],
+    ['ec:1', { listingKey: 'ec:1', title: 'Samsung QN90F', category: 'TV', sourceId: 'elgiganten-campaigns', sourceLabel: 'Elgiganten Weekly Deals', currentPriceSek: 15990, url: 'u2', condition: 'deal' }]
+  ]);
+  assert.deepEqual(computeArbitrage(items, productByListingKey), [], 'same retailer is not cross-store arbitrage');
+});

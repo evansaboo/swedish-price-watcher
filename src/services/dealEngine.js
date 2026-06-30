@@ -134,20 +134,22 @@ export function computeArbitrage(items, productByListingKey, options = {}) {
   for (const group of buildIdentityGroups(items).values()) {
     if (group.length < 2) continue;
 
-    // Resolve to materialized products and keep the cheapest offer per store so a
-    // store stocking the same item twice doesn't masquerade as cross-store spread.
-    const bestPerStore = new Map();
+    // Keep the cheapest offer per RETAILER (not per source feed). Several feeds
+    // belong to the same retailer (e.g. elgiganten-outlet + elgiganten-campaigns);
+    // collapsing them prevents same-retailer pairs masquerading as arbitrage.
+    const bestPerRetailer = new Map();
     for (const item of group) {
       const product = productByListingKey.get(item.listingKey);
       if (!product || !Number.isFinite(product.currentPriceSek)) continue;
-      const existing = bestPerStore.get(product.sourceId);
+      const retailer = retailerKey(product.sourceId);
+      const existing = bestPerRetailer.get(retailer);
       if (!existing || product.currentPriceSek < existing.currentPriceSek) {
-        bestPerStore.set(product.sourceId, product);
+        bestPerRetailer.set(retailer, product);
       }
     }
-    if (bestPerStore.size < 2) continue;
+    if (bestPerRetailer.size < 2) continue; // need ≥2 genuinely different retailers
 
-    const offers = [...bestPerStore.values()].sort((a, b) => a.currentPriceSek - b.currentPriceSek);
+    const offers = [...bestPerRetailer.values()].sort((a, b) => a.currentPriceSek - b.currentPriceSek);
     const best = offers[0];
     const high = offers[offers.length - 1];
     const spreadSek = high.currentPriceSek - best.currentPriceSek;
@@ -194,6 +196,14 @@ export function computeArbitrage(items, productByListingKey, options = {}) {
 
   results.sort((a, b) => b.spreadSek - a.spreadSek);
   return results;
+}
+
+// Retailer identity from a sourceId: the segment before the first hyphen.
+// elgiganten-outlet / elgiganten-campaigns → 'elgiganten'; power-deals / power-campaigns → 'power'.
+function retailerKey(sourceId) {
+  const id = String(sourceId ?? '').trim().toLowerCase();
+  const dash = id.indexOf('-');
+  return dash === -1 ? id : id.slice(0, dash);
 }
 
 function historyPrices(items) {
