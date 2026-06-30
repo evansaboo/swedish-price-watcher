@@ -132,7 +132,11 @@ export function computeArbitrage(items, productByListingKey, options = {}) {
   const minSpreadSek = Number.isFinite(options.minSpreadSek) ? options.minSpreadSek : 1;
   const results = [];
 
-  for (const group of buildIdentityGroups(items).values()) {
+  // Identity grouping is the same union-find the caller (productCache.rebuild)
+  // already computed for cross-store annotation — accept it to avoid grouping
+  // ~26k items twice per rebuild.
+  const groups = options.identityGroups ?? [...buildIdentityGroups(items).values()];
+  for (const group of groups) {
     if (group.length < 2) continue;
 
     // Keep the cheapest offer per RETAILER (not per source feed). Several feeds

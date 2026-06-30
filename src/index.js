@@ -193,6 +193,47 @@ async function triggerScan(trigger, options = {}) {
     agg.errors.push(...(n.errors ?? []));
   }
 
+  // ── Coalesced heavy recompute ────────────────────────────────
+  // Recomputing deals + rebuilding the 26k-item product cache is a multi-second
+  // synchronous job. Running it after every source (14×/scan) froze the event
+  // loop and made the UI unresponsive mid-scan. Instead we queue each source's
+  // notification context and flush on a throttle (and once at the end): one
+  // recompute serves every source that finished since the last flush.
+  let lastHeavyRecomputeAt = 0;
+  let dirtySinceRecompute = false;
+  const pendingNotify = [];
+
+  async function flushPending() {
+    if (!dirtySinceRecompute) return;
+    state.deals = computeDeals(state, config.thresholds);
+    productCache.rebuild(state, sourceLabelMap);
+    lastHeavyRecomputeAt = Date.now();
+    dirtySinceRecompute = false;
+
+    const batch = pendingNotify.splice(0);
+    for (const ctx of batch) {
+      if (ctx.skipDiscordNotifications) {
+        if (ctx.isFirstSuccessfulRun) console.log(`[${ctx.source.id}] Skipping Discord notifications on first successful run.`);
+        if (scanState.cancelling || scanState.abortController?.signal.aborted) console.log(`[${ctx.source.id}] Scan cancelled; saved fetched data without Discord notifications.`);
+        continue;
+      }
+      const effectiveNotificationSettings = { ...(state.preferences?.notificationSettings ?? {}) };
+      const sourceFlips = productCache.flips.filter((f) => f.sourceId === ctx.source.id);
+      const sourceNotif = await notifier.notifyScan({
+        deals: state.deals,
+        newItems: ctx.mergeResult.newItems,
+        priceDrops: ctx.mergeResult.priceDrops,
+        sources: config.sources,
+        state,
+        notificationSettings: effectiveNotificationSettings,
+        flips: sourceFlips,
+        wishlistTargets: state.preferences?.wishlistTargets ?? {}
+      });
+      mergeNotif(aggregatedNotif, sourceNotif);
+      mergeNotif(aggregatedNotif.alertRules, sourceNotif.alertRules);
+    }
+  }
+
   try {
     let processingChain = Promise.resolve();
 
@@ -328,37 +369,25 @@ async function triggerScan(trigger, options = {}) {
           sourceState.lastCount = collected.length;
           delete sourceState.disabledUntil;
 
-          state.deals = computeDeals(state, config.thresholds);
-          // Rebuild product cache after each source processes
-          productCache.rebuild(state, sourceLabelMap);
-
+          // Queue this source for the next coalesced recompute + notification flush.
+          // The heavy work (computeDeals + productCache.rebuild) happens in
+          // flushPending — on a throttle here, and once more after all sources.
+          dirtySinceRecompute = true;
           sourceResults.push({ sourceId: source.id, status: 'ok', count: collected.length });
+          pendingNotify.push({ source, mergeResult, skipDiscordNotifications, isFirstSuccessfulRun });
 
-          if (skipDiscordNotifications) {
-            if (isFirstSuccessfulRun) console.log(`[${source.id}] Skipping Discord notifications on first successful run.`);
-            if (scanState.cancelling || scanState.abortController?.signal.aborted) console.log(`[${source.id}] Scan cancelled; saved fetched data without Discord notifications.`);
-            return;
+          if (Date.now() - lastHeavyRecomputeAt >= config.recomputeIntervalMs) {
+            await flushPending();
           }
-
-          const effectiveNotificationSettings = { ...(state.preferences?.notificationSettings ?? {}) };
-          const sourceFlips = productCache.flips.filter((f) => f.sourceId === source.id);
-          const sourceNotif = await notifier.notifyScan({
-            deals: state.deals,
-            newItems: mergeResult.newItems,
-            priceDrops: mergeResult.priceDrops,
-            sources: config.sources,
-            state,
-            notificationSettings: effectiveNotificationSettings,
-            flips: sourceFlips,
-            wishlistTargets: state.preferences?.wishlistTargets ?? {}
-          });
-          mergeNotif(aggregatedNotif, sourceNotif);
-          mergeNotif(aggregatedNotif.alertRules, sourceNotif.alertRules);
         });
 
         await processingChain;
       })
     );
+
+    // Final coalesced recompute — flushes any sources queued since the last
+    // throttle tick and guarantees deals + cache reflect the whole scan.
+    await flushPending();
 
     const completedAt = new Date().toISOString();
     state.stats.lastRunCompletedAt = completedAt;

@@ -123,6 +123,10 @@ export async function loadConfig() {
     requestTimeoutMs: parsePositiveInt(process.env.REQUEST_TIMEOUT_MS, 20000),
     maxHistoryEntries: parsePositiveInt(process.env.MAX_HISTORY_ENTRIES, 20),
     archiveRetentionDays: parsePositiveInt(process.env.ARCHIVE_RETENTION_DAYS, 90),
+    // During a scan, the deals + product-cache recompute is expensive (seconds
+    // over ~26k items) and synchronous. Coalesce it to at most once per this
+    // interval so a multi-source scan doesn't freeze the event loop / UI.
+    recomputeIntervalMs: parsePositiveInt(process.env.SCAN_RECOMPUTE_INTERVAL_MS, 9000),
     userAgent: process.env.USER_AGENT ?? 'swedish-price-watcher/0.1 (+set-contact-email)',
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL?.trim() ?? '',
     notificationCooldownHours: parsePositiveInt(process.env.NOTIFICATION_COOLDOWN_HOURS, 24),

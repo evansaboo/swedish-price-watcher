@@ -244,7 +244,7 @@ export class ProductCache {
     // ── Retail arbitrage view ────────────────────────────────────
     // Same product across 2+ stores with a real price spread — buy cheap, the
     // dearer store's price is the arbitrage headroom.
-    this._arbitrage = computeArbitrage(buyableItems, productByListingKey);
+    this._arbitrage = computeArbitrage(buyableItems, productByListingKey, { identityGroups });
     this._arbitrageStores = (() => {
       const map = new Map();
       for (const a of this._arbitrage) {
