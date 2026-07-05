@@ -391,7 +391,8 @@ export class ApifyStore {
 //   item_archive   — items that left scrapers (kept for history)
 //   scan_stats     — latest run stats + summary
 //
-// Preferences are still kept in a small sidecar JSON file for fast atomic saves.
+//   preferences    — user-editable settings (scheduler, alert rules, favorites, …)
+//                    stored as a single JSON blob row for fast partial saves
 // ═══════════════════════════════════════════════════════════════
 
 const DDL = `
@@ -427,6 +428,11 @@ const DDL = `
   );
 
   CREATE TABLE IF NOT EXISTS scan_stats (
+    key        TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS preferences (
     key        TEXT PRIMARY KEY,
     value_json TEXT NOT NULL
   );
@@ -472,6 +478,8 @@ export class SqliteStore {
       allArchive:      this._db.prepare('SELECT listing_key, data_json FROM item_archive'),
       upsertStats:     this._db.prepare('INSERT OR REPLACE INTO scan_stats (key, value_json) VALUES (?, ?)'),
       getStats:        this._db.prepare('SELECT value_json FROM scan_stats WHERE key = ?'),
+      upsertPrefs:     this._db.prepare('INSERT OR REPLACE INTO preferences (key, value_json) VALUES (?, ?)'),
+      getPrefs:        this._db.prepare('SELECT value_json FROM preferences WHERE key = ?'),
     };
   }
 
@@ -525,14 +533,30 @@ export class SqliteStore {
     this.state.itemHistory = itemHistory;
     this.state.stats = { ...createDefaultState().stats, ...stats };
 
-    // ── Overlay preferences sidecar ────────────────────────────────
-    try {
-      const prefFile = await fs.readFile(this.preferencesFilePath, 'utf8');
-      const savedPrefs = JSON.parse(prefFile);
-      if (savedPrefs && typeof savedPrefs === 'object') {
-        this.state.preferences = normalizeState({ preferences: savedPrefs }).preferences;
-      }
-    } catch { /* preferences file doesn't exist yet */ }
+    // ── Preferences ──────────────────────────────────────────────────
+    const prefsRow = this._stmts.getPrefs.get('preferences');
+    if (prefsRow) {
+      try {
+        const savedPrefs = JSON.parse(prefsRow.value_json);
+        if (savedPrefs && typeof savedPrefs === 'object') {
+          this.state.preferences = normalizeState({ preferences: savedPrefs }).preferences;
+        }
+      } catch { /* corrupted row — keep defaults */ }
+    } else {
+      // One-time migration: older versions kept preferences in a JSON sidecar
+      // file next to the DB. Pull it in, write it to SQLite, and rename the
+      // file so it's kept only as a backup (never read again).
+      try {
+        const prefFile = await fs.readFile(this.preferencesFilePath, 'utf8');
+        const savedPrefs = JSON.parse(prefFile);
+        if (savedPrefs && typeof savedPrefs === 'object') {
+          this.state.preferences = normalizeState({ preferences: savedPrefs }).preferences;
+        }
+        this._stmts.upsertPrefs.run('preferences', JSON.stringify(this.state.preferences));
+        await fs.rename(this.preferencesFilePath, `${this.preferencesFilePath}.migrated`);
+        console.log('[sqlite] Migrated preferences sidecar file into SQLite preferences table.');
+      } catch { /* no sidecar file present — fine, use defaults */ }
+    }
 
     return this.state;
   }
@@ -597,6 +621,9 @@ export class SqliteStore {
 
       // ── Scan stats ───────────────────────────────────────────────
       stmts.upsertStats.run('stats', JSON.stringify(stats));
+
+      // ── Preferences ──────────────────────────────────────────────
+      stmts.upsertPrefs.run('preferences', JSON.stringify(this.state.preferences ?? {}));
     })();
 
     this._onInvalidate?.();
@@ -638,9 +665,10 @@ export class SqliteStore {
     })();
   }
 
-  /** Fast save: only writes the small preferences sidecar (~1 KB). */
+  /** Fast save: writes only the small preferences row (~1-2 KB) as its own transaction. */
   async savePreferences() {
-    await atomicWriteFile(this.preferencesFilePath, JSON.stringify(this.state.preferences ?? {}) + '\n');
+    this.#open();
+    this._stmts.upsertPrefs.run('preferences', JSON.stringify(this.state.preferences ?? {}));
     this._onInvalidate?.();
   }
 
@@ -682,16 +710,21 @@ export async function migrateJsonToSqlite(jsonPath, dbPath) {
   store.state.itemHistory = rawState.itemHistory ?? {};
   store.state.stats = { ...createDefaultState().stats, ...(rawState.stats ?? {}) };
 
-  await store.save();
-
-  // Preserve preferences sidecar path if the JSON store had one
+  // Fold in the preferences sidecar (if the JSON store had one) before the
+  // single save() below persists everything — including preferences — to SQLite.
   const jsonPrefPath = jsonPath.replace(/(\.[^.]+)?$/, '.preferences.json');
-  if (store.preferencesFilePath !== jsonPrefPath) {
-    try {
-      const prefData = await fs.readFile(jsonPrefPath, 'utf8');
-      await atomicWriteFile(store.preferencesFilePath, prefData);
-    } catch { /* no sidecar — fine */ }
-  }
+  let migratedPrefsPath = null;
+  try {
+    const prefData = await fs.readFile(jsonPrefPath, 'utf8');
+    const savedPrefs = JSON.parse(prefData);
+    if (savedPrefs && typeof savedPrefs === 'object') {
+      store.state.preferences = normalizeState({ preferences: savedPrefs }).preferences;
+    }
+    migratedPrefsPath = jsonPrefPath;
+  } catch { /* no sidecar — fine, defaults already set by normalizeState() */ }
+
+  await store.save();
+  if (migratedPrefsPath) await fs.rename(migratedPrefsPath, `${migratedPrefsPath}.migrated`);
 
   await fs.rename(jsonPath, jsonPath + '.migrated');
   console.log(`[sqlite] Migration complete in ${Date.now() - t0}ms — ${Object.keys(rawState.items ?? {}).length} items transferred.`);
