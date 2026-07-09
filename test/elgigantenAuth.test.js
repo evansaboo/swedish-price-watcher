@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+// These tests exercise the direct-fetch fallback path (the unit-testable one).
+// The primary path launches a real browser, which needs network + Chromium, so
+// we disable it here and cover it via live verification on the deployed host.
+process.env.ELGIGANTEN_NO_BROWSER = '1';
+
 // The auth module's key cache is a module-level singleton (by design — it's
 // shared across all Elgiganten sources). Each test re-imports with a unique
 // query string to get a fresh module instance and an isolated cache.

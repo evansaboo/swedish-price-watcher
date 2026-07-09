@@ -1,31 +1,39 @@
+import { chromium } from 'playwright';
 import { sleep } from '../lib/utils.js';
 
 /**
  * Shared signed-Algolia-key auth for all Elgiganten sources.
  *
- * Both elgiganten-outlet and elgiganten-campaigns query the same Algolia
- * index and previously each fetched (and cached) their own signed API key
- * independently, doubling the number of requests we sent to Elgiganten's
- * `/api/algolia/signed-api-key` endpoint. That endpoint sits behind Vercel's
- * bot-mitigation ("Vercel Security Checkpoint" / challenge page) and started
- * intermittently 429-ing our requests — likely tripped in part by the
- * redundant call volume and by every request looking like a fresh, cookie-less
- * visitor.
+ * Elgiganten's `/api/algolia/signed-api-key` endpoint sits behind Vercel's
+ * bot-mitigation ("Vercel Security Checkpoint" / challenge page). The challenge
+ * is keyed on the caller's TLS/HTTP fingerprint — NOT on cookies — so any plain
+ * `fetch()`/`curl` request (regardless of cookies or headers) is answered with
+ * `429 x-vercel-mitigated: challenge`. Replaying cookies harvested from a real
+ * browser does NOT help; the request itself must originate from a genuine
+ * browser engine.
  *
- * This module fixes both contributing factors:
- *   1. One shared, module-level cache — halves auth request volume.
- *   2. A persisted cookie jar replayed on every request, so repeated calls
- *      look like a continuing session rather than a new anonymous visitor
- *      each time.
- *   3. Retry-with-backoff (honoring Retry-After) on 429 instead of failing
- *      the whole source on the first transient rate limit.
- *   4. On exhausted retries, the thrown error carries `disableHours` so the
- *      calling source cools down (via sourceState.disabledUntil in
- *      src/index.js) instead of hammering the challenge endpoint every scan
- *      cycle, which would only make the block worse.
+ * Fix: obtain the key from inside a real (Playwright) Chromium browser. Once we
+ * hold the signed key, all product queries go straight to Algolia's DSN
+ * (`*-dsn.algolia.net`), which is a plain CDN and is NOT challenge-protected —
+ * so the browser is only needed for the (infrequent, cached, ~15-min-lived)
+ * key acquisition, not for the actual product scraping.
+ *
+ * Design notes:
+ *   1. One shared, module-level cache across all Elgiganten sources — a single
+ *      browser launch serves both `elgiganten-outlet` and `elgiganten-campaigns`.
+ *   2. An in-flight guard so parallel sources awaiting a key don't each spawn
+ *      their own browser.
+ *   3. A direct-fetch nonce flow is kept as a fallback (fast, no browser) in
+ *      case Vercel ever relaxes the challenge, and as the unit-testable path.
+ *   4. On total failure the thrown error carries `disableHours` so the calling
+ *      source cools down (via sourceState.disabledUntil in src/index.js) instead
+ *      of relaunching a browser every scan cycle.
  */
 
 const SIGNED_KEY_URL = 'https://www.elgiganten.se/api/algolia/signed-api-key';
+const HOMEPAGE_URL = 'https://www.elgiganten.se/';
+const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const MAX_AUTH_RETRIES = 2;
 const RETRY_BASE_MS = 2000;
 const COOLDOWN_HOURS_ON_BLOCK = 2;
@@ -33,8 +41,11 @@ const COOLDOWN_HOURS_ON_BLOCK = 2;
 const sharedCache = {
   apiKey: null,
   expiry: 0,
-  cookies: new Map() // name -> value, replayed across requests to mimic one continuing session
+  cookies: new Map() // name -> value, replayed across direct-fetch requests
 };
+
+// Only one key acquisition runs at a time; concurrent callers await the same promise.
+let inFlight = null;
 
 function parseSetCookiePairs(setCookieHeader) {
   // fetch() exposes multiple Set-Cookie values as one comma-joined string via
@@ -80,11 +91,54 @@ function rateLimitError(logPrefix, step, res) {
   return err;
 }
 
-async function attemptFetch(logPrefix) {
+// ───────────────────────────────────────────────────────────────────────────
+// Primary path: fetch the key from inside a real browser (bypasses the Vercel
+// fingerprint challenge that blocks plain fetch()).
+// ───────────────────────────────────────────────────────────────────────────
+async function fetchKeyViaBrowser(logPrefix) {
+  const now = Date.now();
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+    });
+    const context = await browser.newContext({ userAgent: BROWSER_UA, locale: 'sv-SE' });
+    const page = await context.newPage();
+
+    // Load the homepage first so the signed-api-key request carries a real
+    // referer/session — hitting the API cold (no referer) returns Forbidden.
+    await page.goto(HOMEPAGE_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+
+    // Perform the key fetch from within the page context: the request inherits
+    // the browser's TLS fingerprint and same-origin credentials, so Vercel lets
+    // it through and the endpoint returns { apiKey } directly (no nonce needed).
+    const result = await page.evaluate(async (url) => {
+      const res = await fetch(url, { headers: { accept: 'application/json' }, credentials: 'include' });
+      const text = await res.text();
+      let body = null;
+      try { body = JSON.parse(text); } catch { /* not JSON */ }
+      return { status: res.status, apiKey: body?.apiKey ?? null, snippet: text.slice(0, 200) };
+    }, SIGNED_KEY_URL);
+
+    if (!result.apiKey) {
+      throw new Error(`no apiKey from browser (status ${result.status}): ${result.snippet}`);
+    }
+    return cacheAndReturn(result.apiKey, now, logPrefix);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Fallback path: direct fetch() with the nonce-challenge flow. Kept for the
+// (unlikely) case Vercel relaxes the challenge, and as the unit-testable path.
+// ───────────────────────────────────────────────────────────────────────────
+async function attemptDirectFetch(logPrefix) {
   const now = Date.now();
   const baseHeaders = {
-    Referer: 'https://www.elgiganten.se/',
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+    Referer: HOMEPAGE_URL,
+    'User-Agent': BROWSER_UA,
     Origin: 'https://www.elgiganten.se'
   };
   const existingCookies = buildCookieHeader();
@@ -129,21 +183,11 @@ async function attemptFetch(logPrefix) {
   return cacheAndReturn(body2.apiKey, now, logPrefix);
 }
 
-/**
- * Get a signed Algolia API key, reusing the shared cache while valid.
- * `logPrefix` is only used for log line attribution (e.g. '[elgiganten]' or
- * '[elgiganten-campaigns]') — the cache and cooldown are shared regardless.
- */
-export async function getSharedAlgoliaApiKey(logPrefix = '[elgiganten]') {
-  const now = Date.now();
-  if (sharedCache.apiKey && sharedCache.expiry > now + 60_000) {
-    return sharedCache.apiKey;
-  }
-
+async function fetchKeyViaDirectFetch(logPrefix) {
   let lastErr;
   for (let attempt = 0; attempt <= MAX_AUTH_RETRIES; attempt++) {
     try {
-      return await attemptFetch(logPrefix);
+      return await attemptDirectFetch(logPrefix);
     } catch (err) {
       lastErr = err;
       if (err.status !== 429 || attempt === MAX_AUTH_RETRIES) break;
@@ -153,8 +197,41 @@ export async function getSharedAlgoliaApiKey(logPrefix = '[elgiganten]') {
       await sleep(backoffMs + jitter);
     }
   }
-
   const finalErr = new Error(lastErr.message);
   if (lastErr.status === 429) finalErr.disableHours = COOLDOWN_HOURS_ON_BLOCK;
   throw finalErr;
+}
+
+async function acquireKey(logPrefix) {
+  const noBrowser = process.env.ELGIGANTEN_NO_BROWSER === '1';
+
+  // Primary: real browser (bypasses the Vercel fingerprint challenge).
+  if (!noBrowser) {
+    try {
+      return await fetchKeyViaBrowser(logPrefix);
+    } catch (err) {
+      console.warn(`${logPrefix} browser key fetch failed (${err.message}) — falling back to direct fetch`);
+    }
+  }
+
+  // Fallback: direct fetch nonce flow (throws with disableHours on persistent 429).
+  return await fetchKeyViaDirectFetch(logPrefix);
+}
+
+/**
+ * Get a signed Algolia API key, reusing the shared cache while valid.
+ * `logPrefix` is only used for log line attribution (e.g. '[elgiganten]' or
+ * '[elgiganten-campaigns]') — the cache, cooldown, and browser launch are
+ * shared regardless.
+ */
+export async function getSharedAlgoliaApiKey(logPrefix = '[elgiganten]') {
+  const now = Date.now();
+  if (sharedCache.apiKey && sharedCache.expiry > now + 60_000) {
+    return sharedCache.apiKey;
+  }
+
+  // Coalesce concurrent callers onto a single acquisition (one browser launch).
+  if (inFlight) return inFlight;
+  inFlight = acquireKey(logPrefix).finally(() => { inFlight = null; });
+  return inFlight;
 }
