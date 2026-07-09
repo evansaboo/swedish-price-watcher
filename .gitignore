@@ -8,3 +8,4 @@ data/*.migrated
 !data/.gitkeep
 .env*.local
 version.json
+.DS_Store

@@ -1,4 +1,5 @@
 import { normalizeProductIdentity, sleep } from '../lib/utils.js';
+import { getSharedAlgoliaApiKey } from './elgigantenAuth.js';
 
 /**
  * Elgiganten campaign/sale source — direct Algolia API.
@@ -27,76 +28,9 @@ const ALGOLIA_BASE_URL =
   'https://z0fl7r8ubh-dsn.algolia.net/1/indexes/*/queries' +
   '?x-algolia-agent=Algolia%20for%20JavaScript';
 
-const SIGNED_KEY_URL = 'https://www.elgiganten.se/api/algolia/signed-api-key';
-
 const INDEX = 'commerce_b2c_OCSEELG';
 const HITS_PER_PAGE = 100;
 const PAGE_DELAY_MS = 150;
-
-/**
- * Fetch a signed Algolia API key via Elgiganten's nonce-based auth endpoint.
- * Cached in sourceState.algoliaApiKey until within 60s of expiry.
- */
-async function getAlgoliaApiKey(sourceState) {
-  const now = Date.now();
-  if (sourceState.algoliaApiKey && sourceState.algoliaKeyExpiry > now + 60_000) {
-    return sourceState.algoliaApiKey;
-  }
-
-  const baseHeaders = {
-    Referer: 'https://www.elgiganten.se/',
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36',
-    Origin: 'https://www.elgiganten.se',
-  };
-
-  // Step 1: attempt direct fetch — newer deployments return 200 + apiKey immediately.
-  const res1 = await fetch(SIGNED_KEY_URL, { headers: baseHeaders, signal: AbortSignal.timeout(15_000) });
-
-  let body1 = null;
-  try { body1 = await res1.clone().json(); } catch { /* not JSON */ }
-
-  if (res1.ok && body1?.apiKey) {
-    // Direct 200 path — no nonce required
-    return cacheCampaignsKey(sourceState, body1.apiKey, now);
-  }
-
-  // 401 nonce-challenge path
-  const setCookie = res1.headers.get('set-cookie') ?? '';
-  const m = /algolia-refresh-nonce=([a-f0-9-]{36})/i.exec(setCookie);
-  const nonce = m?.[1] ?? null;
-  if (!nonce) {
-    const snippet = body1 ? JSON.stringify(body1) : (await res1.text().catch(() => '(unreadable)'));
-    throw new Error(`Elgiganten campaigns: no apiKey and no nonce (status ${res1.status}): ${snippet.slice(0, 200)}`);
-  }
-
-  const anonM = /anonymous-id=([^;]+)/i.exec(setCookie);
-  const cookieHeader = [
-    `algolia-refresh-nonce=${nonce}`,
-    anonM ? `anonymous-id=${anonM[1]}` : null,
-  ].filter(Boolean).join('; ');
-
-  const res2 = await fetch(SIGNED_KEY_URL, {
-    headers: { ...baseHeaders, 'x-algolia-refresh-nonce': nonce, Cookie: cookieHeader },
-    signal: AbortSignal.timeout(15_000),
-  });
-  const body2 = await res2.json();
-  if (!body2?.apiKey) throw new Error(`Elgiganten campaigns: signed-api-key returned no apiKey: ${JSON.stringify(body2)}`);
-
-  return cacheCampaignsKey(sourceState, body2.apiKey, now);
-}
-
-function cacheCampaignsKey(sourceState, apiKey, now) {
-  let expiry = now + 10 * 60_000;
-  try {
-    const decoded = Buffer.from(apiKey, 'base64').toString('utf8');
-    const vm = /validUntil=(\d+)/.exec(decoded);
-    if (vm) expiry = Number(vm[1]) * 1000;
-  } catch { /* keep default */ }
-  sourceState.algoliaApiKey = apiKey;
-  sourceState.algoliaKeyExpiry = expiry;
-  console.log(`[elgiganten-campaigns] Obtained fresh Algolia API key (valid until ${new Date(expiry).toISOString()})`);
-  return apiKey;
-}
 
 async function algoliaPost(apiKey, body) {
   const url = `${ALGOLIA_BASE_URL}&x-algolia-api-key=${apiKey}&x-algolia-application-id=Z0FL7R8UBH`;
@@ -374,11 +308,14 @@ export async function collectFromElgigantenCampaigns({ source, sourceState, now 
   const campaignGraceDays = typeof source.campaignGraceDays === 'number' ? source.campaignGraceDays : 3;
 
   // Step 0: obtain a fresh signed Algolia API key via the nonce flow
+  // (shared across all Elgiganten sources — see elgigantenAuth.js)
   let apiKey;
   try {
-    apiKey = await getAlgoliaApiKey(sourceState);
+    apiKey = await getSharedAlgoliaApiKey('[elgiganten-campaigns]');
   } catch (err) {
-    throw new Error(`Elgiganten campaigns: failed to obtain Algolia API key — ${err.message}`);
+    const wrapped = new Error(`Elgiganten campaigns: failed to obtain Algolia API key — ${err.message}`);
+    if (err.disableHours) wrapped.disableHours = err.disableHours;
+    throw wrapped;
   }
 
   // Step 1: collect campaign IDs — pinned IDs + auto-discovered by type

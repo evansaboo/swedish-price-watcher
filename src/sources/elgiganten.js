@@ -1,10 +1,9 @@
 import { normalizeProductIdentity, sleep } from '../lib/utils.js';
+import { getSharedAlgoliaApiKey } from './elgigantenAuth.js';
 
 const ALGOLIA_BASE_URL =
   'https://z0fl7r8ubh-dsn.algolia.net/1/indexes/*/queries' +
   '?x-algolia-agent=Algolia%20for%20JavaScript';
-
-const SIGNED_KEY_URL = 'https://www.elgiganten.se/api/algolia/signed-api-key';
 
 const INDEX = 'commerce_b2c_OCSEELG';
 const OUTLET_FILTER = 'productTaxonomy.id:PT793';
@@ -14,80 +13,6 @@ const HITS_PER_PAGE = 100;
 // to retrieve all ~13 000 outlet products.
 const BRAND_QUERY_CONCURRENCY = 3; // parallel brand queries — keep low to limit memory spike
 const PAGE_DELAY_MS = 150;
-
-/**
- * Fetch a signed Algolia API key from Elgiganten's auth endpoint.
- * The endpoint uses a cookie-based nonce challenge:
- *   1. GET /api/algolia/signed-api-key → 401, sets cookie algolia-refresh-nonce=<uuid>
- *   2. GET /api/algolia/signed-api-key + x-algolia-refresh-nonce: <uuid> → { apiKey }
- *
- * The returned key is a Base64-encoded Algolia signed key with ~15 min validity.
- * Cached in sourceState.algoliaApiKey until within 60s of expiry.
- */
-async function getAlgoliaApiKey(sourceState) {
-  const now = Date.now();
-  // Reuse cached key if still valid (at least 60s remaining)
-  if (sourceState.algoliaApiKey && sourceState.algoliaKeyExpiry > now + 60_000) {
-    return sourceState.algoliaApiKey;
-  }
-
-  const baseHeaders = {
-    Referer: 'https://www.elgiganten.se/',
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36',
-    Origin: 'https://www.elgiganten.se',
-  };
-
-  // Step 1: attempt direct fetch — newer Elgiganten deployments return 200 + apiKey immediately.
-  // If we get 401, fall through to the nonce challenge flow.
-  const res1 = await fetch(SIGNED_KEY_URL, { headers: baseHeaders, signal: AbortSignal.timeout(15_000) });
-
-  let body1 = null;
-  try { body1 = await res1.clone().json(); } catch { /* not JSON */ }
-
-  if (res1.ok && body1?.apiKey) {
-    // Direct 200 path — no nonce required
-    return cacheAndReturn(sourceState, body1.apiKey, now, '[elgiganten]');
-  }
-
-  // 401 nonce-challenge path
-  const setCookie = res1.headers.get('set-cookie') ?? '';
-  const m = /algolia-refresh-nonce=([a-f0-9-]{36})/i.exec(setCookie);
-  const nonce = m?.[1] ?? null;
-  if (!nonce) {
-    const snippet = body1 ? JSON.stringify(body1) : (await res1.text().catch(() => '(unreadable)'));
-    throw new Error(`Elgiganten: no apiKey and no nonce from /api/algolia/signed-api-key (status ${res1.status}): ${snippet.slice(0, 200)}`);
-  }
-
-  // Also grab the anonymous-id cookie if present
-  const anonM = /anonymous-id=([^;]+)/i.exec(setCookie);
-  const cookieHeader = [
-    `algolia-refresh-nonce=${nonce}`,
-    anonM ? `anonymous-id=${anonM[1]}` : null,
-  ].filter(Boolean).join('; ');
-
-  // Step 2: exchange nonce for signed API key — must send cookie + nonce header
-  const res2 = await fetch(SIGNED_KEY_URL, {
-    headers: { ...baseHeaders, 'x-algolia-refresh-nonce': nonce, Cookie: cookieHeader },
-    signal: AbortSignal.timeout(15_000),
-  });
-  const body2 = await res2.json();
-  if (!body2?.apiKey) throw new Error(`Elgiganten: signed-api-key returned no apiKey: ${JSON.stringify(body2)}`);
-
-  return cacheAndReturn(sourceState, body2.apiKey, now, '[elgiganten]');
-}
-
-function cacheAndReturn(sourceState, apiKey, now, logPrefix) {
-  let expiry = now + 10 * 60_000; // default 10 min
-  try {
-    const decoded = Buffer.from(apiKey, 'base64').toString('utf8');
-    const vm = /validUntil=(\d+)/.exec(decoded);
-    if (vm) expiry = Number(vm[1]) * 1000;
-  } catch { /* keep default */ }
-  sourceState.algoliaApiKey = apiKey;
-  sourceState.algoliaKeyExpiry = expiry;
-  console.log(`${logPrefix} Obtained fresh Algolia API key (valid until ${new Date(expiry).toISOString()})`);
-  return apiKey;
-}
 
 function buildAlgoliaHeaders(apiKey) {
   return {
@@ -321,11 +246,14 @@ export async function collectFromElgiganten({ source, sourceState, fetcher, now 
   const rawHits = [];
 
   // Step 0: obtain a fresh signed Algolia API key via the nonce flow
+  // (shared across all Elgiganten sources — see elgigantenAuth.js)
   let apiKey;
   try {
-    apiKey = await getAlgoliaApiKey(sourceState);
+    apiKey = await getSharedAlgoliaApiKey('[elgiganten]');
   } catch (err) {
-    throw new Error(`Elgiganten: failed to obtain Algolia API key — ${err.message}`);
+    const wrapped = new Error(`Elgiganten: failed to obtain Algolia API key — ${err.message}`);
+    if (err.disableHours) wrapped.disableHours = err.disableHours;
+    throw wrapped;
   }
 
   // Step 1: discover all brands

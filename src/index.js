@@ -303,6 +303,8 @@ async function triggerScan(trigger, options = {}) {
             if (error.disableHours) {
               sourceState.disabledUntil = new Date(Date.now() + error.disableHours * 60 * 60 * 1000).toISOString();
             }
+            const cooldownNote = sourceState.disabledUntil ? ` — cooling down until ${sourceState.disabledUntil}` : '';
+            console.error(`[${source.id}] Scan failed: ${error.message}${cooldownNote}`);
             sourceResults.push({ sourceId: source.id, status: 'error', message: error.message, disabledUntil: sourceState.disabledUntil ?? null });
             return;
           }
