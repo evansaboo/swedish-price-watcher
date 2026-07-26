@@ -118,6 +118,9 @@
       "maxPages": 10,
       "refPriceLookupPerScan": 20,
       "apiTokenEnvVar": "APIFY_TOKEN",
+      "affiliateProgram": {
+        "network": "adtraction"
+      },
       "actorTimeoutMs": 300000,
       "actorRequestRetries": 2,
       "actorRetryBaseMs": 3000,

@@ -47,7 +47,7 @@ const state = {
   schedulerFormDirty: false,
   latestRunStartedAt: null,
   // Flip / resale view
-  mode: 'deals', // 'deals' or 'flip'
+  mode: 'deals',
   flipDemandCategory: '',
   flipStore: '',
   flipMinProfit: '',
@@ -63,7 +63,8 @@ const state = {
   arbMaxPrice: '',
   arbSortBy: 'spreadSek',
   arbSortDir: 'desc',
-  arbPage: 1
+  arbPage: 1,
+  revenueData: null
 };
 
 const STORAGE_KEY = 'pricewatch-ui-v2';
@@ -149,7 +150,11 @@ const el = {
   arbMinSpread: $('#arb-min-spread'),
   arbMinSpreadPct: $('#arb-min-spread-pct'),
   arbMaxPrice: $('#arb-max-price'),
-  arbSort: $('#arb-sort')
+  arbSort: $('#arb-sort'),
+  revenueBar: $('#revenue-bar'),
+  addPromotionBtn: $('#add-promotion-btn'),
+  costDefaultsBtn: $('#cost-defaults-btn'),
+  revenueRefreshBtn: $('#revenue-refresh-btn')
 };
 
 let scanPollTimer = null;
@@ -293,7 +298,7 @@ function hydratePrefs() {
   if (s.sortDirection === 'asc' || s.sortDirection === 'desc') state.sortDirection = s.sortDirection;
   if (s.viewMode === 'grid' || s.viewMode === 'list') state.viewMode = s.viewMode;
   if (typeof s.activePreset === 'string') state.activePreset = s.activePreset;
-  if (s.mode === 'deals' || s.mode === 'flip' || s.mode === 'arbitrage') state.mode = s.mode;
+  if (['deals', 'flip', 'arbitrage', 'revenue'].includes(s.mode)) state.mode = s.mode;
 
   // Sync UI
   el.searchInput.value = state.search;
@@ -565,6 +570,7 @@ function renderProducts(response) {
     if (isNew) badgesLeft += '<span class="badge badge-new">New</span>';
     if (hasDiscount && product.discountPercent >= 20) badgesLeft += `<span class="badge badge-discount">-${product.discountPercent}%</span>`;
     if (score >= 75) badgesLeft += '<span class="badge badge-hot">Hot</span>';
+    if (product.affiliate) badgesLeft += '<span class="badge badge-affiliate">Annonslänk</span>';
     const condition = product.conditionLabel && product.conditionLabel !== 'Outlet' ? product.conditionLabel : '';
     if (condition) badgesLeft += `<span class="badge badge-condition">${escapeHtml(condition)}</span>`;
 
@@ -575,7 +581,7 @@ function renderProducts(response) {
       : `<div class="card-placeholder-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
 
     // URL
-    const url = product.url ? escapeHtml(product.url) : '';
+    const url = product.url ? escapeHtml(`/api/out/${encodeURIComponent(product.listingKey)}`) : '';
     const titleLink = url
       ? `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(product.title)}</a>`
       : escapeHtml(product.title);
@@ -824,7 +830,7 @@ function renderFlips(response) {
   const cards = flips.map((flip, idx) => {
     const isNew = isNewProduct(flip);
     const avail = availabilityInfo(flip);
-    const url = flip.url ? escapeHtml(flip.url) : '';
+    const url = flip.url ? escapeHtml(`/api/out/${encodeURIComponent(flip.listingKey)}`) : '';
     const titleLink = url
       ? `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(flip.title)}</a>`
       : escapeHtml(flip.title);
@@ -836,6 +842,8 @@ function renderFlips(response) {
 
     let badgesLeft = `<span class="badge badge-model" title="Matched resale model">${escapeHtml(flip.modelLabel)}</span>`;
     if (isNew) badgesLeft += '<span class="badge badge-new">New</span>';
+    if (flip.affiliate) badgesLeft += '<span class="badge badge-affiliate">Annonslänk</span>';
+    if (flip.promotion) badgesLeft += `<span class="badge badge-promotion">${escapeHtml(flip.promotion.code ?? flip.promotion.label)}</span>`;
 
     const wishlisted = state.wishlist.has(flip.listingKey);
     const wishlistIcon = wishlisted ? '♥' : '♡';
@@ -855,11 +863,12 @@ function renderFlips(response) {
           <div class="card-pricing">
             <div class="flip-prices">
               <div class="flip-price-block">
-                <span class="flip-price-label">Buy now</span>
-                <span class="flip-price-buy">${formatSek(flip.buyPriceSek)}</span>
+                <span class="flip-price-label">${flip.promotion ? 'Effective buy' : 'Buy now'}</span>
+                <span class="flip-price-buy">${formatSek(flip.effectiveBuyPriceSek ?? flip.buyPriceSek)}</span>
+                ${flip.promotion ? `<span class="promotion-saving">${formatSek(flip.buyPriceSek)} − ${formatSek(flip.promotionDiscountSek)}</span>` : ''}
               </div>
               <div class="flip-price-block" style="text-align:right">
-                <span class="flip-price-label">Blocket median</span>
+                <span class="flip-price-label">${flip.resaleBasis === 'sold' ? 'Sold median' : 'Asking median'}</span>
                 <span class="flip-price-resale">${formatSek(flip.resaleMedianSek)}</span>
               </div>
             </div>
@@ -871,14 +880,15 @@ function renderFlips(response) {
               <span class="flip-roi" title="Return on the buy price">ROI ${flip.roiPercent}%</span>
             </div>
             <div class="flip-comps">
-              <span>From ${flip.sampleCount} Blocket comp${flip.sampleCount === 1 ? '' : 's'}</span>
+              <span class="confidence-${escapeHtml(flip.resaleConfidence ?? 'low')}">${escapeHtml(flip.resaleConfidence ?? 'low')} confidence · ${flip.sampleCount} ${escapeHtml(flip.resaleBasis ?? 'asking')} comps</span>
               <a href="${escapeHtml(flip.blocketSearchUrl)}" target="_blank" rel="noreferrer">View comps ↗</a>
             </div>
           </div>
         </div>
         <div class="card-footer">
           <span class="card-availability"><span class="avail-dot ${avail.dot}"></span>${escapeHtml(avail.label)}</span>
-          <span title="Shipping/fee allowance subtracted from profit">incl. ${formatSek(flip.feesSek)} fees</span>
+          <button type="button" class="track-revenue-btn" data-listing-key="${escapeHtml(flip.listingKey)}">Track deal</button>
+          <span title="Projected selling, shipping, packaging and risk costs">costs ${formatSek(flip.feesSek)}</span>
         </div>
       </article>
     `;
@@ -892,6 +902,9 @@ function renderFlips(response) {
       toggleWishlist(btn.getAttribute('data-listing-key'), btn);
     });
   }
+  for (const btn of el.productGrid.querySelectorAll('.track-revenue-btn')) {
+    btn.addEventListener('click', () => trackRevenue(btn.dataset.listingKey));
+  }
 
   renderPagination(response);
 }
@@ -904,23 +917,291 @@ async function loadFlips() {
   renderFlips(response);
 }
 
+function renderRevenue(response) {
+  state.revenueData = response ?? state.revenueData;
+  const summary = response?.summary ?? {};
+  const items = (response?.items ?? []).filter((record) => {
+    if (!state.search) return true;
+    const haystack = [record.product?.title, record.product?.sourceLabel, record.status, record.salesChannel]
+      .filter(Boolean).join(' ').toLowerCase();
+    return state.search.toLowerCase().split(/\s+/).every((token) => haystack.includes(token));
+  });
+  const pills = [
+    [formatSek(summary.realizedProfitSek ?? 0), 'realized profit'],
+    [formatSek(summary.capitalTiedSek ?? 0), 'capital tied'],
+    [summary.sold ?? 0, 'sold'],
+    [`${summary.avgRoiPercent ?? 0}%`, 'average ROI'],
+    [response?.promotions?.filter((promotion) => promotion.enabled && promotion.verified).length ?? 0, 'verified promos']
+  ];
+  el.statsPills.innerHTML = pills
+    .map(([value, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(value))}</strong> ${escapeHtml(label)}</span>`)
+    .join('');
+  el.productsCount.textContent = `${items.length} revenue records`;
+  el.paginationArea.innerHTML = '';
+  el.activeFilterTags.innerHTML = '';
+
+  if (!items.length) {
+    el.productGrid.innerHTML = '';
+    el.emptyState.classList.remove('hidden');
+    el.emptyState.querySelector('h3').textContent = 'No revenue records yet';
+    el.emptyState.querySelector('p').textContent = 'Open Flip and track a deal to start the purchase-to-sale ledger.';
+    return;
+  }
+  el.emptyState.classList.add('hidden');
+  el.productGrid.classList.add('revenue-grid');
+  el.productGrid.innerHTML = items.map((record, index) => {
+    const product = record.product ?? {};
+    const projected = product.projectedProfitSek;
+    const realized = record.realizedProfitSek;
+    const mainProfit = Number.isFinite(realized) ? realized : projected;
+    const statusClass = `status-${escapeHtml(record.status)}`;
+    const delay = Math.min(index * 25, 300);
+    return `
+      <article class="product-card revenue-card ${statusClass}" style="animation-delay:${delay}ms" data-record-id="${escapeHtml(record.id)}">
+        <div class="revenue-card-head">
+          <span class="revenue-status">${escapeHtml(record.status)}</span>
+          <span class="revenue-updated">${escapeHtml(timeAgo(record.updatedAt) ?? '')}</span>
+        </div>
+        <div class="card-body">
+          <span class="card-store">${escapeHtml(product.sourceLabel ?? product.sourceId ?? '')}</span>
+          <h3 class="card-title">${escapeHtml(product.title ?? 'Tracked item')}</h3>
+          <div class="revenue-money-grid">
+            <div><span>Acquisition</span><strong>${formatSek(record.acquisitionCostSek ?? product.displayedPriceSek)}</strong></div>
+            <div><span>Sale</span><strong>${formatSek(record.salePriceSek)}</strong></div>
+            <div><span>${Number.isFinite(realized) ? 'Realized' : 'Projected'}</span><strong class="${mainProfit >= 0 ? 'money-positive' : 'money-negative'}">${Number.isFinite(mainProfit) && mainProfit >= 0 ? '+' : ''}${formatSek(mainProfit)}</strong></div>
+            <div><span>Capital days</span><strong>${record.capitalDays ?? '—'}</strong></div>
+          </div>
+          ${Number.isFinite(record.forecastErrorSek) ? `<div class="forecast-error">Forecast error: ${record.forecastErrorSek >= 0 ? '+' : ''}${formatSek(record.forecastErrorSek)}</div>` : ''}
+        </div>
+        <div class="card-footer">
+          <span>${escapeHtml(record.salesChannel || 'No sales channel')}</span>
+          <button type="button" class="edit-revenue-btn" data-record-id="${escapeHtml(record.id)}">Edit record</button>
+        </div>
+      </article>`;
+  }).join('');
+  for (const button of el.productGrid.querySelectorAll('.edit-revenue-btn')) {
+    button.addEventListener('click', () => openRevenueRecord(button.dataset.recordId));
+  }
+}
+
+async function loadRevenue() {
+  const response = await fetchJson('/api/revenue');
+  state.revenueData = response;
+  if (state.mode === 'revenue') renderRevenue(response);
+}
+
+async function trackRevenue(listingKey) {
+  try {
+    const response = await fetch(`/api/revenue/inventory/${encodeURIComponent(listingKey)}`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Unable to track deal');
+    showToast('Deal added to the revenue ledger', 'success');
+    openRevenueRecord(data.id, data);
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
+}
+
+function revenueInput(id, value) {
+  const input = document.getElementById(id);
+  if (input) input.value = value ?? '';
+}
+
+function openRevenueRecord(recordId, suppliedRecord = null) {
+  const record = suppliedRecord ?? state.revenueData.items?.find((entry) => entry.id === recordId);
+  if (!record) return;
+  revenueInput('revenue-record-id', record.id);
+  revenueInput('revenue-status', record.status);
+  revenueInput('revenue-channel', record.salesChannel);
+  revenueInput('revenue-purchase-price', record.purchasePriceSek ?? record.product?.displayedPriceSek);
+  revenueInput('revenue-promo-discount', record.promotionDiscountSek);
+  revenueInput('revenue-cashback', record.cashbackSek);
+  revenueInput('revenue-inbound', record.inboundShippingSek);
+  revenueInput('revenue-sale-price', record.salePriceSek);
+  revenueInput('revenue-selling-fee', record.sellingFeeSek);
+  revenueInput('revenue-outbound', record.outboundShippingSek);
+  revenueInput('revenue-packaging', record.packagingSek);
+  revenueInput('revenue-repair', record.repairCostSek);
+  revenueInput('revenue-sold-date', record.soldDate?.slice(0, 10));
+  revenueInput('revenue-notes', record.notes);
+  document.getElementById('revenue-record-title').textContent = record.product?.title ?? 'Edit inventory record';
+  document.getElementById('revenue-record-modal').classList.remove('hidden');
+}
+
+function closeRevenueRecord() {
+  document.getElementById('revenue-record-modal').classList.add('hidden');
+}
+
+function nullableNumber(id) {
+  const value = document.getElementById(id)?.value;
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function saveRevenueRecord() {
+  const id = document.getElementById('revenue-record-id').value;
+  const payload = {
+    status: document.getElementById('revenue-status').value,
+    salesChannel: document.getElementById('revenue-channel').value.trim(),
+    purchasePriceSek: nullableNumber('revenue-purchase-price'),
+    promotionDiscountSek: nullableNumber('revenue-promo-discount'),
+    cashbackSek: nullableNumber('revenue-cashback'),
+    inboundShippingSek: nullableNumber('revenue-inbound'),
+    salePriceSek: nullableNumber('revenue-sale-price'),
+    sellingFeeSek: nullableNumber('revenue-selling-fee'),
+    outboundShippingSek: nullableNumber('revenue-outbound'),
+    packagingSek: nullableNumber('revenue-packaging'),
+    repairCostSek: nullableNumber('revenue-repair'),
+    soldDate: document.getElementById('revenue-sold-date').value || null,
+    notes: document.getElementById('revenue-notes').value.trim()
+  };
+  const response = await fetch(`/api/revenue/inventory/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Unable to save revenue record');
+  closeRevenueRecord();
+  await loadRevenue();
+  showToast('Revenue record saved', 'success');
+}
+
+async function deleteRevenueRecord() {
+  const id = document.getElementById('revenue-record-id').value;
+  const response = await fetch(`/api/revenue/inventory/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error('Unable to delete revenue record');
+  closeRevenueRecord();
+  await loadRevenue();
+}
+
+async function prepareTraderaDraft() {
+  const id = document.getElementById('revenue-record-id').value;
+  const response = await fetch(`/api/revenue/inventory/${encodeURIComponent(id)}/tradera-draft`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ askingPriceSek: nullableNumber('revenue-sale-price') || undefined })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Unable to prepare Tradera draft');
+  showToast(`Tradera draft ready: ${data.draft.title}`, 'success');
+}
+
+function openPromotionModal() {
+  const select = document.getElementById('promotion-source');
+  select.innerHTML = allSources
+    .filter((source) => source.enabled)
+    .map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.label)}</option>`)
+    .join('');
+  for (const id of ['promotion-label', 'promotion-code', 'promotion-value', 'promotion-min-spend', 'promotion-max-discount', 'promotion-expires']) {
+    revenueInput(id, '');
+  }
+  revenueInput('promotion-type', 'fixed');
+  document.getElementById('promotion-verified').checked = false;
+  document.getElementById('promotion-modal').classList.remove('hidden');
+}
+
+function closePromotionModal() {
+  document.getElementById('promotion-modal').classList.add('hidden');
+}
+
+async function savePromotion() {
+  const expires = document.getElementById('promotion-expires').value;
+  const payload = {
+    sourceId: document.getElementById('promotion-source').value,
+    label: document.getElementById('promotion-label').value.trim(),
+    code: document.getElementById('promotion-code').value.trim(),
+    discountType: document.getElementById('promotion-type').value,
+    value: nullableNumber('promotion-value'),
+    minSpendSek: nullableNumber('promotion-min-spend') ?? 0,
+    maxDiscountSek: nullableNumber('promotion-max-discount'),
+    expiresAt: expires ? new Date(expires).toISOString() : null,
+    verified: document.getElementById('promotion-verified').checked,
+    enabled: true
+  };
+  const response = await fetch('/api/revenue/promotions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Unable to save promotion');
+  closePromotionModal();
+  await loadRevenue();
+  showToast(data.verified ? 'Verified promotion is active' : 'Promotion saved for verification', 'success');
+}
+
+async function openCostDefaultsModal() {
+  if (!state.revenueData) {
+    try {
+      await loadRevenue();
+    } catch (error) {
+      showToast(error.message, 'error');
+      return;
+    }
+  }
+  const costs = state.revenueData.costDefaults ?? {};
+  revenueInput('cost-inbound', costs.inboundShippingSek);
+  revenueInput('cost-outbound', costs.outboundShippingSek);
+  revenueInput('cost-packaging', costs.packagingSek);
+  revenueInput('cost-repair', costs.repairAllowanceSek);
+  revenueInput('cost-selling-percent', costs.sellingFeePercent);
+  revenueInput('cost-selling-fixed', costs.sellingFeeFixedSek);
+  revenueInput('cost-return-risk', costs.returnRiskPercent);
+  document.getElementById('cost-defaults-modal').classList.remove('hidden');
+}
+
+function closeCostDefaultsModal() {
+  document.getElementById('cost-defaults-modal').classList.add('hidden');
+}
+
+async function saveCostDefaults() {
+  const response = await fetch('/api/revenue/cost-defaults', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      inboundShippingSek: nullableNumber('cost-inbound'),
+      outboundShippingSek: nullableNumber('cost-outbound'),
+      packagingSek: nullableNumber('cost-packaging'),
+      repairAllowanceSek: nullableNumber('cost-repair'),
+      sellingFeePercent: nullableNumber('cost-selling-percent'),
+      sellingFeeFixedSek: nullableNumber('cost-selling-fixed'),
+      returnRiskPercent: nullableNumber('cost-return-risk')
+    })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Unable to save cost assumptions');
+  closeCostDefaultsModal();
+  await loadRevenue();
+  showToast('Forecast cost assumptions saved', 'success');
+}
+
 // Dispatch list refresh to the active view (deals, flip or arbitrage).
 function loadActiveView() {
   if (state.mode === 'flip') return loadFlips();
   if (state.mode === 'arbitrage') return loadArbitrage();
+  if (state.mode === 'revenue') return loadRevenue();
   return loadProducts();
 }
 
 function applyModeUI(mode) {
   const isFlip = mode === 'flip';
   const isArb = mode === 'arbitrage';
-  const isList = isFlip || isArb; // non-deals modes hide the deals chrome
+  const isRevenue = mode === 'revenue';
+  const isList = isFlip || isArb || isRevenue;
   for (const b of el.modeButtons) b.classList.toggle('active', b.dataset.mode === mode);
   el.flipBar.classList.toggle('hidden', !isFlip);
   if (el.arbBar) el.arbBar.classList.toggle('hidden', !isArb);
+  if (el.revenueBar) el.revenueBar.classList.toggle('hidden', !isRevenue);
+  el.productGrid.classList.toggle('revenue-grid', isRevenue);
   document.getElementById('filter-pills').classList.toggle('hidden', isList);
   document.querySelector('.filter-bar-right').classList.toggle('hidden', isList);
-  el.searchInput.placeholder = isFlip ? 'Search flips…' : isArb ? 'Search arbitrage…' : 'Search deals...';
+  el.searchInput.placeholder = isFlip ? 'Search flips…' : isArb ? 'Search arbitrage…' : isRevenue ? 'Search revenue ledger…' : 'Search deals...';
+  if (!isRevenue) {
+    el.emptyState.querySelector('h3').textContent = 'No products found';
+    el.emptyState.querySelector('p').textContent = 'Try adjusting your filters or run a new scan';
+  }
 
   // Close the deals filter panel when leaving deals mode
   if (isList && state.filterPanelOpen) {
@@ -932,7 +1213,7 @@ function applyModeUI(mode) {
 }
 
 function setMode(mode) {
-  if (mode !== 'deals' && mode !== 'flip' && mode !== 'arbitrage') return;
+  if (!['deals', 'flip', 'arbitrage', 'revenue'].includes(mode)) return;
   state.mode = mode;
   applyModeUI(mode);
   savePrefs();
@@ -1692,6 +1973,7 @@ async function loadDashboard() {
   state.latestRunStartedAt = status.lastRunSummary?.startedAt ?? status.lastRunStartedAt ?? null;
   state.favoriteCategories = preferences.favoriteCategories ?? [];
   state.categories = categories ?? [];
+  allSources = sources ?? [];
 
   if (state.category && !state.categories.some(c => c.key === state.category)) {
     state.category = '';
@@ -1716,6 +1998,8 @@ async function loadDashboard() {
     await loadFlips();
   } else if (state.mode === 'arbitrage') {
     await loadArbitrage();
+  } else if (state.mode === 'revenue') {
+    await loadRevenue();
   } else {
     renderStats(status, response);
     renderActiveFilterTags();
@@ -2139,6 +2423,9 @@ function bindEvents() {
       state.arbPage = 1;
       if (filterApplyTimer) clearTimeout(filterApplyTimer);
       filterApplyTimer = setTimeout(() => { filterApplyTimer = null; loadArbitrage().catch(err => showToast(err.message, 'error')); }, 250);
+    } else if (state.mode === 'revenue') {
+      state.search = el.searchInput.value.trim();
+      renderRevenue(state.revenueData);
     } else {
       updateFilters({ debounce: true });
     }
@@ -2175,6 +2462,27 @@ function bindEvents() {
     state.arbPage = 1;
     loadArbitrage().catch(err => showToast(err.message, 'error'));
   });
+
+  el.addPromotionBtn?.addEventListener('click', openPromotionModal);
+  el.costDefaultsBtn?.addEventListener('click', openCostDefaultsModal);
+  el.revenueRefreshBtn?.addEventListener('click', () => loadRevenue().catch(err => showToast(err.message, 'error')));
+  document.getElementById('revenue-record-close')?.addEventListener('click', closeRevenueRecord);
+  document.getElementById('revenue-record-modal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'revenue-record-modal') closeRevenueRecord();
+  });
+  document.getElementById('revenue-save-btn')?.addEventListener('click', () => saveRevenueRecord().catch(err => showToast(err.message, 'error')));
+  document.getElementById('revenue-delete-btn')?.addEventListener('click', () => deleteRevenueRecord().catch(err => showToast(err.message, 'error')));
+  document.getElementById('revenue-tradera-draft-btn')?.addEventListener('click', () => prepareTraderaDraft().catch(err => showToast(err.message, 'error')));
+  document.getElementById('promotion-close')?.addEventListener('click', closePromotionModal);
+  document.getElementById('promotion-modal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'promotion-modal') closePromotionModal();
+  });
+  document.getElementById('promotion-save-btn')?.addEventListener('click', () => savePromotion().catch(err => showToast(err.message, 'error')));
+  document.getElementById('cost-defaults-close')?.addEventListener('click', closeCostDefaultsModal);
+  document.getElementById('cost-defaults-modal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'cost-defaults-modal') closeCostDefaultsModal();
+  });
+  document.getElementById('cost-defaults-save')?.addEventListener('click', () => saveCostDefaults().catch(err => showToast(err.message, 'error')));
 
   // Filter selects
   el.categoryFilter.addEventListener('change', () => updateFilters());
@@ -2284,6 +2592,12 @@ function bindEvents() {
       el.searchInput.focus();
     }
     if (e.key === 'Escape') {
+      const costModal = document.getElementById('cost-defaults-modal');
+      if (!costModal.classList.contains('hidden')) { closeCostDefaultsModal(); return; }
+      const promoModal = document.getElementById('promotion-modal');
+      if (!promoModal.classList.contains('hidden')) { closePromotionModal(); return; }
+      const revenueModal = document.getElementById('revenue-record-modal');
+      if (!revenueModal.classList.contains('hidden')) { closeRevenueRecord(); return; }
       const fiModal = document.getElementById('flip-insights-modal');
       if (!fiModal.classList.contains('hidden')) { closeFlipInsightsModal(); return; }
       const phModal = document.getElementById('price-history-modal');

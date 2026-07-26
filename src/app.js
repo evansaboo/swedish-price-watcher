@@ -10,6 +10,26 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isSourceEnabled } from './lib/utils.js';
 import { buildProductSummaries } from './services/dealEngine.js';
+import { buildAffiliateUrl, decorateAffiliatePayload } from './services/affiliateLinks.js';
+import {
+  buildRevenueSummary,
+  createInventoryRecord,
+  ensureRevenueState,
+  materializeInventoryRecord,
+  normalizeCostDefaults,
+  normalizePromotion,
+  updateInventoryRecord
+} from './services/revenueEngine.js';
+import {
+  applyStripeEvent,
+  createSubscriber,
+  extractBearerToken,
+  findSubscriberByAccessKey,
+  normalizeDiscordWebhookUrl,
+  sanitizeSubscriber,
+  verifyStripeSignature
+} from './services/accessControl.js';
+import { buildTraderaDraft, submitTraderaDraft } from './services/traderaDrafts.js';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -186,6 +206,60 @@ function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
 
 export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler }) {
   const app = Fastify({ logger: false });
+  const sourceById = new Map((config.sources ?? []).map((source) => [source.id, source]));
+  let preferencesSaveQueue = Promise.resolve();
+
+  async function persistPreferences() {
+    if (typeof store.savePreferences === 'function') await store.savePreferences();
+    else await store.save();
+  }
+
+  function savePreferences() {
+    const pending = preferencesSaveQueue.then(persistPreferences, persistPreferences);
+    preferencesSaveQueue = pending.catch(() => {});
+    return pending;
+  }
+
+  function findRevenueProduct(listingKey) {
+    const flip = productCache.flips?.find((entry) => entry.listingKey === listingKey);
+    if (flip) return flip;
+    const product = productCache.products?.find((entry) => entry.listingKey === listingKey);
+    if (product) return product;
+    const item = store.getState().items?.[listingKey];
+    return item ? {
+      ...item,
+      currentPriceSek: item.latestPriceSek,
+      sourceLabel: item.sourceLabel ?? item.sourceId
+    } : null;
+  }
+
+  function revenueOverview() {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    const items = Object.values(revenue.inventory)
+      .map(materializeInventoryRecord)
+      .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''));
+    return {
+      items,
+      summary: buildRevenueSummary(items),
+      promotions: revenue.promotions,
+      costDefaults: normalizeCostDefaults(revenue.costDefaults),
+      clicks: revenue.clicks
+    };
+  }
+
+  function isAdmin(request) {
+    const configured = config.access?.adminToken;
+    return Boolean(configured && extractBearerToken(request.headers) === configured);
+  }
+
+  function premiumSubscriber(request) {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    return findSubscriberByAccessKey(
+      revenue.subscribers,
+      extractBearerToken(request.headers),
+      config.access?.premiumAccessKeys ?? []
+    );
+  }
 
   // Gzip/brotli for JSON + static responses — product payloads run to hundreds
   // of KB and the app is typically served from a Pi over a Cloudflare tunnel.
@@ -259,8 +333,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   // ── Deals & Products (legacy) ──────────────────────────────────
-  app.get('/api/deals', async (request) => filterDeals(store.getState().deals, request.query));
-  app.get('/api/products', async (request) => filterProducts(buildProductSummaries(store.getState()), request.query));
+  app.get('/api/deals', async (request) => decorateAffiliatePayload(filterDeals(store.getState().deals, request.query), sourceById));
+  app.get('/api/products', async (request) => decorateAffiliatePayload(filterProducts(buildProductSummaries(store.getState()), request.query), sourceById));
 
   // ── Outlet Products (main endpoint — uses ProductCache) ────────
   app.get('/api/outlet-products', async (request) => {
@@ -269,7 +343,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     const wishlistSet = new Set(state.preferences?.wishlist ?? []);
     const q = request.query;
 
-    return productCache.query({
+    const result = productCache.query({
       search: q.search,
       category: q.category,
       store: q.store,
@@ -288,13 +362,14 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       page: Number.parseInt(q.page ?? '1', 10),
       pageSize: Number.parseInt(q.pageSize ?? '50', 10),
     }, favSet, state.stats.lastRunStartedAt, wishlistSet);
+    return decorateAffiliatePayload(result, sourceById);
   });
 
   // ── Flip / Resale opportunities ────────────────────────────────
-  // Buyable items valued against actual Blocket second-hand prices.
+  // Buyable items valued against separated realized-sale and asking-price evidence.
   app.get('/api/flips', async (request) => {
     const q = request.query;
-    return productCache.queryFlips({
+    const result = productCache.queryFlips({
       search: q.search,
       demandCategory: q.demandCategory,
       store: q.store,
@@ -306,6 +381,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       page: Number.parseInt(q.page ?? '1', 10),
       pageSize: Number.parseInt(q.pageSize ?? '50', 10)
     });
+    return decorateAffiliatePayload(result, sourceById);
   });
 
   app.get('/api/arbitrage', async (request) => {
@@ -324,6 +400,274 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.get('/api/flip-insights', async () => productCache.flipInsights());
+
+  // ── Revenue workbench ─────────────────────────────────────────
+  app.get('/api/revenue', async () => revenueOverview());
+
+  app.post('/api/revenue/inventory/:listingKey', async (request, reply) => {
+    const { listingKey } = request.params;
+    const product = findRevenueProduct(listingKey);
+    if (!product) { reply.code(404); return { message: 'Product not found.' }; }
+    const revenue = ensureRevenueState(store.getState().preferences);
+    const existing = Object.values(revenue.inventory).find((record) => record.listingKey === listingKey);
+    if (existing) return materializeInventoryRecord(existing);
+    try {
+      const record = createInventoryRecord(product, request.body ?? {});
+      revenue.inventory[record.id] = record;
+      await savePreferences();
+      return record;
+    } catch (error) {
+      reply.code(400);
+      return { message: error.message };
+    }
+  });
+
+  app.patch('/api/revenue/inventory/:id', async (request, reply) => {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    const existing = revenue.inventory[request.params.id];
+    if (!existing) { reply.code(404); return { message: 'Inventory record not found.' }; }
+    try {
+      const record = updateInventoryRecord(existing, request.body ?? {});
+      revenue.inventory[record.id] = record;
+      await savePreferences();
+      return record;
+    } catch (error) {
+      reply.code(400);
+      return { message: error.message };
+    }
+  });
+
+  app.delete('/api/revenue/inventory/:id', async (request, reply) => {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    if (!revenue.inventory[request.params.id]) {
+      reply.code(404);
+      return { message: 'Inventory record not found.' };
+    }
+    delete revenue.inventory[request.params.id];
+    await savePreferences();
+    return { ok: true };
+  });
+
+  app.post('/api/revenue/promotions', async (request, reply) => {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    try {
+      const promotion = normalizePromotion(request.body ?? {});
+      revenue.promotions.push(promotion);
+      await savePreferences();
+      return promotion;
+    } catch (error) {
+      reply.code(400);
+      return { message: error.message };
+    }
+  });
+
+  app.patch('/api/revenue/promotions/:id', async (request, reply) => {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    const index = revenue.promotions.findIndex((promotion) => promotion.id === request.params.id);
+    if (index < 0) { reply.code(404); return { message: 'Promotion not found.' }; }
+    try {
+      const promotion = normalizePromotion(request.body ?? {}, revenue.promotions[index]);
+      revenue.promotions[index] = promotion;
+      await savePreferences();
+      return promotion;
+    } catch (error) {
+      reply.code(400);
+      return { message: error.message };
+    }
+  });
+
+  app.delete('/api/revenue/promotions/:id', async (request, reply) => {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    const index = revenue.promotions.findIndex((promotion) => promotion.id === request.params.id);
+    if (index < 0) { reply.code(404); return { message: 'Promotion not found.' }; }
+    revenue.promotions.splice(index, 1);
+    await savePreferences();
+    return { ok: true };
+  });
+
+  app.put('/api/revenue/cost-defaults', async (request) => {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    revenue.costDefaults = normalizeCostDefaults(request.body ?? {});
+    await savePreferences();
+    return revenue.costDefaults;
+  });
+
+  app.post('/api/revenue/inventory/:id/tradera-draft', async (request, reply) => {
+    const revenue = ensureRevenueState(store.getState().preferences);
+    const record = revenue.inventory[request.params.id];
+    if (!record) { reply.code(404); return { message: 'Inventory record not found.' }; }
+    try {
+      const draft = buildTraderaDraft(record, request.body ?? {});
+      let remote = null;
+      if (request.body?.submit === true) {
+        remote = await submitTraderaDraft(draft, config.tradera);
+      }
+      record.traderaDraft = {
+        draft,
+        remote,
+        submittedAt: remote ? new Date().toISOString() : null,
+        updatedAt: new Date().toISOString()
+      };
+      record.updatedAt = record.traderaDraft.updatedAt;
+      await savePreferences();
+      return record.traderaDraft;
+    } catch (error) {
+      reply.code(/not configured/i.test(error.message) ? 501 : 400);
+      return { message: error.message };
+    }
+  });
+
+  // ── Premium access and Stripe-compatible subscription state ──
+  app.get('/api/premium/status', async (request, reply) => {
+    const subscriber = premiumSubscriber(request);
+    if (!subscriber) { reply.code(401); return { active: false }; }
+    return { active: true, subscriber: sanitizeSubscriber(subscriber) };
+  });
+
+  app.get('/api/premium/flips', async (request, reply) => {
+    if (!premiumSubscriber(request)) { reply.code(401); return { message: 'Premium access required.' }; }
+    const q = request.query;
+    return decorateAffiliatePayload(productCache.queryFlips({
+      search: q.search,
+      demandCategory: q.demandCategory,
+      store: q.store,
+      minNetProfitSek: Number.parseInt(q.minNetProfitSek ?? '', 10),
+      minRoiPercent: Number.parseInt(q.minRoiPercent ?? '', 10),
+      maxBuyPriceSek: Number.parseInt(q.maxBuyPriceSek ?? '', 10),
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+      page: Number.parseInt(q.page ?? '1', 10),
+      pageSize: Number.parseInt(q.pageSize ?? '50', 10)
+    }), sourceById);
+  });
+
+  app.patch('/api/premium/profile', async (request, reply) => {
+    const subscriber = premiumSubscriber(request);
+    if (!subscriber || subscriber.configured) { reply.code(401); return { message: 'Managed subscriber access required.' }; }
+    try {
+      subscriber.discordWebhook = normalizeDiscordWebhookUrl(
+        request.body?.discordWebhook ?? subscriber.discordWebhook
+      );
+      subscriber.minNetProfitSek = Math.max(0, Number(request.body?.minNetProfitSek ?? subscriber.minNetProfitSek) || 0);
+      subscriber.minRoiPercent = Math.max(0, Number(request.body?.minRoiPercent ?? subscriber.minRoiPercent) || 0);
+      subscriber.updatedAt = new Date().toISOString();
+      await savePreferences();
+      return sanitizeSubscriber(subscriber);
+    } catch (error) {
+      reply.code(400);
+      return { message: error.message };
+    }
+  });
+
+  app.get('/api/admin/subscribers', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
+    return ensureRevenueState(store.getState().preferences).subscribers.map(sanitizeSubscriber);
+  });
+
+  app.post('/api/admin/subscribers', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
+    const revenue = ensureRevenueState(store.getState().preferences);
+    try {
+      const created = createSubscriber(request.body ?? {});
+      revenue.subscribers.push(created.subscriber);
+      await savePreferences();
+      return { subscriber: sanitizeSubscriber(created.subscriber), accessKey: created.accessKey };
+    } catch (error) {
+      reply.code(400);
+      return { message: error.message };
+    }
+  });
+
+  app.post('/api/billing/checkout', async (request, reply) => {
+    const { stripeSecretKey, stripePriceId, publicBaseUrl } = config.access ?? {};
+    if (!stripeSecretKey || !stripePriceId || !publicBaseUrl) {
+      reply.code(501);
+      return { message: 'Stripe checkout is not configured.' };
+    }
+    const revenue = ensureRevenueState(store.getState().preferences);
+    const pendingCutoff = Date.now() - 24 * 60 * 60 * 1000;
+    revenue.subscribers = revenue.subscribers.filter((subscriber) =>
+      subscriber.status !== 'pending' || Date.parse(subscriber.createdAt ?? '') >= pendingCutoff
+    );
+    const created = createSubscriber({ status: 'pending' });
+
+    const params = new URLSearchParams({
+      mode: 'subscription',
+      'line_items[0][price]': stripePriceId,
+      'line_items[0][quantity]': '1',
+      success_url: `${publicBaseUrl.replace(/\/$/, '')}/?subscription=success`,
+      cancel_url: `${publicBaseUrl.replace(/\/$/, '')}/?subscription=cancelled`,
+      client_reference_id: created.subscriber.id,
+      'subscription_data[metadata][subscriber_id]': created.subscriber.id,
+      'metadata[subscriber_id]': created.subscriber.id
+    });
+    let response;
+    try {
+      response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${stripeSecretKey}`,
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: params,
+        signal: AbortSignal.timeout(30_000)
+      });
+    } catch (error) {
+      reply.code(502);
+      return { message: `Stripe checkout failed: ${error.message}` };
+    }
+    if (!response.ok) {
+      reply.code(502);
+      return { message: `Stripe checkout failed (${response.status}).` };
+    }
+    const session = await response.json();
+    revenue.subscribers.push(created.subscriber);
+    await savePreferences();
+    return { checkoutUrl: session.url, accessKey: created.accessKey };
+  });
+
+  await app.register(async function stripeWebhookRoutes(scope) {
+    scope.addContentTypeParser('application/json', { parseAs: 'string', bodyLimit: 65_536 }, (request, body, done) => {
+      try {
+        request.rawBody = body;
+        done(null, JSON.parse(body));
+      } catch (error) {
+        error.statusCode = 400;
+        done(error);
+      }
+    });
+    scope.post('/api/billing/stripe-webhook', async (request, reply) => {
+      const secret = config.access?.stripeWebhookSecret;
+      if (!secret) { reply.code(501); return { message: 'Stripe webhook is not configured.' }; }
+      if (!verifyStripeSignature(request.rawBody, request.headers['stripe-signature'], secret)) {
+        reply.code(400);
+        return { message: 'Invalid Stripe signature.' };
+      }
+      const revenue = ensureRevenueState(store.getState().preferences);
+      const updated = applyStripeEvent(revenue.subscribers, request.body);
+      if (updated) await savePreferences();
+      return { received: true };
+    });
+  });
+
+  // Aggregate outbound tracking only; no visitor identifiers are stored.
+  app.get('/api/out/:listingKey', async (request, reply) => {
+    const product = findRevenueProduct(request.params.listingKey);
+    if (!product?.url) { reply.code(404); return { message: 'Product not found.' }; }
+    const source = sourceById.get(product.sourceId);
+    const { buyUrl } = buildAffiliateUrl(product.url, source);
+    const revenue = ensureRevenueState(store.getState().preferences);
+    const day = new Date().toISOString().slice(0, 10);
+    revenue.clicks.total = Number(revenue.clicks.total ?? 0) + 1;
+    revenue.clicks.bySource[product.sourceId] = Number(revenue.clicks.bySource[product.sourceId] ?? 0) + 1;
+    revenue.clicks.byDay[day] = Number(revenue.clicks.byDay[day] ?? 0) + 1;
+    void savePreferences().catch((error) => {
+      console.error('[affiliate-click]', error.message);
+    });
+    return reply.redirect(buyUrl);
+  });
 
   // ── CSV Export (same filters as /api/outlet-products) ──────────
   app.get('/api/export.csv', async (request, reply) => {

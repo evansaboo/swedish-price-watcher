@@ -21,7 +21,14 @@ export function createDefaultState() {
     itemHistory: {},
     preferences: {
       favoriteCategories: [],
-      wishlist: []
+      wishlist: [],
+      revenue: {
+        promotions: [],
+        inventory: {},
+        costDefaults: {},
+        clicks: { total: 0, bySource: {}, byDay: {} },
+        subscribers: []
+      }
     },
     stats: {
       lastRunStartedAt: null,
@@ -53,6 +60,22 @@ function normalizeState(rawState = {}) {
   state.preferences.wishlist = Array.isArray(state.preferences.wishlist)
     ? state.preferences.wishlist.filter(k => typeof k === 'string' && k)
     : [];
+  const rawRevenue = state.preferences.revenue;
+  state.preferences.revenue = {
+    promotions: Array.isArray(rawRevenue?.promotions) ? rawRevenue.promotions : [],
+    inventory: rawRevenue?.inventory && typeof rawRevenue.inventory === 'object' && !Array.isArray(rawRevenue.inventory)
+      ? rawRevenue.inventory
+      : {},
+    costDefaults: rawRevenue?.costDefaults && typeof rawRevenue.costDefaults === 'object'
+      ? rawRevenue.costDefaults
+      : {},
+    clicks: {
+      total: Number.isFinite(Number(rawRevenue?.clicks?.total)) ? Number(rawRevenue.clicks.total) : 0,
+      bySource: rawRevenue?.clicks?.bySource && typeof rawRevenue.clicks.bySource === 'object' ? rawRevenue.clicks.bySource : {},
+      byDay: rawRevenue?.clicks?.byDay && typeof rawRevenue.clicks.byDay === 'object' ? rawRevenue.clicks.byDay : {}
+    },
+    subscribers: Array.isArray(rawRevenue?.subscribers) ? rawRevenue.subscribers : []
+  };
   if (Object.prototype.hasOwnProperty.call(rawState.preferences ?? {}, 'scheduler')) {
     const schedulerEnabled = state.preferences.scheduler?.enabled;
     const schedulerIntervalMinutes = Number.parseInt(String(state.preferences.scheduler?.intervalMinutes ?? ''), 10);

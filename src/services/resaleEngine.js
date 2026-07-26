@@ -9,14 +9,15 @@
 //    deliberately coarse (model + key price-driving variant, ignoring board
 //    partner / colour / cosmetic words) so a noisy Blocket title and a clean
 //    retail title collapse to the same key.
-// 2. buildResaleIndex(usedItems) — per-model price stats from Blocket comps.
+// 2. buildResaleIndex(usedItems) — per-model sold and asking-price evidence.
 // 3. computeFlips(candidates, index, opts) — net profit per buyable item.
 // ═══════════════════════════════════════════════════════════════
 
 import { median } from '../lib/utils.js';
+import { calculateProjectedProfit } from './revenueEngine.js';
 
 const DEFAULT_RESALE_OPTIONS = {
-  minSampleCount: 3,       // Blocket comps required before we trust a median
+  minSampleCount: 3,       // Evidence samples required before we trust a median
   resaleAdjustFactor: 0.95, // sell slightly under median to move quickly
   flatFeeSek: 60,          // shipping / packaging / Blocket fee allowance
   minNetProfitSek: 300,    // floor for surfacing a flip
@@ -742,38 +743,61 @@ export function buildResaleIndex(usedItems, { resolveModel = extractResaleModel 
         resaleKey: model.resaleKey,
         modelLabel: model.modelLabel,
         demandCategory: model.demandCategory,
-        entries: [] // { price, title, url }
+        entries: [] // { price, title, url, evidenceType }
       };
       buckets.set(model.resaleKey, bucket);
     }
-    bucket.entries.push({ price, title: item.title, url: item.url ?? null });
+    bucket.entries.push({
+      price,
+      title: item.title,
+      url: item.url ?? null,
+      sourceId: item.sourceId ?? null,
+      evidenceType: item.soldComp === true || item.availability === 'sold' ? 'sold' : 'asking'
+    });
   }
 
   const index = new Map();
   for (const bucket of buckets.values()) {
-    const allPrices = bucket.entries.map(e => e.price);
-    let [lo, hi] = robustPriceBounds(allPrices);
-    let kept = bucket.entries.filter(e => e.price >= lo && e.price <= hi);
-    if (kept.length < 3) kept = bucket.entries; // never trim below a usable sample size
-
-    const sorted = kept.map(e => e.price).sort((a, b) => a - b);
-    const p25 = sorted[Math.floor((sorted.length - 1) * 0.25)];
-    const samples = kept
-      .slice()
-      .sort((a, b) => a.price - b.price)
-      .slice(0, 6)
-      .map(e => ({ title: e.title, url: e.url, priceSek: Math.round(e.price) }));
+    const summarize = (entries) => {
+      if (!entries.length) return null;
+      const allPrices = entries.map(e => e.price);
+      const [lo, hi] = robustPriceBounds(allPrices);
+      let kept = entries.filter(e => e.price >= lo && e.price <= hi);
+      if (kept.length < 3) kept = entries;
+      const sorted = kept.map(e => e.price).sort((a, b) => a - b);
+      const p25 = sorted[Math.floor((sorted.length - 1) * 0.25)];
+      return {
+        medianSek: median(sorted),
+        p25Sek: Math.round(p25),
+        minSek: Math.round(sorted[0]),
+        maxSek: Math.round(sorted[sorted.length - 1]),
+        sampleCount: sorted.length,
+        samples: kept
+          .slice()
+          .sort((a, b) => a.price - b.price)
+          .slice(0, 6)
+          .map(e => ({
+            title: e.title,
+            url: e.url,
+            priceSek: Math.round(e.price),
+            sourceId: e.sourceId,
+            evidenceType: e.evidenceType
+          }))
+      };
+    };
+    const sold = summarize(bucket.entries.filter((entry) => entry.evidenceType === 'sold'));
+    const asking = summarize(bucket.entries.filter((entry) => entry.evidenceType === 'asking'));
+    const combined = summarize(bucket.entries);
 
     index.set(bucket.resaleKey, {
       resaleKey: bucket.resaleKey,
       modelLabel: bucket.modelLabel,
       demandCategory: bucket.demandCategory,
-      medianSek: median(sorted),
-      p25Sek: Math.round(p25),
-      minSek: Math.round(sorted[0]),
-      maxSek: Math.round(sorted[sorted.length - 1]),
-      sampleCount: sorted.length,
-      samples
+      ...combined,
+      sold,
+      asking,
+      soldSampleCount: sold?.sampleCount ?? 0,
+      askingSampleCount: asking?.sampleCount ?? 0
     });
   }
   return index;
@@ -784,7 +808,7 @@ function blocketSearchUrl(modelLabel) {
 }
 
 /**
- * Compute flip opportunities: buyable items priced below their Blocket median.
+ * Compute flip opportunities: buyable items priced below their resale evidence.
  * @param {Array} candidateItems buyable items (e.g. outlet/deal, NOT 'used')
  * @param {Map} index resale index from buildResaleIndex
  * @param {object} options thresholds/fees
@@ -802,14 +826,25 @@ export function computeFlips(candidateItems, index, options = {}) {
     const model = resolveModel(item.title);
     if (!model) continue;
     const market = index.get(model.resaleKey);
-    if (!market || market.sampleCount < opts.minSampleCount) continue;
-    if (!Number.isFinite(market.medianSek) || market.medianSek <= 0) continue;
+    if (!market) continue;
+    const evidence = market.sold?.sampleCount >= opts.minSampleCount
+      ? { ...market.sold, basis: 'sold', confidence: market.sold.sampleCount >= 5 ? 'high' : 'medium' }
+      : market.asking?.sampleCount >= opts.minSampleCount
+        ? { ...market.asking, basis: 'asking', confidence: 'low' }
+        : null;
+    if (!evidence || !Number.isFinite(evidence.medianSek) || evidence.medianSek <= 0) continue;
     // Implausibly cheap "buy" vs the used median ⇒ category mismatch, not a deal.
-    if (buyPriceSek < market.medianSek * opts.minBuyToResaleRatio) continue;
+    if (buyPriceSek < evidence.medianSek * opts.minBuyToResaleRatio) continue;
 
-    const expectedResaleSek = Math.round(market.medianSek * opts.resaleAdjustFactor);
-    const netProfitSek = expectedResaleSek - buyPriceSek - opts.flatFeeSek;
-    const roiPercent = Math.round((netProfitSek / buyPriceSek) * 100);
+    const expectedResaleSek = Math.round(evidence.medianSek * opts.resaleAdjustFactor);
+    const projection = calculateProjectedProfit({
+      item,
+      expectedResaleSek,
+      promotions: opts.promotions,
+      costDefaults: opts.costDefaults,
+      legacyFlatFeeSek: opts.flatFeeSek
+    });
+    const { netProfitSek, roiPercent } = projection;
 
     if (netProfitSek < opts.minNetProfitSek) continue;
     if (roiPercent < opts.minRoiPercent) continue;
@@ -831,14 +866,29 @@ export function computeFlips(candidateItems, index, options = {}) {
       modelLabel: model.modelLabel,
       demandCategory: model.demandCategory,
       buyPriceSek: Math.round(buyPriceSek),
-      resaleMedianSek: market.medianSek,
-      resaleP25Sek: market.p25Sek,
+      effectiveBuyPriceSek: projection.effectiveBuyPriceSek,
+      promotion: projection.promotion,
+      promotionDiscountSek: projection.promotionDiscountSek,
+      resaleMedianSek: evidence.medianSek,
+      resaleP25Sek: evidence.p25Sek,
+      resaleBasis: evidence.basis,
+      resaleConfidence: evidence.confidence,
+      soldSampleCount: market.soldSampleCount,
+      askingSampleCount: market.askingSampleCount,
       expectedResaleSek,
-      feesSek: opts.flatFeeSek,
+      feesSek: projection.projectedCostsSek,
+      projectedCosts: {
+        inboundShippingSek: projection.inboundShippingSek,
+        outboundShippingSek: projection.outboundShippingSek,
+        packagingSek: projection.packagingSek,
+        repairAllowanceSek: projection.repairAllowanceSek,
+        sellingFeeSek: projection.sellingFeeSek,
+        returnRiskSek: projection.returnRiskSek
+      },
       netProfitSek,
       roiPercent,
-      sampleCount: market.sampleCount,
-      comps: market.samples,
+      sampleCount: evidence.sampleCount,
+      comps: evidence.samples,
       blocketSearchUrl: blocketSearchUrl(model.modelLabel)
     });
   }

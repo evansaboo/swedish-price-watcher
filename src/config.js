@@ -47,6 +47,10 @@ function sanitizeSource(rawSource) {
     throw new Error(`Unsupported source type "${source.type}" in ${source.id}.`);
   }
 
+  const affiliateEnvKey = `AFFILIATE_LINK_TEMPLATE_${String(source.id).toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+  const rawAffiliate = asPlainObject(source.affiliateProgram);
+  const affiliateLinkTemplate = String(process.env[affiliateEnvKey] ?? rawAffiliate.linkTemplate ?? '').trim();
+
   return {
     ...source,
     enabled: Boolean(source.enabled),
@@ -89,7 +93,13 @@ function sanitizeSource(rawSource) {
     referenceLookupResultsWanted: parsePositiveInt(source.referenceLookupResultsWanted, 80),
     referenceLookupMaxPages: parsePositiveInt(source.referenceLookupMaxPages, 2),
     selectors: asPlainObject(source.selectors),
-    attributes: asPlainObject(source.attributes)
+    attributes: asPlainObject(source.attributes),
+    affiliateProgram: affiliateLinkTemplate
+      ? {
+          network: String(rawAffiliate.network ?? 'affiliate').trim() || 'affiliate',
+          linkTemplate: affiliateLinkTemplate
+        }
+      : null
   };
 }
 
@@ -143,6 +153,18 @@ export async function loadConfig() {
       flatFeeSek: parseNonNegativeInt(process.env.RESALE_FLAT_FEE_SEK, 60),
       minNetProfitSek: parsePositiveInt(process.env.RESALE_MIN_PROFIT_SEK, 300),
       minRoiPercent: parsePositiveInt(process.env.RESALE_MIN_ROI_PERCENT, 8)
+    },
+    access: {
+      adminToken: process.env.ADMIN_API_TOKEN?.trim() ?? '',
+      premiumAccessKeys: (process.env.PREMIUM_ACCESS_KEYS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
+      stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() ?? '',
+      stripeSecretKey: process.env.STRIPE_SECRET_KEY?.trim() ?? '',
+      stripePriceId: process.env.STRIPE_PREMIUM_PRICE_ID?.trim() ?? '',
+      publicBaseUrl: process.env.PUBLIC_BASE_URL?.trim() ?? ''
+    },
+    tradera: {
+      draftEndpoint: process.env.TRADERA_DRAFT_ENDPOINT?.trim() ?? '',
+      accessToken: process.env.TRADERA_ACCESS_TOKEN?.trim() ?? ''
     },
     llm: {
       enabled: (process.env.LLM_CLASSIFIER_ENABLED ?? 'true') !== 'false',

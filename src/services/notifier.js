@@ -111,7 +111,7 @@ export class DiscordNotifier {
     this.webhookRetryCapMs = Math.max(this.webhookRetryBaseMs, Number(webhookRetryCapMs) || this.webhookRetryBaseMs);
   }
 
-  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings, flips = [], wishlistTargets = {} }) {
+  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings, flips = [], wishlistTargets = {}, premiumSubscribers = [] }) {
     const settings = notificationSettings ?? {};
 
     // Respect global notifications-enabled flag (default: true for backward compat)
@@ -127,16 +127,64 @@ export class DiscordNotifier {
 
     // Feature 3: wishlist target-price alerts — a tracked item dropped to/below the user's target.
     const wishlistSummary = await this.notifyWishlistTargets({ newItems, priceDrops, state, wishlistTargets, config: settings.wishlistAlerts });
+    const premiumSummary = await this.notifyPremiumSubscribers({ flips, state, subscribers: premiumSubscribers });
 
     return {
-      sent: alertSummary.sent + flipSummary.sent + wishlistSummary.sent,
-      skipped: alertSummary.skipped + flipSummary.skipped + wishlistSummary.skipped,
-      failed: alertSummary.failed + flipSummary.failed + wishlistSummary.failed,
-      errors: [...alertSummary.errors, ...flipSummary.errors, ...wishlistSummary.errors],
+      sent: alertSummary.sent + flipSummary.sent + wishlistSummary.sent + premiumSummary.sent,
+      skipped: alertSummary.skipped + flipSummary.skipped + wishlistSummary.skipped + premiumSummary.skipped,
+      failed: alertSummary.failed + flipSummary.failed + wishlistSummary.failed + premiumSummary.failed,
+      errors: [...alertSummary.errors, ...flipSummary.errors, ...wishlistSummary.errors, ...premiumSummary.errors],
       alertRules: alertSummary,
       flipAlerts: flipSummary,
-      wishlistAlerts: wishlistSummary
+      wishlistAlerts: wishlistSummary,
+      premiumAlerts: premiumSummary
     };
+  }
+
+  async notifyPremiumSubscribers({ flips = [], state, subscribers = [] }) {
+    const result = { sent: 0, skipped: 0, failed: 0, errors: [] };
+    for (const subscriber of subscribers) {
+      if (subscriber?.status !== 'active' || !String(subscriber.discordWebhook ?? '').trim()) continue;
+      const qualifying = flips.filter((flip) =>
+        flip.netProfitSek >= (Number(subscriber.minNetProfitSek) || 500) &&
+        flip.roiPercent >= (Number(subscriber.minRoiPercent) || 15)
+      );
+      for (const flip of qualifying) {
+        const key = `${flip.listingKey}:premium:${subscriber.id}:${flip.effectiveBuyPriceSek ?? flip.buyPriceSek}`;
+        const previous = state.notifications[key];
+        if (previous && Date.now() - Date.parse(previous) < this.cooldownMs) {
+          result.skipped++;
+          continue;
+        }
+        try {
+          await this.#postWebhook({
+            username: 'Price Watcher Premium',
+            content: `💰 **Premium revenue alert** — ${flip.modelLabel ?? flip.title}`,
+            embeds: [{
+              title: flip.title,
+              url: flip.buyUrl ?? flip.url,
+              description: `${flip.sourceLabel} • ${flip.resaleConfidence} confidence`,
+              color: 0x1f9d68,
+              fields: [
+                { name: 'Effective buy', value: formatSek(flip.effectiveBuyPriceSek ?? flip.buyPriceSek), inline: true },
+                { name: 'Conservative resale', value: formatSek(flip.expectedResaleSek), inline: true },
+                { name: 'Projected profit', value: `+${formatSek(flip.netProfitSek)}`, inline: true },
+                { name: 'ROI', value: `${flip.roiPercent}%`, inline: true },
+                { name: 'Evidence', value: `${flip.sampleCount} ${flip.resaleBasis} comps`, inline: true },
+                ...(flip.promotion ? [{ name: 'Promotion', value: `${flip.promotion.code ?? flip.promotion.label} (−${formatSek(flip.promotionDiscountSek)})`, inline: true }] : [])
+              ],
+              footer: flip.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
+            }]
+          }, subscriber.discordWebhook);
+          state.notifications[key] = new Date().toISOString();
+          result.sent++;
+        } catch (error) {
+          result.failed++;
+          this.#recordError(result.errors, error);
+        }
+      }
+    }
+    return result;
   }
 
   /**
@@ -173,7 +221,7 @@ export class DiscordNotifier {
           embeds: [
             {
               title: flip.title,
-              url: flip.url,
+              url: flip.buyUrl ?? flip.url,
               description: `${flip.sourceLabel} • ${flip.demandCategory ?? ''}`,
               color: 0xfaa61a,
               fields: [
@@ -181,9 +229,10 @@ export class DiscordNotifier {
                 { name: 'Resale median', value: formatSek(flip.resaleMedianSek), inline: true },
                 { name: 'Net profit', value: `+${formatSek(flip.netProfitSek)}`, inline: true },
                 { name: 'ROI', value: `${flip.roiPercent}%`, inline: true },
-                { name: 'Comps', value: `${flip.sampleCount} Blocket`, inline: true }
+                { name: 'Evidence', value: `${flip.sampleCount} ${flip.resaleBasis === 'sold' ? 'sold' : 'asking'} comps`, inline: true }
               ],
-              image: flip.imageUrl ? { url: flip.imageUrl } : undefined
+              image: flip.imageUrl ? { url: flip.imageUrl } : undefined,
+              footer: flip.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
             }
           ]
         }, webhook);
@@ -220,7 +269,7 @@ export class DiscordNotifier {
     const seen = new Set();
     const candidates = [];
     for (const item of newItems) candidates.push(item);
-    for (const drop of priceDrops) candidates.push(state.items[drop.listingKey] ?? drop);
+    for (const drop of priceDrops) candidates.push({ ...(state.items[drop.listingKey] ?? drop), buyUrl: drop.buyUrl, affiliate: drop.affiliate });
 
     for (const item of candidates) {
       const listingKey = item.listingKey;
@@ -243,7 +292,7 @@ export class DiscordNotifier {
           embeds: [
             {
               title: item.title,
-              url: item.url,
+              url: item.buyUrl ?? item.url,
               description: `${item.sourceLabel ?? ''} • ${item.category ?? ''}`,
               color: 0xeb459e,
               fields: [
@@ -324,7 +373,7 @@ export class DiscordNotifier {
               embeds: [
                 {
                   title: item.title,
-                  url: item.url,
+                  url: item.buyUrl ?? item.url,
                   description: `${item.sourceLabel} • ${item.category}`,
                   color: 0x5865f2,
                   fields: [
@@ -333,7 +382,8 @@ export class DiscordNotifier {
                     { name: 'Discount', value: formatPercent(discount.discountPercent), inline: true },
                     { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
                   ],
-                  image: item.imageUrl ? { url: item.imageUrl } : undefined
+                  image: item.imageUrl ? { url: item.imageUrl } : undefined,
+                  footer: item.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
                 }
               ]
             }, webhookUrl);
@@ -360,7 +410,7 @@ export class DiscordNotifier {
         if (!Number.isFinite(drop.dropPercent) || drop.dropPercent < minDropPercent) continue;
         // Match against the full tracked item (has reference price + image); fall
         // back to the drop record itself if the item was pruned mid-scan.
-        const item = state.items[drop.listingKey] ?? drop;
+        const item = { ...(state.items[drop.listingKey] ?? drop), buyUrl: drop.buyUrl, affiliate: drop.affiliate };
         if (!itemMatchesRule(item, constraints)) continue;
 
         // One drop alert per item per rule per cooldown window.
@@ -380,7 +430,7 @@ export class DiscordNotifier {
               embeds: [
                 {
                   title: drop.title,
-                  url: drop.url,
+                  url: drop.buyUrl ?? drop.url,
                   description: `${drop.sourceLabel} • ${drop.category ?? ''}`,
                   color: 0x57f287,
                   fields: [
@@ -388,7 +438,8 @@ export class DiscordNotifier {
                     { name: 'Now', value: formatSek(drop.newPriceSek), inline: true },
                     { name: 'Drop', value: `−${formatPercent(drop.dropPercent)} (${formatSek(drop.dropSek)})`, inline: true }
                   ],
-                  image: item.imageUrl ? { url: item.imageUrl } : undefined
+                  image: item.imageUrl ? { url: item.imageUrl } : undefined,
+                  footer: drop.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
                 }
               ]
             }, webhookUrl);
@@ -440,7 +491,8 @@ export class DiscordNotifier {
         headers: {
           'content-type': 'application/json'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        redirect: 'error'
       });
 
       if (response.ok) {

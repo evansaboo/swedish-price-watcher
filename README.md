@@ -1,6 +1,6 @@
 # Swedish Price Watcher
 
-A production outlet price tracker for Swedish electronics stores. Runs on a Raspberry Pi 4 with Docker, uses FlareSolverr for Cloudflare bypass, and sends Discord notifications as each scan completes. Public access via Cloudflare Tunnel.
+A production outlet price and resale-revenue tracker for Swedish electronics stores. It supports Railway and Raspberry Pi/Docker deployments, uses FlareSolverr where needed, and sends incremental Discord notifications.
 
 ## Active sources
 
@@ -30,7 +30,13 @@ A production outlet price tracker for Swedish electronics stores. Runs on a Rasp
 - Discord alert rules fire on **new matches** and **price drops** (per-rule toggle + min-drop %)
 - **Daily digest**: top new deals by score posted once per day at a configured Stockholm time (Settings → Alerts)
 - **Cross-store matching**: the same product is linked across stores via GTIN/EAN and manufacturer part numbers (with normalized-title fallback); cards show "Cheaper at X" / "Best price of N stores"
-- **⚡ Flip / Resale view**: a dedicated dashboard mode that values buyable outlet/deal items against **actual Blocket second-hand prices** for the same model, then ranks by real net profit. Model matching is resale-aware for high-demand categories — Apple (iPhone/iPad/MacBook/AirPods/Watch), GPUs (RTX/RX/Arc), consoles (PS5/Xbox), handhelds (Switch/Steam Deck) and CPUs (Ryzen/Intel) — so noisy Blocket titles collapse to the same model key as clean retail titles. Each card shows buy price, Blocket median, estimated net profit, ROI %, the number of comps, and a link to live Blocket listings (`/api/flips`).
+- **⚡ Flip / Resale view**: values buyable outlet/deal items against model-matched resale evidence, preferring realized Tradera auction prices and falling back to Blocket asking prices. Model matching covers Apple devices, GPUs, consoles, handhelds, CPUs, Samsung/Pixel devices, headphones, Dyson, and Meta Quest. Cards show effective buy price, evidence basis/confidence, projected costs, net profit, ROI, and live comps (`/api/flips`).
+- **Revenue workbench**: tracks opportunities through watching → bought → listed → sold/returned/skipped, keeps projected and realized profit separate, records actual costs, and reports forecast error and capital days.
+- **Promotion-aware cost**: verified retailer codes reduce effective buy price; expired, ineligible, and unverified promotions never inflate projected profit.
+- **Evidence confidence**: Tradera realized sales and Blocket asking prices remain separate. Realized evidence is preferred when enough samples exist.
+- **Affiliate distribution**: approved per-source tracking templates have raw-link fallback, visible `Annonslänk` disclosure, and aggregate click counts without visitor identifiers.
+- **Paid alert foundation**: optional Stripe Checkout, signed webhooks, hashed subscriber keys, premium APIs, and subscriber-specific Discord thresholds.
+- **Tradera drafts**: owned inventory can generate a human-reviewed listing draft. Remote submission is disabled until official credentials and an authenticated endpoint are configured.
 - **Incremental scanning** for ProShop, Kjell, and NetOnNet — pagination stops once consecutive pages contain only known items; every 5th scan runs full so stale items still get pruned
 - CSV export of the current filtered product list (`/api/export.csv` or the button in the filter panel)
 - Partial-scan protection: cancelled scans and incremental early-stops never prune items that simply weren't revisited
@@ -64,6 +70,55 @@ Open `http://127.0.0.1:3030`.
 | `RESALE_FLAT_FEE_SEK` | No | Shipping/fee allowance subtracted from flip profit (default: 60) |
 | `RESALE_MIN_PROFIT_SEK` | No | Min net profit for a flip to surface (default: 300) |
 | `RESALE_MIN_ROI_PERCENT` | No | Min ROI %% for a flip to surface (default: 8) |
+| `ADMIN_API_TOKEN` | No | Protects subscriber administration endpoints |
+| `PREMIUM_ACCESS_KEYS` | No | Comma-separated permanent premium API keys |
+| `AFFILIATE_LINK_TEMPLATE_<SOURCE_ID>` | No | Approved tracking URL template containing `{url}` |
+| `STRIPE_SECRET_KEY` | No | Creates premium subscription Checkout sessions |
+| `STRIPE_WEBHOOK_SECRET` | No | Verifies Stripe webhook events |
+| `STRIPE_PREMIUM_PRICE_ID` | No | Stripe recurring Price ID |
+| `PUBLIC_BASE_URL` | No | Checkout success/cancel base URL |
+| `TRADERA_DRAFT_ENDPOINT` | No | Official draft endpoint from authenticated Tradera docs |
+| `TRADERA_ACCESS_TOKEN` | No | Official Tradera API access token |
+
+### Revenue workflow
+
+1. Open **Flip** and select **Track deal**.
+2. Open **Revenue** to record purchase, code/cashback, listing, sale, and actual costs.
+3. Add codes with **Promotion**. Mark a code verified only after checkout validation or ingestion from an approved feed.
+4. Configure conservative shipping, selling-fee, packaging, repair, and return assumptions under **Cost assumptions**.
+5. Prepare a Tradera draft from owned inventory and review it before any remote submission.
+
+The dashboard and revenue ledger are owner controls. Keep them on the private Pi network or protect the dashboard with an authenticated reverse proxy such as Cloudflare Access before exposing it publicly.
+
+### Affiliate links
+
+Affiliate URLs fail safe: without a valid approved template, retailer links remain unchanged. Templates stay in environment configuration:
+
+```bash
+AFFILIATE_LINK_TEMPLATE_KOMPLETT_OUTLET_ELECTRONICS='https://approved-network.example/click?destination={url}'
+```
+
+Do not use placeholder domains in production or configure a retailer before program approval. The UI and Discord embeds show `Annonslänk` whenever a tracking template is active.
+
+### Premium subscriptions
+
+Create a managed subscriber with the protected admin API:
+
+```bash
+curl -X POST https://your-host/api/admin/subscribers \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"active","discordWebhook":"https://discord.com/api/webhooks/..."}'
+```
+
+The returned access key is shown once. Use it as `Authorization: Bearer <key>` with `/api/premium/status`, `/api/premium/flips`, and `/api/premium/profile`.
+Subscriber webhook URLs are restricted to official HTTPS Discord webhook endpoints.
+
+For Stripe, point the webhook at `/api/billing/stripe-webhook`. Checkout and webhook routes return `501` until the required environment variables are configured.
+
+### Tradera integration boundary
+
+The existing Tradera collector is read-only market evidence. Draft submission is a separate official-API integration. Because the authenticated listing schema and category taxonomy are not public, configure `TRADERA_DRAFT_ENDPOINT` only from current Developer Program documentation. The application never auto-publishes a listing.
 
 ### ProShop / Dustin / SweClockers — Cloudflare bypass
 

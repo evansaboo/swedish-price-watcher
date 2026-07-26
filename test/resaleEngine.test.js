@@ -255,6 +255,29 @@ describe('buildResaleIndex', () => {
     assert.equal(entry.medianSek, 9000);
     assert.equal(entry.minSek, 8000);
     assert.equal(entry.maxSek, 10000);
+    assert.equal(entry.askingSampleCount, 3);
+    assert.equal(entry.soldSampleCount, 0);
+  });
+
+  it('keeps realized sales separate from asking-price evidence', () => {
+    const index = buildResaleIndex([
+      { title: 'RTX 4070 Ti', latestPriceSek: 7000, soldComp: true, availability: 'sold', sourceId: 'tradera-sold' },
+      { title: 'RTX 4070 Ti', latestPriceSek: 7200, soldComp: true, availability: 'sold', sourceId: 'tradera-sold' },
+      { title: 'RTX 4070 Ti', latestPriceSek: 7400, soldComp: true, availability: 'sold', sourceId: 'tradera-sold' },
+      { title: 'RTX 4070 Ti', latestPriceSek: 9000, sourceId: 'blocket-electronics' }
+    ]);
+    const entry = index.get('rtx-4070-ti');
+    assert.equal(entry.soldSampleCount, 3);
+    assert.equal(entry.askingSampleCount, 1);
+
+    const flips = computeFlips(
+      [{ listingKey: 'o:sold', title: 'RTX 4070 Ti', latestPriceSek: 5000, condition: 'outlet' }],
+      index,
+      { resaleAdjustFactor: 1, flatFeeSek: 0 }
+    );
+    assert.equal(flips[0].resaleBasis, 'sold');
+    assert.equal(flips[0].resaleMedianSek, 7200);
+    assert.equal(flips[0].soldSampleCount, 3);
   });
 
   it('ignores items with no extractable model or invalid price', () => {

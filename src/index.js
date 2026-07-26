@@ -11,6 +11,7 @@ import { ProductCache } from './services/productCache.js';
 import { createLlmClassifier } from './services/llmClassifier.js';
 import { DiscordNotifier } from './services/notifier.js';
 import { shouldSkipSourceNotifications } from './services/scanPolicy.js';
+import { decorateAffiliateLink } from './services/affiliateLinks.js';
 
 const runOnce = process.argv.includes('--run-once');
 const isRailwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
@@ -46,6 +47,7 @@ state.deals = computeDeals(state, config.thresholds);
 // Initialize product cache — materialized view for fast API queries
 const productCache = new ProductCache(config.resale);
 const sourceLabelMap = new Map(config.sources.map(s => [s.id, s.label || s.id]));
+const sourceById = new Map(config.sources.map(s => [s.id, s]));
 
 // Optional LLM-backed resale-model resolver (deterministic-first, LLM gap-fill).
 // Provider is Gemini (hosted) or Ollama (local). Null when disabled / no Gemini
@@ -223,16 +225,19 @@ async function triggerScan(trigger, options = {}) {
         continue;
       }
       const effectiveNotificationSettings = { ...(state.preferences?.notificationSettings ?? {}) };
-      const sourceFlips = productCache.flips.filter((f) => f.sourceId === ctx.source.id);
+      const sourceFlips = productCache.flips
+        .filter((f) => f.sourceId === ctx.source.id)
+        .map((item) => decorateAffiliateLink(item, sourceById));
       const sourceNotif = await notifier.notifyScan({
         deals: state.deals,
-        newItems: ctx.mergeResult.newItems,
-        priceDrops: ctx.mergeResult.priceDrops,
+        newItems: ctx.mergeResult.newItems.map((item) => decorateAffiliateLink(item, sourceById)),
+        priceDrops: ctx.mergeResult.priceDrops.map((item) => decorateAffiliateLink(item, sourceById)),
         sources: config.sources,
         state,
         notificationSettings: effectiveNotificationSettings,
         flips: sourceFlips,
-        wishlistTargets: state.preferences?.wishlistTargets ?? {}
+        wishlistTargets: state.preferences?.wishlistTargets ?? {},
+        premiumSubscribers: state.preferences?.revenue?.subscribers ?? []
       });
       mergeNotif(aggregatedNotif, sourceNotif);
       mergeNotif(aggregatedNotif.alertRules, sourceNotif.alertRules);

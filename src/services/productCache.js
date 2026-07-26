@@ -296,8 +296,8 @@ export class ProductCache {
     this._campaigns = [...campaignSet].sort().map(label => ({ label, value: label.toLowerCase() }));
 
     // ── Resale / flip opportunities ──────────────────────────────
-    // Build a Blocket second-hand price index from 'used' items, then value
-    // buyable (outlet/deal/new) items against the matching model's median.
+    // Build separate realized-sale and asking-price indexes from used items,
+    // then value buyable items against the strongest matching evidence.
     const allItems = Object.values(items);
     const usedItems = allItems.filter((item) => item.condition === 'used');
     const flipCandidates = allItems
@@ -308,7 +308,13 @@ export class ProductCache {
       }));
 
     const resaleIndex = buildResaleIndex(usedItems, { resolveModel: this._resolveModel ?? undefined });
-    this._flips = computeFlips(flipCandidates, resaleIndex, { ...this._resaleOptions, resolveModel: this._resolveModel ?? undefined });
+    const revenue = state.preferences?.revenue ?? {};
+    this._flips = computeFlips(flipCandidates, resaleIndex, {
+      ...this._resaleOptions,
+      promotions: revenue.promotions ?? [],
+      costDefaults: revenue.costDefaults ?? {},
+      resolveModel: this._resolveModel ?? undefined
+    });
     this._flipDemandCategories = [...new Set(this._flips.map((f) => f.demandCategory))]
       .sort((a, b) => a.localeCompare(b, 'sv-SE'));
 

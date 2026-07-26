@@ -755,6 +755,15 @@ body.scanning { --scan-bar-height: 28px; }
 .badge-new { background: var(--gold); color: #fff; }
 .badge-discount { background: var(--accent); color: #fff; }
 .badge-hot { background: #E86833; color: #fff; }
+.badge-affiliate {
+  background: rgba(43, 76, 126, 0.9);
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+.badge-promotion {
+  background: #123b2b;
+  color: #d9f7e8;
+}
 .badge-condition {
   background: var(--bg-surface);
   border: 1px solid var(--border);
@@ -2085,6 +2094,138 @@ body.scanning { --scan-bar-height: 28px; }
   white-space: nowrap;
 }
 .flip-comps a:hover { text-decoration: underline; }
+.promotion-saving {
+  margin-top: 2px;
+  color: var(--green);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.confidence-high { color: var(--green); font-weight: 700; }
+.confidence-medium { color: var(--gold); font-weight: 700; }
+.confidence-low { color: var(--text-tertiary); font-weight: 600; }
+.track-revenue-btn,
+.edit-revenue-btn {
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.track-revenue-btn:hover,
+.edit-revenue-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+/* ── Revenue workbench: a compact accounting-ledger aesthetic ── */
+.revenue-bar {
+  background:
+    linear-gradient(90deg, rgba(18, 59, 43, 0.07), transparent 42%),
+    var(--bg-surface);
+}
+.revenue-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #123b2b;
+  color: #e7fff3;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 800;
+}
+.revenue-grid {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+.revenue-card {
+  border-radius: 6px;
+  border-top: 4px solid var(--text-tertiary);
+  background:
+    linear-gradient(rgba(31, 157, 104, 0.025) 1px, transparent 1px),
+    var(--bg-surface);
+  background-size: 100% 28px;
+}
+.revenue-card.status-bought,
+.revenue-card.status-listed { border-top-color: var(--gold); }
+.revenue-card.status-sold { border-top-color: var(--green); }
+.revenue-card.status-returned,
+.revenue-card.status-skipped { border-top-color: var(--clr-danger); }
+.revenue-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 0;
+}
+.revenue-status {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-secondary);
+}
+.revenue-updated { font-size: 10.5px; color: var(--text-tertiary); }
+.revenue-money-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 14px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-surface);
+}
+.revenue-money-grid > div {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.revenue-money-grid > div:nth-child(odd) { border-right: 1px solid var(--border-light); }
+.revenue-money-grid > div:nth-child(-n+2) { border-bottom: 1px solid var(--border-light); }
+.revenue-money-grid span {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.revenue-money-grid strong {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.money-positive { color: var(--green); }
+.money-negative { color: var(--clr-danger); }
+.forecast-error {
+  margin-top: 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.modal-kicker {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--green);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.revenue-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.revenue-notes { margin-top: 12px; }
+.revenue-notes textarea { min-height: 82px; resize: vertical; }
+.revenue-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
+}
+.modal-action-spacer { flex: 1; }
+.ghost-btn.danger { color: var(--clr-danger); }
+.promotion-verified { margin-top: 16px; }
 
 /* ── Arbitrage offers list ── */
 .arb-offers {
@@ -2130,4 +2271,8 @@ body.scanning { --scan-bar-height: 28px; }
 @media (max-width: 640px) {
   .flip-bar-controls { width: 100%; }
   .flip-num { flex: 1; width: auto; min-width: 90px; }
+  .mode-switch { overflow-x: auto; max-width: 100%; }
+  .revenue-form-grid { grid-template-columns: 1fr; }
+  .revenue-modal-actions { flex-wrap: wrap; }
+  .modal-action-spacer { display: none; }
 }
