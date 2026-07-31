@@ -384,21 +384,6 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     return decorateAffiliatePayload(result, sourceById);
   });
 
-  app.get('/api/arbitrage', async (request) => {
-    const q = request.query;
-    return productCache.queryArbitrage({
-      search: q.search,
-      store: q.store,
-      minSpreadSek: Number.parseInt(q.minSpreadSek ?? q.minSpread ?? '', 10),
-      minSpreadPercent: Number.parseInt(q.minSpreadPercent ?? '', 10),
-      maxBuyPriceSek: Number.parseInt(q.maxBuyPriceSek ?? q.maxPrice ?? '', 10),
-      sortBy: q.sortBy,
-      sortDir: q.sortDir,
-      page: Number.parseInt(q.page ?? '1', 10),
-      pageSize: Number.parseInt(q.pageSize ?? '50', 10)
-    });
-  });
-
   app.get('/api/flip-insights', async () => productCache.flipInsights());
 
   // ── Revenue workbench ─────────────────────────────────────────
