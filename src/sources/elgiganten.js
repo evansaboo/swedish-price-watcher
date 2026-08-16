@@ -43,7 +43,7 @@ async function algoliaPost(fetcher, apiKey, body) {
  * Input:  https://next-media.elkjop.com/image/{blobId}/{articleNo}/{filename}
  * Output: https://media.elkjop.com/assets/image/{blobId}
  */
-function resolveImageUrl(raw) {
+export function resolveImageUrl(raw) {
   if (!raw) return null;
   try {
     const url = new URL(raw);

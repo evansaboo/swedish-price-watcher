@@ -20,6 +20,58 @@
       "notes": "Auto-discovers active Elgiganten campaign IDs via Algolia facets, then fetches all products on sale. campaignTypes: W=weekly deals, S=store campaigns, R=recurring, B=brand — default ['W'] for the main weekly sale. minDiscountPct filters out small discounts. beforePrice is the original price; price.amount is the sale price. No external API key required."
     },
     {
+      "id": "elgiganten-hotlist",
+      "type": "elgiganten-hotlist",
+      "enabled": true,
+      "label": "Elgiganten Hotlist",
+      "category": "electronics",
+      "condition": "outlet",
+      "minDiscountPct": 15,
+      "hitsPerGroup": 100,
+      "watchGroups": [
+        {
+          "label": "Grafikkort (GPU)",
+          "taxonomyIds": [
+            "PT263"
+          ],
+          "minDiscountPct": 12
+        },
+        {
+          "label": "RAM-minne",
+          "taxonomyIds": [
+            "PT269"
+          ]
+        },
+        {
+          "label": "Intern SSD",
+          "taxonomyIds": [
+            "PT277"
+          ]
+        },
+        {
+          "label": "MacBook",
+          "taxonomyIds": [
+            "PT254"
+          ],
+          "brands": [
+            "Apple"
+          ],
+          "minDiscountPct": 8
+        },
+        {
+          "label": "iPhone",
+          "taxonomyIds": [
+            "PT238"
+          ],
+          "brands": [
+            "Apple"
+          ],
+          "minDiscountPct": 8
+        }
+      ],
+      "notes": "Fast resale-focused poller. Packs every watchGroup into ONE Algolia multi-query request (~1s per poll, ~288 requests/day) so it can run on every 5-minute scan cycle without detection risk. Filters on productTaxonomy.id so hits carry real categories (unlike the outlet index). Emits a listing only when there is a discount signal: a cheapestBItem (B-grade/Fyndvara) unit below the new price, or an active campaign price below beforePrice. No scanIntervalMinutes = polls every cycle. Reuses the shared cached Algolia key, so it adds zero load on the bot-protected key endpoint."
+    },
+    {
       "id": "elgiganten-outlet",
       "type": "elgiganten-algolia",
       "enabled": true,
