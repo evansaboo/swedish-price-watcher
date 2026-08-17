@@ -30,6 +30,23 @@ import {
   verifyStripeSignature
 } from './services/accessControl.js';
 import { buildTraderaDraft, submitTraderaDraft } from './services/traderaDrafts.js';
+import {
+  ensurePurchaseState,
+  normalizePurchaseSettings,
+  armListing,
+  disarmListing,
+  pruneExpiredArms,
+  findArmByToken,
+  checkArmUsable,
+  recordAttempt,
+  summarizePurchaseState
+} from './services/purchaseEngine.js';
+import {
+  verifyDiscordRequest,
+  handleInteraction,
+  extractDiscordUserId
+} from './services/discordInteractions.js';
+import { createPurchaseService } from './services/purchaseService.js';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -634,6 +651,151 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       const updated = applyStripeEvent(revenue.subscribers, request.body);
       if (updated) await savePreferences();
       return { received: true };
+    });
+  });
+
+  // ── Purchase / checkout ────────────────────────────────────────
+  // Every route here is gated on ADMIN_API_TOKEN: these controls automate a
+  // real basket on a real account, so they are never anonymously reachable.
+  function findPurchasableItem(listingKey) {
+    return store.getState().items?.[listingKey] ?? findRevenueProduct(listingKey) ?? null;
+  }
+
+  const purchaseService = createPurchaseService({
+    config,
+    getPreferences: () => store.getState().preferences,
+    findItem: findPurchasableItem,
+    save: savePreferences
+  });
+  const { purchaseState, stageListing, itemPrice } = purchaseService;
+
+  app.get('/api/purchase', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
+    const purchase = purchaseState();
+    if (pruneExpiredArms(purchase)) await savePreferences();
+    return {
+      ...summarizePurchaseState(purchase),
+      discordConfigured: Boolean(config.purchase?.discordPublicKey && config.purchase?.discordOwnerIds?.length),
+      credentialsConfigured: Boolean(config.purchase?.elgigantenEmail && config.purchase?.elgigantenPassword)
+    };
+  });
+
+  app.put('/api/purchase/settings', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
+    const purchase = purchaseState();
+    try {
+      Object.assign(purchase, normalizePurchaseSettings(request.body ?? {}, purchase));
+    } catch (error) {
+      reply.code(400);
+      return { message: error.message };
+    }
+    await savePreferences();
+    return summarizePurchaseState(purchase);
+  });
+
+  app.post('/api/purchase/arm/:listingKey', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
+    const { listingKey } = request.params;
+    const item = findPurchasableItem(listingKey);
+    if (!item) { reply.code(404); return { message: 'Listing not found.' }; }
+    const purchase = purchaseState();
+    try {
+      const arm = armListing(purchase, {
+        ...(request.body ?? {}),
+        listingKey,
+        label: request.body?.label ?? item.title
+      });
+      await savePreferences();
+      const { token: _token, ...safe } = arm;
+      return safe;
+    } catch (error) {
+      reply.code(400);
+      return { message: error.message };
+    }
+  });
+
+  app.delete('/api/purchase/arm/:listingKey', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
+    const removed = disarmListing(purchaseState(), request.params.listingKey);
+    if (!removed) { reply.code(404); return { message: 'Listing was not armed.' }; }
+    await savePreferences();
+    return { ok: true };
+  });
+
+  app.post('/api/purchase/stage/:listingKey', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
+    const result = await stageListing({ listingKey: request.params.listingKey, via: 'dashboard' });
+    await savePreferences();
+    if (!result.ok) { reply.code(result.reason === 'unknown-listing' ? 404 : 400); return result; }
+    return result;
+  });
+
+  // Discord button clicks. Needs the raw body for Ed25519 verification, so it
+  // gets its own encapsulated scope with a string content-type parser.
+  await app.register(async function discordInteractionRoutes(scope) {
+    scope.addContentTypeParser('application/json', { parseAs: 'string', bodyLimit: 65_536 }, (request, body, done) => {
+      try {
+        request.rawBody = body;
+        done(null, JSON.parse(body));
+      } catch (error) {
+        error.statusCode = 400;
+        done(error);
+      }
+    });
+
+    scope.post('/api/discord/interactions', async (request, reply) => {
+      const publicKey = config.purchase?.discordPublicKey;
+      if (!publicKey) { reply.code(501); return { message: 'DISCORD_PUBLIC_KEY is not configured.' }; }
+
+      // Discord requires a 401 on a bad signature before it will register the
+      // endpoint, and this is the outer security boundary for the whole feature.
+      const valid = verifyDiscordRequest({
+        publicKey,
+        signature: request.headers['x-signature-ed25519'],
+        timestamp: request.headers['x-signature-timestamp'],
+        rawBody: request.rawBody
+      });
+      if (!valid) { reply.code(401); return { message: 'Invalid request signature.' }; }
+
+      const { response, followUp } = handleInteraction({
+        interaction: request.body,
+        ownerIds: config.purchase?.discordOwnerIds ?? [],
+        onBuy: async ({ token, interaction }) => {
+          const purchase = purchaseState();
+          const arm = findArmByToken(purchase, token);
+          if (!arm) return '❌ This button is no longer valid.';
+
+          const item = findPurchasableItem(arm.listingKey);
+          const usable = checkArmUsable(arm, { priceSek: itemPrice(item) });
+          if (!usable.ok) {
+            recordAttempt(purchase, { action: 'stage', listingKey: arm.listingKey, title: arm.label, status: 'refused', reason: usable.reason, via: 'discord' });
+            await savePreferences();
+            return `❌ Refused: ${usable.reason}${usable.cap ? ` (cap ${usable.cap} kr)` : ''}.`;
+          }
+
+          const result = await stageListing({ listingKey: arm.listingKey, arm, via: 'discord' });
+          await savePreferences();
+          if (!result.ok) return `❌ ${result.message}`;
+
+          console.log(`[purchase] Staged ${arm.listingKey} for Discord user ${extractDiscordUserId(interaction)}`);
+          return [
+            `🛒 **Cart staged** — ${result.item.title}`,
+            `Price: **${result.price} kr**${result.signedIn ? ' · signed in' : ' · anonymous cart'}`,
+            '',
+            `Complete payment here: ${result.checkoutUrl}`,
+            '_Payment is never automated — confirm it yourself (BankID/3‑D Secure)._'
+          ].join('\n');
+        }
+      });
+
+      // Acknowledge inside Discord's 3s budget, then finish the slow work.
+      if (followUp) setImmediate(() => followUp().catch((error) => console.error('[discord]', error.message)));
+      return response;
     });
   });
 

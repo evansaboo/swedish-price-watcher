@@ -1,4 +1,5 @@
 import { firstFinite, formatSek } from '../lib/utils.js';
+import { buildPurchaseComponents } from './purchaseEngine.js';
 
 function getInitialPrice(item) {
   return firstFinite(item.referencePriceSek, item.marketValueSek);
@@ -103,15 +104,24 @@ function itemMatchesRule(item, { keywords, categories, minDiscountPercent, filte
 }
 
 export class DiscordNotifier {
-  constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000 }) {
+  constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000, botToken = '', alertChannelId = '' }) {
     this.webhookUrl = webhookUrl;
     this.cooldownMs = cooldownHours * 60 * 60 * 1000;
     this.webhookMaxRetries = Math.max(0, Number(webhookMaxRetries) || 0);
     this.webhookRetryBaseMs = Math.max(0, Number(webhookRetryBaseMs) || 0);
     this.webhookRetryCapMs = Math.max(this.webhookRetryBaseMs, Number(webhookRetryCapMs) || this.webhookRetryBaseMs);
+    // Plain channel webhooks cannot carry message components (buttons) — only a
+    // bot or an application-owned webhook can. When a bot token is configured,
+    // interactive alerts go through it; otherwise they degrade to plain embeds.
+    this.botToken = String(botToken ?? '').trim();
+    this.alertChannelId = String(alertChannelId ?? '').trim();
   }
 
-  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings, flips = [], wishlistTargets = {}, premiumSubscribers = [] }) {
+  get canSendComponents() {
+    return Boolean(this.botToken && this.alertChannelId);
+  }
+
+  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings, flips = [], wishlistTargets = {}, premiumSubscribers = [], purchase = null, stageListing = null }) {
     const settings = notificationSettings ?? {};
 
     // Respect global notifications-enabled flag (default: true for backward compat)
@@ -120,7 +130,7 @@ export class DiscordNotifier {
     }
 
     const alertRules = Array.isArray(settings.alertRules) ? settings.alertRules.filter((r) => r.enabled !== false) : [];
-    const alertSummary = await this.notifyAlertRules({ newItems, priceDrops, state, alertRules });
+    const alertSummary = await this.notifyAlertRules({ newItems, priceDrops, state, alertRules, purchase, stageListing });
 
     // Feature 4: flip alerts — high-margin resale opportunities to a dedicated channel.
     const flipSummary = await this.notifyFlipAlerts({ flips, state, config: settings.flipAlerts });
@@ -327,7 +337,7 @@ export class DiscordNotifier {
    *   - Price drops additionally require dropPercent ≥ minPriceDropPercent (default 5)
    * Sends to all webhooks listed on the rule.
    */
-  async notifyAlertRules({ newItems, priceDrops = [], state, alertRules }) {
+  async notifyAlertRules({ newItems, priceDrops = [], state, alertRules, purchase = null, stageListing = null }) {
     if (!alertRules.length) {
       return { sent: 0, skipped: 0, failed: 0, errors: [], reason: 'no-alert-rules' };
     }
@@ -363,30 +373,38 @@ export class DiscordNotifier {
         }
 
         const discount = getDiscountSummary(item);
+        const purchaseContext = await this.#resolvePurchaseContext({ item, purchase, stageListing });
 
         let itemSent = false;
         for (const webhookUrl of webhooks) {
           try {
-            await this.#postWebhook({
-              username: 'Price Watcher',
-              content: `🔔 **${ruleLabel}** — new match`,
-              embeds: [
-                {
-                  title: item.title,
-                  url: item.buyUrl ?? item.url,
-                  description: `${item.sourceLabel} • ${item.category}`,
-                  color: 0x5865f2,
-                  fields: [
-                    { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
-                    { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
-                    { name: 'Discount', value: formatPercent(discount.discountPercent), inline: true },
-                    { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
-                  ],
-                  image: item.imageUrl ? { url: item.imageUrl } : undefined,
-                  footer: item.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
-                }
-              ]
-            }, webhookUrl);
+            await this.#deliverAlert({
+              payload: {
+                username: 'Price Watcher',
+                content: `🔔 **${ruleLabel}** — new match`,
+                embeds: [
+                  {
+                    title: item.title,
+                    url: item.buyUrl ?? item.url,
+                    description: [
+                      `${item.sourceLabel} • ${item.category}`,
+                      purchaseContext.note
+                    ].filter(Boolean).join('\n'),
+                    color: 0x5865f2,
+                    fields: [
+                      { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
+                      { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
+                      { name: 'Discount', value: formatPercent(discount.discountPercent), inline: true },
+                      { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
+                    ],
+                    image: item.imageUrl ? { url: item.imageUrl } : undefined,
+                    footer: item.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
+                  }
+                ]
+              },
+              components: purchaseContext.components,
+              webhookUrl
+            });
             itemSent = true;
           } catch (error) {
             failed++;
@@ -463,6 +481,78 @@ export class DiscordNotifier {
   /** Post an arbitrary payload (e.g. the daily digest) to a webhook with retry. */
   async sendToWebhook(payload, webhookUrl) {
     return this.#postWebhook(payload, webhookUrl);
+  }
+
+  /**
+   * Work out which checkout model applies to an alert.
+   *
+   * `deep-link`     → nothing extra.
+   * `armed`         → an interaction button carrying the single-use arm token.
+   * `cart-staging`  → stage the basket right now so the alert already contains
+   *                   a checkout link.
+   */
+  async #resolvePurchaseContext({ item, purchase, stageListing }) {
+    const empty = { components: [], note: null };
+    if (!purchase) return empty;
+
+    const arm = purchase.armed?.[item.listingKey];
+    if (!arm) return empty;
+
+    const mode = arm.mode ?? purchase.mode ?? 'deep-link';
+    if (mode === 'deep-link') return empty;
+
+    let checkoutUrl = null;
+    let note = null;
+
+    if (mode === 'cart-staging' && typeof stageListing === 'function') {
+      try {
+        const result = await stageListing({ listingKey: item.listingKey, arm, via: 'alert' });
+        if (result?.ok) {
+          checkoutUrl = result.checkoutUrl;
+          note = `🛒 Cart staged — complete payment: ${checkoutUrl}`;
+        } else {
+          note = `⚠️ Auto-staging refused: ${result?.message ?? result?.reason ?? 'unknown reason'}`;
+        }
+      } catch (error) {
+        note = `⚠️ Auto-staging failed: ${error.message}`;
+      }
+    }
+
+    const components = buildPurchaseComponents({ item, arm, mode, checkoutUrl });
+
+    // Without a bot token Discord rejects components on a plain webhook, so the
+    // information is folded into the embed text instead of being lost.
+    if (!this.canSendComponents) {
+      if (!note && mode === 'armed') {
+        note = '⚡ Armed — stage from the dashboard (set DISCORD_BOT_TOKEN for one-tap buttons).';
+      }
+      return { components: [], note };
+    }
+
+    return { components, note };
+  }
+
+  /** Route through the bot API when buttons are involved, else the webhook. */
+  async #deliverAlert({ payload, components = [], webhookUrl }) {
+    if (components.length && this.canSendComponents) {
+      return this.#postBotMessage({ ...payload, components });
+    }
+    return this.#postWebhook(payload, webhookUrl);
+  }
+
+  async #postBotMessage(payload) {
+    const response = await fetch(`https://discord.com/api/v10/channels/${this.alertChannelId}/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bot ${this.botToken}`
+      },
+      // `username` is a webhook-only field and is rejected by the bot endpoint.
+      body: JSON.stringify({ content: payload.content, embeds: payload.embeds, components: payload.components })
+    });
+    if (!response.ok) {
+      throw new Error(`Discord bot API returned ${response.status} ${response.statusText}`);
+    }
   }
 
   #recordError(errors, error) {

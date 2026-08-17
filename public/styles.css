@@ -2241,3 +2241,100 @@ body.scanning { --scan-bar-height: 28px; }
   .revenue-modal-actions { flex-wrap: wrap; }
   .modal-action-spacer { display: none; }
 }
+
+/* ── PURCHASE / CHECKOUT ─────────────────────────────────────── */
+/* Arm button sits beside the wishlist heart, revealed on card hover. */
+.arm-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 46px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 15px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+  color: var(--text-tertiary);
+  z-index: 3;
+  opacity: 0;
+  filter: grayscale(1);
+}
+.product-card:hover .arm-btn { opacity: 1; }
+.arm-btn:hover { transform: scale(1.15); background: var(--accent-soft); }
+.arm-btn.active {
+  opacity: 1;
+  filter: none;
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.purchase-dialog { max-width: 720px; }
+
+.purchase-note {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.purchase-subhead {
+  margin: 22px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.purchase-status {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  word-break: break-word;
+}
+.purchase-status.info { background: var(--bg-subtle); color: var(--text-secondary); }
+.purchase-status.ok { background: color-mix(in srgb, var(--clr-success) 14%, transparent); color: var(--clr-success); }
+.purchase-status.error { background: color-mix(in srgb, var(--clr-danger) 14%, transparent); color: var(--clr-danger); }
+
+.purchase-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.purchase-list { display: flex; flex-direction: column; gap: 8px; }
+
+.purchase-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+.purchase-row.compact { padding: 8px 12px; }
+.purchase-row-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.purchase-row-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.purchase-row-meta { font-size: 11px; color: var(--text-tertiary); }
+.purchase-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.purchase-empty { font-size: 13px; color: var(--text-tertiary); margin: 0; }
+
+@media (max-width: 640px) {
+  .purchase-row { flex-direction: column; align-items: stretch; }
+  .purchase-row-actions { justify-content: flex-end; }
+}

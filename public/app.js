@@ -539,6 +539,7 @@ function renderProducts(response) {
   el.emptyState.classList.add('hidden');
   const favoriteSet = getFavoriteCategorySet();
 
+  const armedKeys = armedSet();
   const cards = products.map((product, idx) => {
     const isNew = isNewProduct(product);
     const hasDiscount = Number.isFinite(product.discountPercent) && product.discountPercent > 0;
@@ -642,6 +643,7 @@ function renderProducts(response) {
             ${score > 0 ? `<div class="score-ring ${scoreClass}" title="Deal score: ${score}/100">${score}</div>` : ''}
           </div>
           <button type="button" class="${wishlistClass}" data-listing-key="${escapeHtml(product.listingKey)}" title="${product.wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}">${wishlistIcon}</button>
+          ${isElgigantenListing(product) ? `<button type="button" class="arm-btn${armedKeys.has(product.listingKey) ? ' active' : ''}" data-arm-key="${escapeHtml(product.listingKey)}" title="${armedKeys.has(product.listingKey) ? 'Disarm one-tap checkout' : 'Arm for one-tap checkout'}">⚡</button>` : ''}
         </div>
         <div class="card-body">
           <span class="card-store">${escapeHtml(product.sourceLabel ?? '')}</span>
@@ -676,6 +678,14 @@ function renderProducts(response) {
   }
 
   // Wire wishlist buttons
+  for (const btn of el.productGrid.querySelectorAll('.arm-btn')) {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleArm(btn.getAttribute('data-arm-key'), btn);
+    });
+  }
+
   for (const btn of el.productGrid.querySelectorAll('.wishlist-btn')) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2474,3 +2484,214 @@ async function loadVersionInfo() {
     badge.title = 'Version info not available (dev mode)';
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   PURCHASE / CHECKOUT CONTROLS
+   Three checkout models share this panel. The admin token lives only in
+   this browser's localStorage and is sent as a bearer token; the server
+   refuses every purchase route without it.
+   ══════════════════════════════════════════════════════════════════ */
+
+const PURCHASE_TOKEN_KEY = 'spw.adminToken';
+const purchaseState = { data: null };
+
+function purchaseToken() {
+  return localStorage.getItem(PURCHASE_TOKEN_KEY) ?? '';
+}
+
+async function purchaseFetch(path, options = {}) {
+  const token = purchaseToken();
+  if (!token) throw new Error('Enter your admin API token first.');
+  // Only advertise a JSON body when one is actually present — Fastify rejects
+  // a request that declares application/json but sends an empty body.
+  const headers = { Authorization: `Bearer ${token}`, ...(options.headers ?? {}) };
+  if (options.body !== undefined && options.body !== null) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, { ...options, headers });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.message ?? `Request failed (${res.status})`);
+  return body;
+}
+
+function setPurchaseStatus(message, kind = 'info') {
+  const node = document.getElementById('purchase-status');
+  if (!node) return;
+  node.textContent = message ?? '';
+  node.className = message ? `purchase-status ${kind}` : 'purchase-status hidden';
+}
+
+function isElgigantenListing(product) {
+  return typeof product?.url === 'string' && product.url.startsWith('https://www.elgiganten.se/');
+}
+
+function armedSet() {
+  return new Set((purchaseState.data?.armed ?? []).map((arm) => arm.listingKey));
+}
+
+async function refreshPurchasePanel() {
+  const panel = document.getElementById('purchase-panel');
+  try {
+    const data = await purchaseFetch('/api/purchase');
+    purchaseState.data = data;
+    panel?.classList.remove('hidden');
+    setPurchaseStatus('');
+
+    document.getElementById('purchase-mode').value = data.mode;
+    document.getElementById('purchase-max-price').value = data.maxPriceSek;
+    document.getElementById('purchase-ttl').value = data.defaultTtlMinutes;
+    document.getElementById('purchase-rate').value = data.maxStagesPerHour;
+
+    const caps = document.getElementById('purchase-capabilities');
+    if (caps) {
+      caps.textContent = [
+        data.discordConfigured ? '✓ Discord buttons ready' : '✗ Discord buttons not configured',
+        data.credentialsConfigured ? '✓ Signed-in staging' : '✗ Anonymous cart staging',
+      ].join('  ·  ');
+    }
+
+    renderArmedList(data.armed ?? []);
+    renderAttempts(data.attempts ?? []);
+  } catch (error) {
+    panel?.classList.add('hidden');
+    setPurchaseStatus(error.message, 'error');
+  }
+}
+
+function renderArmedList(armed) {
+  const node = document.getElementById('purchase-armed');
+  if (!node) return;
+  if (!armed.length) {
+    node.innerHTML = '<p class="purchase-empty">Nothing armed. Use the ⚡ button on any Elgiganten card.</p>';
+    return;
+  }
+  node.innerHTML = armed.map((arm) => `
+    <div class="purchase-row">
+      <div class="purchase-row-main">
+        <span class="purchase-row-title">${escapeHtml(arm.label ?? arm.listingKey)}</span>
+        <span class="purchase-row-meta">
+          ${escapeHtml(arm.mode)} · cap ${formatSek(arm.maxPriceSek)} ·
+          ${arm.uses}/${arm.maxUses} used · expires ${new Date(arm.expiresAt).toLocaleString('sv-SE')}
+        </span>
+      </div>
+      <div class="purchase-row-actions">
+        <button type="button" class="ghost-btn accent" data-stage-key="${escapeHtml(arm.listingKey)}">Stage cart</button>
+        <button type="button" class="ghost-btn" data-disarm-key="${escapeHtml(arm.listingKey)}">Disarm</button>
+      </div>
+    </div>
+  `).join('');
+
+  for (const btn of node.querySelectorAll('[data-disarm-key]')) {
+    btn.addEventListener('click', async () => {
+      try {
+        await purchaseFetch(`/api/purchase/arm/${encodeURIComponent(btn.dataset.disarmKey)}`, { method: 'DELETE' });
+        await refreshPurchasePanel();
+        loadDashboard();
+      } catch (error) { setPurchaseStatus(error.message, 'error'); }
+    });
+  }
+  for (const btn of node.querySelectorAll('[data-stage-key]')) {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Staging…';
+      setPurchaseStatus('Staging cart — this opens a real browser session and takes ~20s.', 'info');
+      try {
+        const result = await purchaseFetch(`/api/purchase/stage/${encodeURIComponent(btn.dataset.stageKey)}`, { method: 'POST' });
+        setPurchaseStatus(`Cart staged. Complete payment: ${result.checkoutUrl}`, 'ok');
+      } catch (error) {
+        setPurchaseStatus(error.message, 'error');
+      } finally {
+        await refreshPurchasePanel();
+      }
+    });
+  }
+}
+
+function renderAttempts(attempts) {
+  const node = document.getElementById('purchase-attempts');
+  if (!node) return;
+  if (!attempts.length) {
+    node.innerHTML = '<p class="purchase-empty">No staging attempts yet.</p>';
+    return;
+  }
+  const icon = { staged: '✅', refused: '⛔', failed: '⚠️' };
+  node.innerHTML = attempts.slice(0, 15).map((a) => `
+    <div class="purchase-row compact">
+      <div class="purchase-row-main">
+        <span class="purchase-row-title">${icon[a.status] ?? '•'} ${escapeHtml(a.title ?? a.listingKey ?? 'unknown')}</span>
+        <span class="purchase-row-meta">
+          ${new Date(a.at).toLocaleString('sv-SE')} · via ${escapeHtml(a.via ?? '?')}
+          ${a.reason ? ` · ${escapeHtml(a.reason)}` : ''}
+          ${a.priceSek ? ` · ${formatSek(a.priceSek)}` : ''}
+        </span>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function toggleArm(listingKey, button) {
+  const armed = armedSet().has(listingKey);
+  try {
+    if (armed) {
+      await purchaseFetch(`/api/purchase/arm/${encodeURIComponent(listingKey)}`, { method: 'DELETE' });
+    } else {
+      await purchaseFetch(`/api/purchase/arm/${encodeURIComponent(listingKey)}`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+    }
+    button?.classList.toggle('active', !armed);
+    await refreshPurchasePanel();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function initPurchaseControls() {
+  const modal = document.getElementById('purchase-modal');
+  const openBtn = document.getElementById('purchase-open-btn');
+  const closeBtn = document.getElementById('purchase-close');
+  const tokenInput = document.getElementById('purchase-token');
+  if (!modal || !openBtn) return;
+
+  tokenInput.value = purchaseToken();
+  tokenInput.addEventListener('change', async () => {
+    localStorage.setItem(PURCHASE_TOKEN_KEY, tokenInput.value.trim());
+    await refreshPurchasePanel();
+  });
+
+  openBtn.addEventListener('click', async () => {
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    if (purchaseToken()) await refreshPurchasePanel();
+    else setPurchaseStatus('Enter your admin API token to unlock buy controls.', 'info');
+  });
+
+  const close = () => {
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+  };
+  closeBtn?.addEventListener('click', close);
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+
+  document.getElementById('purchase-save')?.addEventListener('click', async () => {
+    try {
+      await purchaseFetch('/api/purchase/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          mode: document.getElementById('purchase-mode').value,
+          maxPriceSek: Number(document.getElementById('purchase-max-price').value),
+          defaultTtlMinutes: Number(document.getElementById('purchase-ttl').value),
+          maxStagesPerHour: Number(document.getElementById('purchase-rate').value),
+        }),
+      });
+      setPurchaseStatus('Defaults saved.', 'ok');
+      await refreshPurchasePanel();
+    } catch (error) {
+      setPurchaseStatus(error.message, 'error');
+    }
+  });
+
+  // Load quietly on boot so card ⚡ buttons reflect armed state.
+  if (purchaseToken()) refreshPurchasePanel().catch(() => {});
+}
+
+initPurchaseControls();

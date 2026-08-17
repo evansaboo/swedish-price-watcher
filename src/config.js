@@ -166,6 +166,22 @@ export async function loadConfig() {
       draftEndpoint: process.env.TRADERA_DRAFT_ENDPOINT?.trim() ?? '',
       accessToken: process.env.TRADERA_ACCESS_TOKEN?.trim() ?? ''
     },
+    purchase: {
+      // Discord application credentials — required for button clicks. A webhook
+      // alone is send-only and can never receive an interaction.
+      discordPublicKey: process.env.DISCORD_PUBLIC_KEY?.trim() ?? '',
+      // Optional. Buttons require a bot (or application-owned webhook); a plain
+      // channel webhook is send-only and cannot carry message components.
+      discordBotToken: process.env.DISCORD_BOT_TOKEN?.trim() ?? '',
+      discordAlertChannelId: process.env.DISCORD_ALERT_CHANNEL_ID?.trim() ?? '',
+      // Allow-list of Discord user IDs permitted to press purchase buttons.
+      discordOwnerIds: (process.env.DISCORD_OWNER_IDS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
+      // Optional Elgiganten sign-in. Staging works anonymously without these;
+      // credentials only pre-fill delivery details to shorten manual checkout.
+      elgigantenEmail: process.env.ELGIGANTEN_EMAIL?.trim() ?? '',
+      elgigantenPassword: process.env.ELGIGANTEN_PASSWORD ?? '',
+      sessionPath: process.env.ELGIGANTEN_SESSION_PATH?.trim() || path.join(rootDir, 'data', 'elgiganten-session.json')
+    },
     llm: {
       enabled: (process.env.LLM_CLASSIFIER_ENABLED ?? 'true') !== 'false',
       provider: (process.env.LLM_PROVIDER || 'gemini').toLowerCase(),

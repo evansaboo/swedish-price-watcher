@@ -78,6 +78,7 @@
         </div>
 
         <div class="filter-bar-right">
+          <button id="purchase-open-btn" type="button" class="filter-expand-btn" title="Buy controls">⚡ Buy</button>
           <button id="filter-expand-btn" type="button" class="filter-expand-btn" title="More filters">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
             Filters
@@ -353,6 +354,66 @@
     </aside>
 
     <!-- ===== PRICE HISTORY MODAL ===== -->
+    <!-- ===== PURCHASE / CHECKOUT ===== -->
+    <div id="purchase-modal" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal-dialog purchase-dialog">
+        <div class="modal-header">
+          <div><span class="modal-kicker">Checkout</span><h3>Buy controls</h3></div>
+          <button id="purchase-close" type="button" class="modal-close" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="purchase-note">
+            Payment is <strong>never</strong> automated. Staging stops at the checkout page —
+            you always confirm the card step yourself (BankID / 3‑D Secure).
+          </p>
+
+          <div class="form-field">
+            <label for="purchase-token">Admin API token</label>
+            <input id="purchase-token" type="password" class="field-input" placeholder="ADMIN_API_TOKEN" autocomplete="off" />
+            <span class="field-hint">Stored in this browser only. Required for every buy control.</span>
+          </div>
+
+          <div id="purchase-status" class="purchase-status hidden"></div>
+
+          <div id="purchase-panel" class="hidden">
+            <h4 class="purchase-subhead">Defaults</h4>
+            <div class="revenue-form-grid">
+              <div class="form-field">
+                <label for="purchase-mode">Checkout model</label>
+                <select id="purchase-mode" class="field-select">
+                  <option value="deep-link">Deep link — alert links to the product</option>
+                  <option value="armed">Armed one-tap — button stages on demand</option>
+                  <option value="cart-staging">Cart staging — basket filled on alert</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="purchase-max-price">Max price (SEK)</label>
+                <input id="purchase-max-price" type="number" min="1" class="field-input" />
+              </div>
+              <div class="form-field">
+                <label for="purchase-ttl">Arm expires after (min)</label>
+                <input id="purchase-ttl" type="number" min="1" class="field-input" />
+              </div>
+              <div class="form-field">
+                <label for="purchase-rate">Max stagings / hour</label>
+                <input id="purchase-rate" type="number" min="1" class="field-input" />
+              </div>
+            </div>
+            <div class="purchase-actions">
+              <button id="purchase-save" type="button" class="ghost-btn accent">Save defaults</button>
+              <span id="purchase-capabilities" class="field-hint"></span>
+            </div>
+
+            <h4 class="purchase-subhead">Armed listings</h4>
+            <div id="purchase-armed" class="purchase-list"></div>
+
+            <h4 class="purchase-subhead">Recent attempts</h4>
+            <div id="purchase-attempts" class="purchase-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="price-history-modal" class="modal-overlay hidden" aria-hidden="true">
       <div class="modal-dialog">
         <div class="modal-header">

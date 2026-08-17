@@ -70,7 +70,14 @@ Open `http://127.0.0.1:3030`.
 | `RESALE_FLAT_FEE_SEK` | No | Shipping/fee allowance subtracted from flip profit (default: 60) |
 | `RESALE_MIN_PROFIT_SEK` | No | Min net profit for a flip to surface (default: 300) |
 | `RESALE_MIN_ROI_PERCENT` | No | Min ROI %% for a flip to surface (default: 8) |
-| `ADMIN_API_TOKEN` | No | Protects subscriber administration endpoints |
+| `ADMIN_API_TOKEN` | No | Protects subscriber administration **and assisted-checkout** endpoints |
+| `DISCORD_PUBLIC_KEY` | No | Discord app public key; enables signed interaction buttons |
+| `DISCORD_BOT_TOKEN` | No | Bot token; required to post alerts *with* buttons |
+| `DISCORD_ALERT_CHANNEL_ID` | No | Channel the bot posts interactive alerts to |
+| `DISCORD_OWNER_IDS` | No | Comma-separated Discord user IDs allowed to press buy buttons (empty = nobody) |
+| `ELGIGANTEN_EMAIL` | No | Elgiganten login for signed-in cart staging |
+| `ELGIGANTEN_PASSWORD` | No | Elgiganten password (staging never enters card details) |
+| `ELGIGANTEN_SESSION_PATH` | No | Where the reusable browser session is stored (mode 0600) |
 | `PREMIUM_ACCESS_KEYS` | No | Comma-separated permanent premium API keys |
 | `AFFILIATE_LINK_TEMPLATE_<SOURCE_ID>` | No | Approved tracking URL template containing `{url}` |
 | `STRIPE_SECRET_KEY` | No | Creates premium subscription Checkout sessions |
@@ -271,6 +278,38 @@ Notification modes per source (set in `config/sources.json`):
 | `favorite-events` | New discounted item or price drop in a favorite category |
 | `new-listings` | Every first-seen listing |
 | `none` | Silent |
+
+## Assisted checkout
+
+Turns an Elgiganten alert into a ready-to-pay cart. **Payment is never automated.**
+Every path stops at the checkout page so you confirm the card step yourself
+(BankID / 3-D Secure). That boundary is deliberate: unattended card charging is
+blocked by PSD2/SCA anyway, and engineering around it would defeat fraud
+protection and trip the most aggressive bot detection on the site.
+
+Three models, selectable per-alert or as a default in the dashboard's **⚡ Buy** panel:
+
+| Mode | Behaviour |
+|------|-----------|
+| `deep-link` | Alert carries a direct product link. Nothing is automated. |
+| `armed` | You pre-arm a listing (price cap + expiry + single use). One Discord tap then stages the cart. |
+| `cart-staging` | The bot stages the cart as soon as a matching alert fires, and the alert links straight to checkout. |
+
+Guard rails (all enforced server-side in `src/services/purchaseEngine.js`):
+
+- Every `/api/purchase/*` route requires `ADMIN_API_TOKEN` (`501` when unset, `401` when wrong).
+- Discord clicks need **both** a valid Ed25519 signature *and* a `DISCORD_OWNER_IDS` allow-list match. An empty allow-list refuses everyone.
+- Arm tokens are 18 random bytes, single-use, expiring, and compared with `timingSafeEqual`. They are never returned by the API.
+- A per-arm price cap is clamped to the global cap at arm time, so arming can never *raise* the ceiling. An existing arm governs staging no matter which path triggered it.
+- Staging is rate-limited by a sliding window (`maxStagesPerHour`, default 10), and every attempt — including every refusal — is written to an audit log visible in the panel.
+
+Arm a listing from any Elgiganten card with the **⚡** button, or manage
+defaults, armed listings, and the audit log from the **⚡ Buy** panel.
+
+To enable Discord buttons, set `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`,
+`DISCORD_ALERT_CHANNEL_ID` and `DISCORD_OWNER_IDS` (see `.env.example` for the
+Developer Portal walkthrough). Without them the feature still works from the
+dashboard and alerts fall back to plain embeds.
 
 ## Post-change testing checklist
 

@@ -1,6 +1,8 @@
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PoliteFetcher } from './lib/fetcher.js';
+import { createPurchaseService } from './services/purchaseService.js';
+import { ensurePurchaseState } from './services/purchaseEngine.js';
 import { ApifyStore, JsonStore, SqliteStore, migrateJsonToSqlite, reconcileStateWithSources } from './lib/store.js';
 import { buildListingKey, isSourceEnabled } from './lib/utils.js';
 import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
@@ -112,7 +114,18 @@ await store.save();
 const fetcher = new PoliteFetcher(config);
 const notifier = new DiscordNotifier({
   webhookUrl: config.discordWebhookUrl,
-  cooldownHours: config.notificationCooldownHours
+  cooldownHours: config.notificationCooldownHours,
+  botToken: config.purchase?.discordBotToken,
+  alertChannelId: config.purchase?.discordAlertChannelId
+});
+
+// Shared with the HTTP layer so dashboard, Discord button and proactive
+// cart-staging all run through the same spend caps and rate limits.
+const purchaseService = createPurchaseService({
+  config,
+  getPreferences: () => store.getState().preferences,
+  findItem: (listingKey) => store.getState().items?.[listingKey] ?? null,
+  save: () => store.save()
 });
 
 const scanState = {
@@ -237,7 +250,9 @@ async function triggerScan(trigger, options = {}) {
         notificationSettings: effectiveNotificationSettings,
         flips: sourceFlips,
         wishlistTargets: state.preferences?.wishlistTargets ?? {},
-        premiumSubscribers: state.preferences?.revenue?.subscribers ?? []
+        premiumSubscribers: state.preferences?.revenue?.subscribers ?? [],
+        purchase: ensurePurchaseState(state.preferences),
+        stageListing: purchaseService.stageListing
       });
       mergeNotif(aggregatedNotif, sourceNotif);
       mergeNotif(aggregatedNotif.alertRules, sourceNotif.alertRules);
