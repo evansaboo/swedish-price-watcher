@@ -45,11 +45,18 @@ const ADD_TO_CART_SELECTORS = [
   'button:has-text("Köp online")',
 ];
 
-const LOGIN_INDICATOR_SELECTORS = [
-  'input[type="email"]',
-  'input[name="username"]',
-  '#username',
-];
+// Login is handled by a separate Azure AD B2C tenant (account.elgiganten.se),
+// which /login redirects to. The B2C form uses its own field ids, so generic
+// email/username selectors never match.
+const LOGIN_URL = `${BASE_URL}/login`;
+const LOGIN_EMAIL_SELECTORS = ['#signInName', 'input[name="Sign in name"]', 'input[type="email"]'];
+const LOGIN_PASSWORD_SELECTORS = ['#password', 'input[type="password"]'];
+const LOGIN_SUBMIT_SELECTORS = ['#next', 'button[type="submit"]'];
+
+// A successful sign-in sets these first-party tokens. Cookies are checked
+// instead of DOM heuristics because absence of a login form proves nothing —
+// an error page has no login form either.
+const AUTH_COOKIE_NAMES = ['se_access_token', 'se_id_token'];
 
 async function clickFirst(page, selectors, { timeout = ACTION_TIMEOUT_MS } = {}) {
   for (const selector of selectors) {
@@ -95,35 +102,59 @@ async function writeSessionState(context, sessionPath) {
   }
 }
 
-async function isSignedIn(page) {
-  // Treat "no visible login form on the account page" as signed in.
-  for (const selector of LOGIN_INDICATOR_SELECTORS) {
-    if (await page.locator(selector).first().isVisible().catch(() => false)) return false;
+export async function hasAuthCookies(context) {
+  const cookies = await context.cookies().catch(() => []);
+  const named = new Set(cookies.filter(c => c.value).map(c => c.name));
+  return AUTH_COOKIE_NAMES.some(name => named.has(name));
+}
+
+async function fillFirst(page, selectors, value) {
+  for (const selector of selectors) {
+    const field = page.locator(selector).first();
+    try {
+      await field.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+      await field.fill(value);
+      return selector;
+    } catch {
+      // try the next candidate
+    }
   }
-  return true;
+  return null;
 }
 
 async function signIn(page, { email, password }) {
-  await page.goto(`${BASE_URL}/mypages`, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+  const context = page.context();
+
+  // A restored session is usually still valid, which skips the whole flow.
+  if (await hasAuthCookies(context)) return { signedIn: true, reused: true };
+
+  await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
   await dismissConsent(page);
 
-  if (await isSignedIn(page)) return { signedIn: true, reused: true };
+  // /login redirects to the B2C tenant; wait for its form rather than a
+  // load state, since the identity provider renders after the redirect.
+  const emailSelector = await fillFirst(page, LOGIN_EMAIL_SELECTORS, email);
+  if (!emailSelector) {
+    // Already authenticated sessions are bounced straight back to the store.
+    if (await hasAuthCookies(context)) return { signedIn: true, reused: true };
+    throw new Error('Elgiganten login form not found — the sign-in page may have changed.');
+  }
 
-  const emailField = page.locator(LOGIN_INDICATOR_SELECTORS.join(', ')).first();
-  await emailField.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
-  await emailField.fill(email);
+  if (!(await fillFirst(page, LOGIN_PASSWORD_SELECTORS, password))) {
+    throw new Error('Elgiganten password field not found — the sign-in page may have changed.');
+  }
 
-  const passwordField = page.locator('input[type="password"]').first();
-  await passwordField.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
-  await passwordField.fill(password);
+  await clickFirst(page, LOGIN_SUBMIT_SELECTORS);
 
-  await Promise.all([
-    page.waitForLoadState('networkidle', { timeout: NAV_TIMEOUT_MS }).catch(() => {}),
-    passwordField.press('Enter'),
-  ]);
+  // Sign-in is confirmed by the auth cookies appearing, not by navigation:
+  // B2C bounces through several redirects before landing back on the store.
+  const deadline = Date.now() + NAV_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (await hasAuthCookies(context)) return { signedIn: true, reused: false };
+    await page.waitForTimeout(1000);
+  }
 
-  const signedIn = await isSignedIn(page);
-  return { signedIn, reused: false };
+  return { signedIn: false, reused: false };
 }
 
 /**
@@ -172,12 +203,15 @@ export async function stageElgigantenCart({
 
     let signedIn = false;
     if (credentials.email && credentials.password) {
-      const result = await signIn(page, credentials);
-      signedIn = result.signedIn;
+      // A failed sign-in is not fatal — anonymous staging still works, and it
+      // is far better than retrying a login and tripping account lockout.
+      try {
+        signedIn = (await signIn(page, credentials)).signedIn;
+      } catch (error) {
+        console.warn('[checkout] Sign-in failed:', error.message);
+      }
       if (!signedIn) {
-        // A failed sign-in is not fatal — anonymous staging still works, and it
-        // is far better than retrying a login and tripping account lockout.
-        console.warn('[checkout] Sign-in did not complete; staging anonymously.');
+        console.warn('[checkout] Staging anonymously; you will sign in at checkout.');
       }
     }
 
@@ -221,4 +255,14 @@ export async function stageElgigantenCart({
   }
 }
 
-export const CHECKOUT_CONSTANTS = Object.freeze({ BASE_URL, CART_URL, CHECKOUT_URL, ADD_TO_CART_SELECTORS });
+export const CHECKOUT_CONSTANTS = Object.freeze({
+  BASE_URL,
+  CART_URL,
+  CHECKOUT_URL,
+  LOGIN_URL,
+  ADD_TO_CART_SELECTORS,
+  LOGIN_EMAIL_SELECTORS,
+  LOGIN_PASSWORD_SELECTORS,
+  LOGIN_SUBMIT_SELECTORS,
+  AUTH_COOKIE_NAMES,
+});
