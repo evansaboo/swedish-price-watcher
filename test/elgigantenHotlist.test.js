@@ -7,6 +7,7 @@ import {
   selectOffer,
   collectHotlistWithKey,
   DEFAULT_WATCH_GROUPS,
+  buildOutletUrl,
 } from '../src/sources/elgigantenHotlist.js';
 
 const NOW = '2026-08-16T12:00:00.000Z';
@@ -215,4 +216,29 @@ test('collectHotlistWithKey returns nothing when all groups are disabled', async
   });
   assert.deepEqual(observations, []);
   assert.equal(fetcher.calls.length, 0, 'no request when there is nothing to poll');
+});
+
+test('a B-grade offer links to the outlet unit, not the full-price page', () => {
+  // The alert shows the B-grade price, so the buy link — and the cart-staging
+  // browser that follows it — must land on the B-grade product.
+  const hit = {
+    objectID: '895772',
+    title: 'Samsung 990 PRO intern SSD (4TB)',
+    price: { amount: 10490 },
+    productUrl:
+      'https://www.elgiganten.se/product/gaming/datorkomponenter/intern-lagring/intern-ssd/samsung-990-pro-intern-ssd-4tb/895772',
+    cheapestBItem: { articleNumber: '922068', price: 8392 },
+  };
+  const offer = selectOffer(hit);
+  assert.equal(offer.kind, 'outlet');
+  assert.equal(
+    buildOutletUrl(hit.productUrl, offer.articleNumber),
+    'https://www.elgiganten.se/product/outlet/samsung-990-pro-intern-ssd-4tb/922068'
+  );
+});
+
+test('outlet URL derivation fails closed on unexpected shapes', () => {
+  assert.equal(buildOutletUrl('https://example.com/product/x/1', '2'), null);
+  assert.equal(buildOutletUrl('https://www.elgiganten.se/product/a/b/1', null), null);
+  assert.equal(buildOutletUrl(null, '2'), null);
 });

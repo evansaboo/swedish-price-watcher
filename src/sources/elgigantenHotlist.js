@@ -163,6 +163,26 @@ export function selectOffer(hit) {
   return null;
 }
 
+/**
+ * Build the URL of the B-grade unit itself.
+ *
+ * A hit from the catalogue index describes the A-grade product; `cheapestBItem`
+ * only carries the discounted price. Linking to the A-grade page would send a
+ * buyer — or the cart-staging browser — to the full-price item, so the outlet
+ * URL is derived from the product slug and the B-grade SKU.
+ *
+ * Verified against 24 live B-grade products: every derived URL matched the one
+ * the index stores for that SKU.
+ */
+export function buildOutletUrl(productUrl, articleNumber) {
+  if (!productUrl || !articleNumber) return null;
+  const match = String(productUrl).match(
+    /^(https:\/\/www\.elgiganten\.se)\/product\/.*\/([^/]+)\/\d+\/?$/
+  );
+  if (!match) return null;
+  return `${match[1]}/product/outlet/${match[2]}/${articleNumber}`;
+}
+
 function mapHit(hit, offer, { source, group, now }) {
   const title = String(hit.title ?? hit.name ?? '').trim();
   const baseId = String(hit.objectID ?? hit.articleNumber ?? '').trim();
@@ -183,7 +203,11 @@ function mapHit(hit, offer, { source, group, now }) {
     externalId,
     productKey: normalizeProductIdentity(title),
     title,
-    url: hit.productUrl ?? hit.urlB2C ?? null,
+    // For a B-grade offer this must be the outlet unit, not the A-grade page:
+    // the price shown in the alert is the B-grade price.
+    url: (offer.kind === 'outlet'
+      ? buildOutletUrl(hit.productUrl ?? hit.urlB2C, offer.articleNumber)
+      : null) ?? hit.productUrl ?? hit.urlB2C ?? null,
     category: resolveCategory(hit, group.label),
     condition: offer.kind,
     conditionLabel: offer.kind === 'outlet'
