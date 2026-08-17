@@ -45,18 +45,7 @@ const state = {
   schedulerIsInActiveWindow: true,
   schedulerNextRunAt: null,
   schedulerFormDirty: false,
-  latestRunStartedAt: null,
-  // Flip / resale view
-  mode: 'deals',
-  flipDemandCategory: '',
-  flipStore: '',
-  flipMinProfit: '',
-  flipMinRoi: '',
-  flipMaxPrice: '',
-  flipSortBy: 'netProfitSek',
-  flipSortDir: 'desc',
-  flipPage: 1,
-  revenueData: null
+  latestRunStartedAt: null
 };
 
 const STORAGE_KEY = 'pricewatch-ui-v2';
@@ -126,20 +115,7 @@ const el = {
   toastContainer: $('#toast-container'),
   runSummary: $('#run-summary'),
   themeToggle: $('#theme-toggle'),
-  scanLine: $('#scan-line'),
-  // Flip / resale view
-  modeButtons: $$('.mode-btn'),
-  flipBar: $('#flip-bar'),
-  flipDemandFilter: $('#flip-demand-filter'),
-  flipStoreFilter: $('#flip-store-filter'),
-  flipMinProfit: $('#flip-min-profit'),
-  flipMinRoi: $('#flip-min-roi'),
-  flipMaxPrice: $('#flip-max-price'),
-  flipSort: $('#flip-sort'),
-  revenueBar: $('#revenue-bar'),
-  addPromotionBtn: $('#add-promotion-btn'),
-  costDefaultsBtn: $('#cost-defaults-btn'),
-  revenueRefreshBtn: $('#revenue-refresh-btn')
+  scanLine: $('#scan-line')
 };
 
 let scanPollTimer = null;
@@ -259,8 +235,7 @@ function savePrefs() {
       sortBy: state.sortBy,
       sortDirection: state.sortDirection,
       viewMode: state.viewMode,
-      activePreset: state.activePreset,
-      mode: state.mode
+      activePreset: state.activePreset
     }));
   } catch {}
 }
@@ -283,7 +258,6 @@ function hydratePrefs() {
   if (s.sortDirection === 'asc' || s.sortDirection === 'desc') state.sortDirection = s.sortDirection;
   if (s.viewMode === 'grid' || s.viewMode === 'list') state.viewMode = s.viewMode;
   if (typeof s.activePreset === 'string') state.activePreset = s.activePreset;
-  if (['deals', 'flip', 'revenue'].includes(s.mode)) state.mode = s.mode;
 
   // Sync UI
   el.searchInput.value = state.search;
@@ -740,494 +714,11 @@ function renderPagination(response) {
     btn.addEventListener('click', () => {
       const target = Number(btn.getAttribute('data-page'));
       if (!Number.isFinite(target) || target < 1) return;
-      if (state.mode === 'flip') state.flipPage = target;
-      else state.currentPage = target;
-      loadActiveView().catch(err => showToast(err.message, 'error'));
+      state.currentPage = target;
+      loadProducts().catch(err => showToast(err.message, 'error'));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }
-}
-
-// ── FLIP / RESALE VIEW ──────────────────────────────────────────
-function buildFlipsQuery() {
-  const params = new URLSearchParams();
-  const minProfit = parsePositiveInteger(state.flipMinProfit);
-  const minRoi = parsePositiveInteger(state.flipMinRoi);
-  const maxPrice = parsePositiveInteger(state.flipMaxPrice);
-
-  if (state.search) params.set('search', state.search);
-  if (state.flipDemandCategory) params.set('demandCategory', state.flipDemandCategory);
-  if (state.flipStore) params.set('store', state.flipStore);
-  if (minProfit) params.set('minNetProfitSek', String(minProfit));
-  if (minRoi) params.set('minRoiPercent', String(minRoi));
-  if (maxPrice) params.set('maxBuyPriceSek', String(maxPrice));
-
-  params.set('sortBy', state.flipSortBy);
-  params.set('sortDir', state.flipSortDir);
-  params.set('page', String(state.flipPage));
-  params.set('pageSize', String(state.pageSize));
-  return `?${params.toString()}`;
-}
-
-function availabilityInfo(item) {
-  const seenText = timeAgo(item.lastSeenAt) ?? '';
-  if (item.availability === 'in_stock' || item.availability === 'InStock') return { dot: 'in-stock', label: 'In stock' };
-  if (item.availability === 'few_left' || item.availability === 'limited') return { dot: 'limited', label: 'Few left' };
-  return { dot: 'out', label: seenText || 'Unknown' };
-}
-
-function populateFlipFilters(response) {
-  // Demand categories come from the flips payload; preserve current selection.
-  const cats = Array.isArray(response?.demandCategories) ? response.demandCategories : [];
-  const current = state.flipDemandCategory;
-  el.flipDemandFilter.innerHTML = ['<option value="">All types</option>']
-    .concat(cats.map(c => `<option value="${escapeHtml(c)}"${c === current ? ' selected' : ''}>${escapeHtml(c)}</option>`))
-    .join('');
-}
-
-function renderFlipStoreFilter(sources) {
-  if (!el.flipStoreFilter || !Array.isArray(sources)) return;
-  el.flipStoreFilter.innerHTML = ['<option value="">All stores</option>']
-    .concat(sources.map(s => `<option value="${escapeHtml(s.id)}"${s.id === state.flipStore ? ' selected' : ''}>${escapeHtml(s.label)}</option>`))
-    .join('');
-}
-
-function renderFlipStats(response) {
-  const agg = response?.aggregates ?? {};
-  const total = response?.total ?? 0;
-  const pills = [
-    [total, 'opportunities'],
-    [formatSek(agg.bestProfitSek ?? 0), 'best profit'],
-    [formatSek(agg.avgProfitSek ?? 0), 'avg profit'],
-    [formatSek(agg.totalProfitSek ?? 0), 'total spread']
-  ];
-  el.statsPills.innerHTML = pills
-    .map(([val, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(val))}</strong> ${escapeHtml(label)}</span>`)
-    .join('');
-  el.productsCount.textContent = `${total} flip opportunities`;
-  el.activeFilterTags.innerHTML = '';
-  el.filterCountBadge.classList.add('hidden');
-}
-
-function renderFlips(response) {
-  const flips = response?.items ?? [];
-  const total = response?.total ?? flips.length;
-
-  if (!total) {
-    el.productGrid.innerHTML = '';
-    el.paginationArea.innerHTML = '';
-    el.emptyState.classList.remove('hidden');
-    return;
-  }
-  el.emptyState.classList.add('hidden');
-
-  const cards = flips.map((flip, idx) => {
-    const isNew = isNewProduct(flip);
-    const avail = availabilityInfo(flip);
-    const url = flip.url ? escapeHtml(`/api/out/${encodeURIComponent(flip.listingKey)}`) : '';
-    const titleLink = url
-      ? `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(flip.title)}</a>`
-      : escapeHtml(flip.title);
-
-    const imgSrc = flip.imageUrl;
-    const imageHtml = imgSrc
-      ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder-img\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'" />`
-      : `<div class="card-placeholder-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
-
-    let badgesLeft = `<span class="badge badge-model" title="Matched resale model">${escapeHtml(flip.modelLabel)}</span>`;
-    if (isNew) badgesLeft += '<span class="badge badge-new">New</span>';
-    if (flip.affiliate) badgesLeft += '<span class="badge badge-affiliate">Annonslänk</span>';
-    if (flip.promotion) badgesLeft += `<span class="badge badge-promotion">${escapeHtml(flip.promotion.code ?? flip.promotion.label)}</span>`;
-
-    const wishlisted = state.wishlist.has(flip.listingKey);
-    const wishlistIcon = wishlisted ? '♥' : '♡';
-    const wishlistClass = wishlisted ? 'wishlist-btn active' : 'wishlist-btn';
-    const delay = Math.min(idx * 25, 300);
-
-    return `
-      <article class="product-card flip-card${isNew ? ' is-new' : ''}${wishlisted ? ' is-wishlisted' : ''}" style="animation-delay:${delay}ms" data-listing-key="${escapeHtml(flip.listingKey)}">
-        <div class="card-image">
-          ${imageHtml}
-          <div class="card-badges"><div class="card-badges-left">${badgesLeft}</div></div>
-          <button type="button" class="${wishlistClass}" data-listing-key="${escapeHtml(flip.listingKey)}" title="${wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}">${wishlistIcon}</button>
-        </div>
-        <div class="card-body">
-          <span class="card-store">${escapeHtml(flip.sourceLabel ?? '')} · ${escapeHtml(flip.demandCategory ?? '')}</span>
-          <h3 class="card-title">${titleLink}</h3>
-          <div class="card-pricing">
-            <div class="flip-prices">
-              <div class="flip-price-block">
-                <span class="flip-price-label">${flip.promotion ? 'Effective buy' : 'Buy now'}</span>
-                <span class="flip-price-buy">${formatSek(flip.effectiveBuyPriceSek ?? flip.buyPriceSek)}</span>
-                ${flip.promotion ? `<span class="promotion-saving">${formatSek(flip.buyPriceSek)} − ${formatSek(flip.promotionDiscountSek)}</span>` : ''}
-              </div>
-              <div class="flip-price-block" style="text-align:right">
-                <span class="flip-price-label">${flip.resaleBasis === 'sold' ? 'Sold median' : 'Asking median'}</span>
-                <span class="flip-price-resale">${formatSek(flip.resaleMedianSek)}</span>
-              </div>
-            </div>
-            <div class="flip-profit-row">
-              <div class="flip-profit-main">
-                <span class="flip-profit-value">+${formatSek(flip.netProfitSek)}</span>
-                <span class="flip-profit-label">est. net profit</span>
-              </div>
-              <span class="flip-roi" title="Return on the buy price">ROI ${flip.roiPercent}%</span>
-            </div>
-            <div class="flip-comps">
-              <span class="confidence-${escapeHtml(flip.resaleConfidence ?? 'low')}">${escapeHtml(flip.resaleConfidence ?? 'low')} confidence · ${flip.sampleCount} ${escapeHtml(flip.resaleBasis ?? 'asking')} comps</span>
-              <a href="${escapeHtml(flip.blocketSearchUrl)}" target="_blank" rel="noreferrer">View comps ↗</a>
-            </div>
-          </div>
-        </div>
-        <div class="card-footer">
-          <span class="card-availability"><span class="avail-dot ${avail.dot}"></span>${escapeHtml(avail.label)}</span>
-          <button type="button" class="track-revenue-btn" data-listing-key="${escapeHtml(flip.listingKey)}">Track deal</button>
-          <span title="Projected selling, shipping, packaging and risk costs">costs ${formatSek(flip.feesSek)}</span>
-        </div>
-      </article>
-    `;
-  }).join('');
-
-  el.productGrid.innerHTML = cards;
-
-  for (const btn of el.productGrid.querySelectorAll('.wishlist-btn')) {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleWishlist(btn.getAttribute('data-listing-key'), btn);
-    });
-  }
-  for (const btn of el.productGrid.querySelectorAll('.track-revenue-btn')) {
-    btn.addEventListener('click', () => trackRevenue(btn.dataset.listingKey));
-  }
-
-  renderPagination(response);
-}
-
-async function loadFlips() {
-  const response = await fetchJson(`/api/flips${buildFlipsQuery()}`);
-  latestProducts = response;
-  populateFlipFilters(response);
-  renderFlipStats(response);
-  renderFlips(response);
-}
-
-function renderRevenue(response) {
-  state.revenueData = response ?? state.revenueData;
-  const summary = response?.summary ?? {};
-  const items = (response?.items ?? []).filter((record) => {
-    if (!state.search) return true;
-    const haystack = [record.product?.title, record.product?.sourceLabel, record.status, record.salesChannel]
-      .filter(Boolean).join(' ').toLowerCase();
-    return state.search.toLowerCase().split(/\s+/).every((token) => haystack.includes(token));
-  });
-  const pills = [
-    [formatSek(summary.realizedProfitSek ?? 0), 'realized profit'],
-    [formatSek(summary.capitalTiedSek ?? 0), 'capital tied'],
-    [summary.sold ?? 0, 'sold'],
-    [`${summary.avgRoiPercent ?? 0}%`, 'average ROI'],
-    [response?.promotions?.filter((promotion) => promotion.enabled && promotion.verified).length ?? 0, 'verified promos']
-  ];
-  el.statsPills.innerHTML = pills
-    .map(([value, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(value))}</strong> ${escapeHtml(label)}</span>`)
-    .join('');
-  el.productsCount.textContent = `${items.length} revenue records`;
-  el.paginationArea.innerHTML = '';
-  el.activeFilterTags.innerHTML = '';
-
-  if (!items.length) {
-    el.productGrid.innerHTML = '';
-    el.emptyState.classList.remove('hidden');
-    el.emptyState.querySelector('h3').textContent = 'No revenue records yet';
-    el.emptyState.querySelector('p').textContent = 'Open Flip and track a deal to start the purchase-to-sale ledger.';
-    return;
-  }
-  el.emptyState.classList.add('hidden');
-  el.productGrid.classList.add('revenue-grid');
-  el.productGrid.innerHTML = items.map((record, index) => {
-    const product = record.product ?? {};
-    const projected = product.projectedProfitSek;
-    const realized = record.realizedProfitSek;
-    const mainProfit = Number.isFinite(realized) ? realized : projected;
-    const statusClass = `status-${escapeHtml(record.status)}`;
-    const delay = Math.min(index * 25, 300);
-    return `
-      <article class="product-card revenue-card ${statusClass}" style="animation-delay:${delay}ms" data-record-id="${escapeHtml(record.id)}">
-        <div class="revenue-card-head">
-          <span class="revenue-status">${escapeHtml(record.status)}</span>
-          <span class="revenue-updated">${escapeHtml(timeAgo(record.updatedAt) ?? '')}</span>
-        </div>
-        <div class="card-body">
-          <span class="card-store">${escapeHtml(product.sourceLabel ?? product.sourceId ?? '')}</span>
-          <h3 class="card-title">${escapeHtml(product.title ?? 'Tracked item')}</h3>
-          <div class="revenue-money-grid">
-            <div><span>Acquisition</span><strong>${formatSek(record.acquisitionCostSek ?? product.displayedPriceSek)}</strong></div>
-            <div><span>Sale</span><strong>${formatSek(record.salePriceSek)}</strong></div>
-            <div><span>${Number.isFinite(realized) ? 'Realized' : 'Projected'}</span><strong class="${mainProfit >= 0 ? 'money-positive' : 'money-negative'}">${Number.isFinite(mainProfit) && mainProfit >= 0 ? '+' : ''}${formatSek(mainProfit)}</strong></div>
-            <div><span>Capital days</span><strong>${record.capitalDays ?? '—'}</strong></div>
-          </div>
-          ${Number.isFinite(record.forecastErrorSek) ? `<div class="forecast-error">Forecast error: ${record.forecastErrorSek >= 0 ? '+' : ''}${formatSek(record.forecastErrorSek)}</div>` : ''}
-        </div>
-        <div class="card-footer">
-          <span>${escapeHtml(record.salesChannel || 'No sales channel')}</span>
-          <button type="button" class="edit-revenue-btn" data-record-id="${escapeHtml(record.id)}">Edit record</button>
-        </div>
-      </article>`;
-  }).join('');
-  for (const button of el.productGrid.querySelectorAll('.edit-revenue-btn')) {
-    button.addEventListener('click', () => openRevenueRecord(button.dataset.recordId));
-  }
-}
-
-async function loadRevenue() {
-  const response = await fetchJson('/api/revenue');
-  state.revenueData = response;
-  if (state.mode === 'revenue') renderRevenue(response);
-}
-
-async function trackRevenue(listingKey) {
-  try {
-    const response = await fetch(`/api/revenue/inventory/${encodeURIComponent(listingKey)}`, { method: 'POST' });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message || 'Unable to track deal');
-    showToast('Deal added to the revenue ledger', 'success');
-    openRevenueRecord(data.id, data);
-  } catch (error) {
-    showToast(error.message, 'error');
-  }
-}
-
-function revenueInput(id, value) {
-  const input = document.getElementById(id);
-  if (input) input.value = value ?? '';
-}
-
-function openRevenueRecord(recordId, suppliedRecord = null) {
-  const record = suppliedRecord ?? state.revenueData.items?.find((entry) => entry.id === recordId);
-  if (!record) return;
-  revenueInput('revenue-record-id', record.id);
-  revenueInput('revenue-status', record.status);
-  revenueInput('revenue-channel', record.salesChannel);
-  revenueInput('revenue-purchase-price', record.purchasePriceSek ?? record.product?.displayedPriceSek);
-  revenueInput('revenue-promo-discount', record.promotionDiscountSek);
-  revenueInput('revenue-cashback', record.cashbackSek);
-  revenueInput('revenue-inbound', record.inboundShippingSek);
-  revenueInput('revenue-sale-price', record.salePriceSek);
-  revenueInput('revenue-selling-fee', record.sellingFeeSek);
-  revenueInput('revenue-outbound', record.outboundShippingSek);
-  revenueInput('revenue-packaging', record.packagingSek);
-  revenueInput('revenue-repair', record.repairCostSek);
-  revenueInput('revenue-sold-date', record.soldDate?.slice(0, 10));
-  revenueInput('revenue-notes', record.notes);
-  document.getElementById('revenue-record-title').textContent = record.product?.title ?? 'Edit inventory record';
-  document.getElementById('revenue-record-modal').classList.remove('hidden');
-}
-
-function closeRevenueRecord() {
-  document.getElementById('revenue-record-modal').classList.add('hidden');
-}
-
-function nullableNumber(id) {
-  const value = document.getElementById(id)?.value;
-  if (value == null || value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-async function saveRevenueRecord() {
-  const id = document.getElementById('revenue-record-id').value;
-  const payload = {
-    status: document.getElementById('revenue-status').value,
-    salesChannel: document.getElementById('revenue-channel').value.trim(),
-    purchasePriceSek: nullableNumber('revenue-purchase-price'),
-    promotionDiscountSek: nullableNumber('revenue-promo-discount'),
-    cashbackSek: nullableNumber('revenue-cashback'),
-    inboundShippingSek: nullableNumber('revenue-inbound'),
-    salePriceSek: nullableNumber('revenue-sale-price'),
-    sellingFeeSek: nullableNumber('revenue-selling-fee'),
-    outboundShippingSek: nullableNumber('revenue-outbound'),
-    packagingSek: nullableNumber('revenue-packaging'),
-    repairCostSek: nullableNumber('revenue-repair'),
-    soldDate: document.getElementById('revenue-sold-date').value || null,
-    notes: document.getElementById('revenue-notes').value.trim()
-  };
-  const response = await fetch(`/api/revenue/inventory/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || 'Unable to save revenue record');
-  closeRevenueRecord();
-  await loadRevenue();
-  showToast('Revenue record saved', 'success');
-}
-
-async function deleteRevenueRecord() {
-  const id = document.getElementById('revenue-record-id').value;
-  const response = await fetch(`/api/revenue/inventory/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!response.ok) throw new Error('Unable to delete revenue record');
-  closeRevenueRecord();
-  await loadRevenue();
-}
-
-async function prepareTraderaDraft() {
-  const id = document.getElementById('revenue-record-id').value;
-  const response = await fetch(`/api/revenue/inventory/${encodeURIComponent(id)}/tradera-draft`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ askingPriceSek: nullableNumber('revenue-sale-price') || undefined })
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || 'Unable to prepare Tradera draft');
-  showToast(`Tradera draft ready: ${data.draft.title}`, 'success');
-}
-
-function openPromotionModal() {
-  const select = document.getElementById('promotion-source');
-  select.innerHTML = allSources
-    .filter((source) => source.enabled)
-    .map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.label)}</option>`)
-    .join('');
-  for (const id of ['promotion-label', 'promotion-code', 'promotion-value', 'promotion-min-spend', 'promotion-max-discount', 'promotion-expires']) {
-    revenueInput(id, '');
-  }
-  revenueInput('promotion-type', 'fixed');
-  document.getElementById('promotion-verified').checked = false;
-  document.getElementById('promotion-modal').classList.remove('hidden');
-}
-
-function closePromotionModal() {
-  document.getElementById('promotion-modal').classList.add('hidden');
-}
-
-async function savePromotion() {
-  const expires = document.getElementById('promotion-expires').value;
-  const payload = {
-    sourceId: document.getElementById('promotion-source').value,
-    label: document.getElementById('promotion-label').value.trim(),
-    code: document.getElementById('promotion-code').value.trim(),
-    discountType: document.getElementById('promotion-type').value,
-    value: nullableNumber('promotion-value'),
-    minSpendSek: nullableNumber('promotion-min-spend') ?? 0,
-    maxDiscountSek: nullableNumber('promotion-max-discount'),
-    expiresAt: expires ? new Date(expires).toISOString() : null,
-    verified: document.getElementById('promotion-verified').checked,
-    enabled: true
-  };
-  const response = await fetch('/api/revenue/promotions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || 'Unable to save promotion');
-  closePromotionModal();
-  await loadRevenue();
-  showToast(data.verified ? 'Verified promotion is active' : 'Promotion saved for verification', 'success');
-}
-
-async function openCostDefaultsModal() {
-  if (!state.revenueData) {
-    try {
-      await loadRevenue();
-    } catch (error) {
-      showToast(error.message, 'error');
-      return;
-    }
-  }
-  const costs = state.revenueData.costDefaults ?? {};
-  revenueInput('cost-inbound', costs.inboundShippingSek);
-  revenueInput('cost-outbound', costs.outboundShippingSek);
-  revenueInput('cost-packaging', costs.packagingSek);
-  revenueInput('cost-repair', costs.repairAllowanceSek);
-  revenueInput('cost-selling-percent', costs.sellingFeePercent);
-  revenueInput('cost-selling-fixed', costs.sellingFeeFixedSek);
-  revenueInput('cost-return-risk', costs.returnRiskPercent);
-  document.getElementById('cost-defaults-modal').classList.remove('hidden');
-}
-
-function closeCostDefaultsModal() {
-  document.getElementById('cost-defaults-modal').classList.add('hidden');
-}
-
-async function saveCostDefaults() {
-  const response = await fetch('/api/revenue/cost-defaults', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      inboundShippingSek: nullableNumber('cost-inbound'),
-      outboundShippingSek: nullableNumber('cost-outbound'),
-      packagingSek: nullableNumber('cost-packaging'),
-      repairAllowanceSek: nullableNumber('cost-repair'),
-      sellingFeePercent: nullableNumber('cost-selling-percent'),
-      sellingFeeFixedSek: nullableNumber('cost-selling-fixed'),
-      returnRiskPercent: nullableNumber('cost-return-risk')
-    })
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || 'Unable to save cost assumptions');
-  closeCostDefaultsModal();
-  await loadRevenue();
-  showToast('Forecast cost assumptions saved', 'success');
-}
-
-// Dispatch list refresh to the active view (deals, flip or revenue).
-function loadActiveView() {
-  if (state.mode === 'flip') return loadFlips();
-  if (state.mode === 'revenue') return loadRevenue();
-  return loadProducts();
-}
-
-function applyModeUI(mode) {
-  const isFlip = mode === 'flip';
-  const isRevenue = mode === 'revenue';
-  const isList = isFlip || isRevenue;
-  for (const b of el.modeButtons) b.classList.toggle('active', b.dataset.mode === mode);
-  el.flipBar.classList.toggle('hidden', !isFlip);
-  if (el.revenueBar) el.revenueBar.classList.toggle('hidden', !isRevenue);
-  el.productGrid.classList.toggle('revenue-grid', isRevenue);
-  document.getElementById('filter-pills').classList.toggle('hidden', isList);
-  document.querySelector('.filter-bar-right').classList.toggle('hidden', isList);
-  el.searchInput.placeholder = isFlip ? 'Search flips…' : isRevenue ? 'Search revenue ledger…' : 'Search deals...';
-  if (!isRevenue) {
-    el.emptyState.querySelector('h3').textContent = 'No products found';
-    el.emptyState.querySelector('p').textContent = 'Try adjusting your filters or run a new scan';
-  }
-
-  // Close the deals filter panel when leaving deals mode
-  if (isList && state.filterPanelOpen) {
-    state.filterPanelOpen = false;
-    el.filterPanel.classList.add('hidden');
-    el.filterExpandBtn.classList.remove('active');
-    document.getElementById('filter-bar').classList.remove('panel-open');
-  }
-}
-
-function setMode(mode) {
-  if (!['deals', 'flip', 'revenue'].includes(mode)) return;
-  state.mode = mode;
-  applyModeUI(mode);
-  savePrefs();
-  loadActiveView().catch(err => showToast(err.message, 'error'));
-}
-
-function updateFlipFilters({ debounce = false } = {}) {
-  state.flipDemandCategory = el.flipDemandFilter.value;
-  state.flipStore = el.flipStoreFilter.value;
-  state.flipMinProfit = el.flipMinProfit.value.trim();
-  state.flipMinRoi = el.flipMinRoi.value.trim();
-  state.flipMaxPrice = el.flipMaxPrice.value.trim();
-  state.flipPage = 1;
-
-  if (debounce) {
-    if (filterApplyTimer) clearTimeout(filterApplyTimer);
-    filterApplyTimer = setTimeout(() => {
-      filterApplyTimer = null;
-      loadFlips().catch(err => showToast(err.message, 'error'));
-    }, 250);
-    return;
-  }
-  loadFlips().catch(err => showToast(err.message, 'error'));
 }
 
 // ── WISHLIST ────────────────────────────────────────────────────
@@ -1402,71 +893,6 @@ async function openPriceHistoryModal(listingKey) {
 
 function closePriceHistoryModal() {
   const modal = document.getElementById('price-history-modal');
-  modal.classList.add('hidden');
-  modal.setAttribute('aria-hidden', 'true');
-}
-
-// ── FLIP INSIGHTS MODAL ─────────────────────────────────────────
-async function openFlipInsightsModal() {
-  const modal = document.getElementById('flip-insights-modal');
-  modal.classList.remove('hidden');
-  modal.setAttribute('aria-hidden', 'false');
-
-  const totalsEl = document.getElementById('fi-totals');
-  const catEl = document.getElementById('fi-categories');
-  const modelEl = document.getElementById('fi-models');
-  totalsEl.innerHTML = '<span class="fi-loading">Loading…</span>';
-  catEl.innerHTML = '';
-  modelEl.innerHTML = '';
-
-  try {
-    const data = await fetchJson('/api/flip-insights');
-    const t = data.totals ?? {};
-    totalsEl.innerHTML = [
-      [t.opportunities ?? 0, 'opportunities'],
-      [formatSek(t.totalProfitSek ?? 0), 'total potential profit'],
-      [t.categoryCount ?? 0, 'categories'],
-      [t.modelCount ?? 0, 'models']
-    ].map(([v, l]) => `<div class="fi-total"><strong>${escapeHtml(String(v))}</strong><span>${escapeHtml(l)}</span></div>`).join('');
-
-    catEl.innerHTML = renderInsightsTable(data.categories ?? [], 'Category');
-    modelEl.innerHTML = renderInsightsTable(data.models ?? [], 'Model');
-  } catch (err) {
-    totalsEl.innerHTML = `<span class="fi-loading">Failed to load insights: ${escapeHtml(err.message)}</span>`;
-  }
-}
-
-function renderInsightsTable(rows, firstColLabel) {
-  if (!rows.length) return '<p class="fi-empty">No flip opportunities yet — run a scan with Blocket/Tradera comps.</p>';
-  const body = rows.map((r, i) => {
-    const best = r.best
-      ? `<a class="fi-best" href="${r.best.url ? escapeHtml(r.best.url) : '#'}" target="_blank" rel="noreferrer" title="${escapeHtml(r.best.title)}">${escapeHtml(r.best.title.slice(0, 40))} · +${formatSek(r.best.netProfitSek)}</a>`
-      : '—';
-    return `
-      <tr>
-        <td class="fi-rank">${i + 1}</td>
-        <td class="fi-label">${escapeHtml(r.label)}</td>
-        <td class="fi-num">${r.count}</td>
-        <td class="fi-num fi-strong">${formatSek(r.totalProfitSek)}</td>
-        <td class="fi-num">${formatSek(r.avgProfitSek)}</td>
-        <td class="fi-num">${formatSek(r.medianProfitSek)}</td>
-        <td class="fi-num">${r.avgRoiPercent}%</td>
-        <td class="fi-best-cell">${best}</td>
-      </tr>`;
-  }).join('');
-  return `
-    <table class="fi-table">
-      <thead><tr>
-        <th>#</th><th>${escapeHtml(firstColLabel)}</th><th title="Number of flip opportunities">Count</th>
-        <th title="Sum of net profit across all opportunities">Total profit</th>
-        <th>Avg</th><th>Median</th><th>Avg ROI</th><th>Top opportunity</th>
-      </tr></thead>
-      <tbody>${body}</tbody>
-    </table>`;
-}
-
-function closeFlipInsightsModal() {
-  const modal = document.getElementById('flip-insights-modal');
   modal.classList.add('hidden');
   modal.setAttribute('aria-hidden', 'true');
 }
@@ -1839,20 +1265,13 @@ async function loadDashboard() {
   renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
   renderCategoryFilter(categories);
   renderStoreFilter(outletSources ?? []);
-  renderFlipStoreFilter(outletSources ?? []);
   renderCampaignFilter(outletCampaigns ?? []);
   renderSchedulerForm(status.scheduler);
   el.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
 
-  if (state.mode === 'flip') {
-    await loadFlips();
-  } else if (state.mode === 'revenue') {
-    await loadRevenue();
-  } else {
-    renderStats(status, response);
-    renderActiveFilterTags();
-    renderProducts(response);
-  }
+  renderStats(status, response);
+  renderActiveFilterTags();
+  renderProducts(response);
 
   if (status.isRunning) { scheduleScanPoll(); } else { clearScanPoll(); }
 }
@@ -1911,17 +1330,6 @@ async function loadDrawerData() {
   if (digestTime) digestTime.value = digest.time ?? '08:00';
   if (digestWebhook) digestWebhook.value = digest.webhook ?? '';
   if (digestMaxItems) digestMaxItems.value = digest.maxItems ?? '';
-
-  // Flip alerts form (Feature 4)
-  const flipAlerts = notifSettings.flipAlerts ?? {};
-  const flipEnabled = document.getElementById('flip-alerts-enabled');
-  const flipMinProfit = document.getElementById('flip-alerts-min-profit');
-  const flipMinRoi = document.getElementById('flip-alerts-min-roi');
-  const flipWebhook = document.getElementById('flip-alerts-webhook');
-  if (flipEnabled) flipEnabled.checked = flipAlerts.enabled === true;
-  if (flipMinProfit) flipMinProfit.value = flipAlerts.minNetProfitSek ?? '';
-  if (flipMinRoi) flipMinRoi.value = flipAlerts.minRoiPercent ?? '';
-  if (flipWebhook) flipWebhook.value = flipAlerts.webhook ?? '';
 
   // Wishlist target alerts form (Feature 3)
   const wishlistAlerts = notifSettings.wishlistAlerts ?? {};
@@ -2195,12 +1603,6 @@ async function saveAllSettings() {
       webhook: (document.getElementById('digest-webhook')?.value ?? '').trim(),
       maxItems: parsePositiveInteger(document.getElementById('digest-max-items')?.value) ?? undefined
     };
-    notifSettings.flipAlerts = {
-      enabled: document.getElementById('flip-alerts-enabled')?.checked === true,
-      minNetProfitSek: parsePositiveInteger(document.getElementById('flip-alerts-min-profit')?.value) ?? 500,
-      minRoiPercent: parsePositiveInteger(document.getElementById('flip-alerts-min-roi')?.value) ?? 15,
-      webhook: (document.getElementById('flip-alerts-webhook')?.value ?? '').trim()
-    };
     notifSettings.wishlistAlerts = {
       enabled: document.getElementById('wishlist-alerts-enabled')?.checked === true,
       webhook: (document.getElementById('wishlist-alerts-webhook')?.value ?? '').trim()
@@ -2261,58 +1663,8 @@ async function bulkToggleSources(enabled) {
 function bindEvents() {
   // Search
   el.searchInput.addEventListener('input', () => {
-    if (state.mode === 'flip') {
-      state.search = el.searchInput.value.trim();
-      state.flipPage = 1;
-      if (filterApplyTimer) clearTimeout(filterApplyTimer);
-      filterApplyTimer = setTimeout(() => { filterApplyTimer = null; loadFlips().catch(err => showToast(err.message, 'error')); }, 250);
-    } else if (state.mode === 'revenue') {
-      state.search = el.searchInput.value.trim();
-      renderRevenue(state.revenueData);
-    } else {
-      updateFilters({ debounce: true });
-    }
+    updateFilters({ debounce: true });
   });
-
-  // Deals / Flip / Revenue mode switch
-  for (const btn of el.modeButtons) {
-    btn.addEventListener('click', () => setMode(btn.dataset.mode));
-  }
-
-  // Flip controls
-  el.flipDemandFilter?.addEventListener('change', () => updateFlipFilters());
-  el.flipStoreFilter?.addEventListener('change', () => updateFlipFilters());
-  el.flipMinProfit?.addEventListener('input', () => updateFlipFilters({ debounce: true }));
-  el.flipMinRoi?.addEventListener('input', () => updateFlipFilters({ debounce: true }));
-  el.flipMaxPrice?.addEventListener('input', () => updateFlipFilters({ debounce: true }));
-  el.flipSort?.addEventListener('change', () => {
-    const [col, dir] = el.flipSort.value.split('-');
-    state.flipSortBy = col;
-    state.flipSortDir = dir;
-    state.flipPage = 1;
-    loadFlips().catch(err => showToast(err.message, 'error'));
-  });
-
-  el.addPromotionBtn?.addEventListener('click', openPromotionModal);
-  el.costDefaultsBtn?.addEventListener('click', openCostDefaultsModal);
-  el.revenueRefreshBtn?.addEventListener('click', () => loadRevenue().catch(err => showToast(err.message, 'error')));
-  document.getElementById('revenue-record-close')?.addEventListener('click', closeRevenueRecord);
-  document.getElementById('revenue-record-modal')?.addEventListener('click', (event) => {
-    if (event.target.id === 'revenue-record-modal') closeRevenueRecord();
-  });
-  document.getElementById('revenue-save-btn')?.addEventListener('click', () => saveRevenueRecord().catch(err => showToast(err.message, 'error')));
-  document.getElementById('revenue-delete-btn')?.addEventListener('click', () => deleteRevenueRecord().catch(err => showToast(err.message, 'error')));
-  document.getElementById('revenue-tradera-draft-btn')?.addEventListener('click', () => prepareTraderaDraft().catch(err => showToast(err.message, 'error')));
-  document.getElementById('promotion-close')?.addEventListener('click', closePromotionModal);
-  document.getElementById('promotion-modal')?.addEventListener('click', (event) => {
-    if (event.target.id === 'promotion-modal') closePromotionModal();
-  });
-  document.getElementById('promotion-save-btn')?.addEventListener('click', () => savePromotion().catch(err => showToast(err.message, 'error')));
-  document.getElementById('cost-defaults-close')?.addEventListener('click', closeCostDefaultsModal);
-  document.getElementById('cost-defaults-modal')?.addEventListener('click', (event) => {
-    if (event.target.id === 'cost-defaults-modal') closeCostDefaultsModal();
-  });
-  document.getElementById('cost-defaults-save')?.addEventListener('click', () => saveCostDefaults().catch(err => showToast(err.message, 'error')));
 
   // Filter selects
   el.categoryFilter.addEventListener('change', () => updateFilters());
@@ -2422,14 +1774,6 @@ function bindEvents() {
       el.searchInput.focus();
     }
     if (e.key === 'Escape') {
-      const costModal = document.getElementById('cost-defaults-modal');
-      if (!costModal.classList.contains('hidden')) { closeCostDefaultsModal(); return; }
-      const promoModal = document.getElementById('promotion-modal');
-      if (!promoModal.classList.contains('hidden')) { closePromotionModal(); return; }
-      const revenueModal = document.getElementById('revenue-record-modal');
-      if (!revenueModal.classList.contains('hidden')) { closeRevenueRecord(); return; }
-      const fiModal = document.getElementById('flip-insights-modal');
-      if (!fiModal.classList.contains('hidden')) { closeFlipInsightsModal(); return; }
       const phModal = document.getElementById('price-history-modal');
       if (!phModal.classList.contains('hidden')) { closePriceHistoryModal(); return; }
       if (!el.settingsDrawer.classList.contains('hidden')) closeDrawer();
@@ -2442,19 +1786,11 @@ function bindEvents() {
   document.getElementById('price-history-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'price-history-modal') closePriceHistoryModal();
   });
-
-  // Flip insights modal
-  document.getElementById('flip-insights-btn')?.addEventListener('click', () => openFlipInsightsModal().catch(err => showToast(err.message, 'error')));
-  document.getElementById('fi-modal-close')?.addEventListener('click', closeFlipInsightsModal);
-  document.getElementById('flip-insights-modal')?.addEventListener('click', (e) => {
-    if (e.target.id === 'flip-insights-modal') closeFlipInsightsModal();
-  });
 }
 
 // ── INIT ────────────────────────────────────────────────────────
 initTheme();
 hydratePrefs();
-applyModeUI(state.mode);
 bindEvents();
 loadWishlist().then(() => loadDashboard()).catch(err => showToast(err.message, 'error'));
 loadVersionInfo();

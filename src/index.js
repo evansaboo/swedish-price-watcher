@@ -10,7 +10,6 @@ import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { buildDigestDeals, buildDigestPayload, shouldSendDigest } from './services/digest.js';
 import { ProductCache } from './services/productCache.js';
-import { createLlmClassifier } from './services/llmClassifier.js';
 import { DiscordNotifier } from './services/notifier.js';
 import { shouldSkipSourceNotifications } from './services/scanPolicy.js';
 import { decorateAffiliateLink } from './services/affiliateLinks.js';
@@ -47,49 +46,15 @@ const state = store.getState();
 state.deals = computeDeals(state, config.thresholds);
 
 // Initialize product cache — materialized view for fast API queries
-const productCache = new ProductCache(config.resale);
+const productCache = new ProductCache();
 const sourceLabelMap = new Map(config.sources.map(s => [s.id, s.label || s.id]));
 const sourceById = new Map(config.sources.map(s => [s.id, s]));
 
-// Optional LLM-backed resale-model resolver (deterministic-first, LLM gap-fill).
-// Provider is Gemini (hosted) or Ollama (local). Null when disabled / no Gemini
-// key — the deterministic matcher is then used alone.
-const llmClassifier = createLlmClassifier({ ...config.llm });
-if (llmClassifier) {
-  productCache.setModelResolver(llmClassifier.resolveModel);
-  console.log(`[llm] classifier enabled (provider=${llmClassifier.provider}, model=${llmClassifier.model})`);
-}
-
 productCache.rebuild(state, sourceLabelMap);
-
-// Gather every Blocket-used + buyable title and let the LLM classify the ones
-// the deterministic matcher missed, then rebuild so new comps/candidates fold in.
-// Bounded per run (config.llm.maxTitlesPerRun); runs out of band so it never
-// blocks scans or API requests. No-op when the classifier is disabled.
-async function enrichResaleModels(reason) {
-  if (!llmClassifier) return;
-  try {
-    const titles = Object.values(store.getState().items)
-      .filter(it => it && it.title)
-      .map(it => it.title);
-    const stats = await llmClassifier.enrich(titles);
-    if (stats.classified > 0 || stats.rejected > 0) {
-      productCache.rebuild(store.getState(), sourceLabelMap);
-      console.log(`[llm] resale enrichment (${reason}) applied: +${stats.classified} models, cache=${llmClassifier.size()}`);
-    }
-  } catch (err) {
-    console.warn(`[llm] enrichment failed: ${err.message}`);
-  }
-}
 
 // Wire store invalidation to rebuild cache on saves
 if (store.onInvalidate) {
   store.onInvalidate(() => productCache.rebuild(store.getState(), sourceLabelMap));
-}
-
-// Kick off a one-off resale enrichment of already-stored data at boot (non-blocking).
-if (llmClassifier) {
-  enrichResaleModels('boot').catch(() => {});
 }
 
 const configuredInterval = Number.isFinite(config.scanIntervalMinutes) && config.scanIntervalMinutes > 0 ? config.scanIntervalMinutes : 180;
@@ -238,9 +203,6 @@ async function triggerScan(trigger, options = {}) {
         continue;
       }
       const effectiveNotificationSettings = { ...(state.preferences?.notificationSettings ?? {}) };
-      const sourceFlips = productCache.flips
-        .filter((f) => f.sourceId === ctx.source.id)
-        .map((item) => decorateAffiliateLink(item, sourceById));
       const sourceNotif = await notifier.notifyScan({
         deals: state.deals,
         newItems: ctx.mergeResult.newItems.map((item) => decorateAffiliateLink(item, sourceById)),
@@ -248,9 +210,7 @@ async function triggerScan(trigger, options = {}) {
         sources: config.sources,
         state,
         notificationSettings: effectiveNotificationSettings,
-        flips: sourceFlips,
         wishlistTargets: state.preferences?.wishlistTargets ?? {},
-        premiumSubscribers: state.preferences?.revenue?.subscribers ?? [],
         purchase: ensurePurchaseState(state.preferences),
         stageListing: purchaseService.stageListing
       });
@@ -433,9 +393,6 @@ async function triggerScan(trigger, options = {}) {
     };
 
     await store.save({ skipItems: true });
-    // Classify any new noisy titles this scan surfaced, out of band. Fire and
-    // forget so the scan returns promptly; results fold in on the next rebuild.
-    enrichResaleModels('post-scan').catch(() => {});
     return state.stats.lastRunSummary;
   } catch (error) {
     scanState.lastError = error.message;

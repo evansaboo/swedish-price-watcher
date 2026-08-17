@@ -62,11 +62,6 @@
     <!-- ===== FILTER BAR ===== -->
     <nav class="filter-bar" id="filter-bar">
       <div class="filter-bar-inner">
-        <div class="mode-switch" role="group" aria-label="View mode">
-          <button type="button" class="mode-btn active" data-mode="deals">Deals</button>
-          <button type="button" class="mode-btn" data-mode="flip">⚡ Flip</button>
-          <button type="button" class="mode-btn" data-mode="revenue">Revenue</button>
-        </div>
         <div class="filter-pills" id="filter-pills">
           <button type="button" class="filter-pill active" data-filter-preset="all">All</button>
           <button type="button" class="filter-pill" data-filter-preset="new">New</button>
@@ -147,43 +142,6 @@
         </div>
       </div>
     </div>
-
-    <!-- ===== FLIP CONTROLS BAR ===== -->
-    <nav class="flip-bar hidden" id="flip-bar">
-      <div class="flip-bar-inner">
-        <div class="flip-bar-intro" title="Buy price vs. real Blocket second-hand prices for the same model">
-          <span class="flip-bolt">⚡</span> Resale opportunities — realized sales preferred, asking prices clearly marked
-        </div>
-        <div class="flip-bar-controls">
-          <select id="flip-demand-filter" class="field-select" aria-label="Product type"><option value="">All types</option></select>
-          <select id="flip-store-filter" class="field-select" aria-label="Store"><option value="">All stores</option></select>
-          <input id="flip-min-profit" type="number" class="field-input flip-num" min="0" step="50" placeholder="Min profit kr" />
-          <input id="flip-min-roi" type="number" class="field-input flip-num" min="0" step="1" placeholder="Min ROI %" />
-          <input id="flip-max-price" type="number" class="field-input flip-num" min="0" step="100" placeholder="Max buy kr" />
-          <select id="flip-sort" class="sort-select" aria-label="Sort flips by">
-            <option value="netProfitSek-desc">Net profit: high → low</option>
-            <option value="roiPercent-desc">ROI %: high → low</option>
-            <option value="buyPriceSek-asc">Buy price: low → high</option>
-            <option value="sampleCount-desc">Most evidence samples</option>
-          </select>
-          <button type="button" id="flip-insights-btn" class="field-select" title="Demand leaderboard — where the resale money is" style="cursor:pointer;white-space:nowrap">📊 Insights</button>
-        </div>
-      </div>
-    </nav>
-
-    <!-- ===== STATS BAR ===== -->
-    <nav class="flip-bar revenue-bar hidden" id="revenue-bar">
-      <div class="flip-bar-inner">
-        <div class="flip-bar-intro">
-          <span class="revenue-mark">R</span> Purchase → list → sell. Projected and realized money stay separate.
-        </div>
-        <div class="flip-bar-controls">
-          <button type="button" id="add-promotion-btn" class="ghost-btn accent">+ Promotion</button>
-          <button type="button" id="cost-defaults-btn" class="ghost-btn">Cost assumptions</button>
-          <button type="button" id="revenue-refresh-btn" class="ghost-btn">Refresh ledger</button>
-        </div>
-      </div>
-    </nav>
 
     <!-- ===== STATS BAR ===== -->
     <div class="stats-bar" id="stats-bar">
@@ -267,30 +225,6 @@
             <button id="add-rule-btn" type="button" class="ghost-btn accent">+ Add alert</button>
           </div>
           <ul id="rules-list" class="rules-list"></ul>
-
-          <!-- Flip alerts (Feature 4) -->
-          <div class="digest-section flip-alert-section">
-            <label class="toggle-switch">
-              <input id="flip-alerts-enabled" type="checkbox" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">⚡ Flip alerts (high-margin resale)</span>
-            </label>
-            <p class="section-hint">Get pinged when a scanned item can be flipped for a profit above your thresholds.</p>
-            <div class="form-row" style="margin-top:0.5rem">
-              <div class="form-field">
-                <label for="flip-alerts-min-profit">Min net profit (SEK)</label>
-                <input id="flip-alerts-min-profit" type="number" class="field-input" min="0" step="50" placeholder="500" />
-              </div>
-              <div class="form-field">
-                <label for="flip-alerts-min-roi">Min ROI (%)</label>
-                <input id="flip-alerts-min-roi" type="number" class="field-input" min="0" step="1" placeholder="15" />
-              </div>
-            </div>
-            <div class="form-field" style="margin-top:0.5rem">
-              <label for="flip-alerts-webhook">Flip webhook</label>
-              <input id="flip-alerts-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
-            </div>
-          </div>
 
           <!-- Wishlist target alerts (Feature 3) -->
           <div class="digest-section wishlist-alert-section">
@@ -423,102 +357,6 @@
         <div class="modal-body">
           <div id="ph-chart-container" class="ph-chart-container"></div>
           <div id="ph-stats" class="ph-stats"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ===== FLIP INSIGHTS MODAL ===== -->
-    <div id="flip-insights-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-wide">
-        <div class="modal-header">
-          <h3>⚡ Flip Insights — demand leaderboard</h3>
-          <button id="fi-modal-close" type="button" class="modal-close" aria-label="Close">×</button>
-        </div>
-        <div class="modal-body">
-          <div id="fi-totals" class="fi-totals"></div>
-          <h4 class="fi-section-title">By product category</h4>
-          <div id="fi-categories" class="fi-table-wrap"></div>
-          <h4 class="fi-section-title">Top resale models</h4>
-          <div id="fi-models" class="fi-table-wrap"></div>
-        </div>
-      </div>
-    </div>
-
-    <div id="revenue-record-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-wide">
-        <div class="modal-header">
-          <div><span class="modal-kicker">Revenue ledger</span><h3 id="revenue-record-title">Edit inventory record</h3></div>
-          <button id="revenue-record-close" type="button" class="modal-close" aria-label="Close">×</button>
-        </div>
-        <div class="modal-body">
-          <input id="revenue-record-id" type="hidden" />
-          <div class="revenue-form-grid">
-            <div class="form-field"><label for="revenue-status">Status</label><select id="revenue-status" class="field-select"><option value="watching">Watching</option><option value="bought">Bought</option><option value="listed">Listed</option><option value="sold">Sold</option><option value="returned">Returned</option><option value="skipped">Skipped</option></select></div>
-            <div class="form-field"><label for="revenue-channel">Sales channel</label><input id="revenue-channel" class="field-input" placeholder="Blocket, Tradera…" /></div>
-            <div class="form-field"><label for="revenue-purchase-price">Purchase price</label><input id="revenue-purchase-price" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-promo-discount">Promotion discount</label><input id="revenue-promo-discount" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-cashback">Confirmed cashback</label><input id="revenue-cashback" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-inbound">Inbound shipping</label><input id="revenue-inbound" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-sale-price">Sale price</label><input id="revenue-sale-price" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-selling-fee">Selling fee</label><input id="revenue-selling-fee" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-outbound">Outbound shipping</label><input id="revenue-outbound" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-packaging">Packaging</label><input id="revenue-packaging" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-repair">Repair/testing</label><input id="revenue-repair" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="revenue-sold-date">Sold date</label><input id="revenue-sold-date" type="date" class="field-input" /></div>
-          </div>
-          <div class="form-field revenue-notes"><label for="revenue-notes">Notes</label><textarea id="revenue-notes" class="field-input" rows="3"></textarea></div>
-          <div class="revenue-modal-actions">
-            <button id="revenue-tradera-draft-btn" type="button" class="ghost-btn">Prepare Tradera draft</button>
-            <span class="modal-action-spacer"></span>
-            <button id="revenue-delete-btn" type="button" class="ghost-btn danger">Delete</button>
-            <button id="revenue-save-btn" type="button" class="save-btn">Save record</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="promotion-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-header">
-          <div><span class="modal-kicker">Verified savings</span><h3>Add promotion</h3></div>
-          <button id="promotion-close" type="button" class="modal-close" aria-label="Close">×</button>
-        </div>
-        <div class="modal-body">
-          <div class="revenue-form-grid">
-            <div class="form-field"><label for="promotion-source">Retailer</label><select id="promotion-source" class="field-select"></select></div>
-            <div class="form-field"><label for="promotion-label">Label</label><input id="promotion-label" class="field-input" placeholder="Weekend code" /></div>
-            <div class="form-field"><label for="promotion-code">Code</label><input id="promotion-code" class="field-input" placeholder="SAVE10" /></div>
-            <div class="form-field"><label for="promotion-type">Discount type</label><select id="promotion-type" class="field-select"><option value="fixed">Fixed SEK</option><option value="percent">Percent</option></select></div>
-            <div class="form-field"><label for="promotion-value">Value</label><input id="promotion-value" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="promotion-min-spend">Minimum spend</label><input id="promotion-min-spend" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="promotion-max-discount">Maximum discount</label><input id="promotion-max-discount" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="promotion-expires">Expires</label><input id="promotion-expires" type="datetime-local" class="field-input" /></div>
-          </div>
-          <label class="toggle-switch promotion-verified"><input id="promotion-verified" type="checkbox" /><span class="toggle-track"><span class="toggle-thumb"></span></span><span class="toggle-label">Verified at checkout or from an approved feed</span></label>
-          <p class="section-hint">Unverified promotions are stored for review but never included in projected profit.</p>
-          <div class="revenue-modal-actions"><span class="modal-action-spacer"></span><button id="promotion-save-btn" type="button" class="save-btn">Save promotion</button></div>
-        </div>
-      </div>
-    </div>
-
-    <div id="cost-defaults-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-header">
-          <div><span class="modal-kicker">Conservative forecast</span><h3>Default transaction costs</h3></div>
-          <button id="cost-defaults-close" type="button" class="modal-close" aria-label="Close">×</button>
-        </div>
-        <div class="modal-body">
-          <div class="revenue-form-grid">
-            <div class="form-field"><label for="cost-inbound">Inbound shipping</label><input id="cost-inbound" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="cost-outbound">Outbound shipping</label><input id="cost-outbound" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="cost-packaging">Packaging</label><input id="cost-packaging" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="cost-repair">Repair/testing allowance</label><input id="cost-repair" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="cost-selling-percent">Selling fee (%)</label><input id="cost-selling-percent" type="number" min="0" max="100" class="field-input" /></div>
-            <div class="form-field"><label for="cost-selling-fixed">Selling fee (fixed SEK)</label><input id="cost-selling-fixed" type="number" min="0" class="field-input" /></div>
-            <div class="form-field"><label for="cost-return-risk">Return/risk provision (%)</label><input id="cost-return-risk" type="number" min="0" max="100" class="field-input" /></div>
-          </div>
-          <p class="section-hint">These are forecasting assumptions, not tax calculations. Actual costs belong on each sold inventory record.</p>
-          <div class="revenue-modal-actions"><span class="modal-action-spacer"></span><button id="cost-defaults-save" type="button" class="save-btn">Save assumptions</button></div>
         </div>
       </div>
     </div>

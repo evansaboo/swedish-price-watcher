@@ -61,8 +61,8 @@ function normalizeArm(raw, now) {
 }
 
 /**
- * Attach (and normalize) the purchase slice of preferences, mirroring
- * ensureRevenueState so old state files upgrade cleanly.
+ * Attach (and normalize) the purchase slice of preferences so old state
+ * files upgrade cleanly.
  */
 export function ensurePurchaseState(preferences = {}, now = new Date().toISOString()) {
   const raw = isPlainObject(preferences.purchase) ? preferences.purchase : {};

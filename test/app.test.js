@@ -357,7 +357,6 @@ test('PUT /api/notification-settings merges by default and never wipes omitted f
       alertRules: [
         { id: 'default-deals', label: 'Best Deals (>=20% off)', enabled: true, keywords: [], categories: [], webhooks: ['https://discord.example/hook'], filteredSources: [], sourceFilterMode: 'exclude', notifyPriceDrops: true, minDiscountPercent: 20 }
       ],
-      flipAlerts: { enabled: true, minNetProfitSek: 800, minRoiPercent: 20, webhook: 'https://discord.example/flip' },
       wishlistAlerts: { enabled: false, webhook: '' }
     }
   };
@@ -376,7 +375,7 @@ test('PUT /api/notification-settings merges by default and never wipes omitted f
     scheduler: { getState() { return {}; }, async update() { return {}; } }
   });
 
-  // A partial PUT that only toggles wishlistAlerts must NOT drop the alert rules or flipAlerts.
+  // A partial PUT that only toggles wishlistAlerts must NOT drop the alert rules.
   const res = await app.inject({
     method: 'PUT',
     url: '/api/notification-settings',
@@ -387,8 +386,6 @@ test('PUT /api/notification-settings merges by default and never wipes omitted f
   const body = res.json();
   assert.equal(body.alertRules.length, 1, 'alert rules preserved');
   assert.equal(body.alertRules[0].id, 'default-deals');
-  assert.equal(body.flipAlerts.enabled, true, 'flipAlerts preserved');
-  assert.equal(body.flipAlerts.minNetProfitSek, 800);
   assert.equal(body.wishlistAlerts.enabled, true, 'wishlistAlerts updated');
   assert.equal(body.wishlistAlerts.webhook, 'https://discord.example/wish');
   // Persisted state matches
@@ -404,145 +401,6 @@ test('PUT /api/notification-settings merges by default and never wipes omitted f
   });
   assert.equal(clearRes.statusCode, 200);
   assert.equal(clearRes.json().alertRules.length, 0, 'explicit empty array clears rules');
-  // flipAlerts still preserved because it was omitted
-  assert.equal(clearRes.json().flipAlerts.minNetProfitSek, 800);
-
-  await app.close();
-});
-
-test('revenue workbench tracks a product through a realized sale', async () => {
-  const state = createDefaultState();
-  state.items['shop:1'] = {
-    listingKey: 'shop:1',
-    sourceId: 'shop',
-    sourceLabel: 'Test Shop',
-    condition: 'outlet',
-    category: 'Graphics cards',
-    title: 'ASUS RTX 4070 Ti',
-    url: 'https://shop.example/products/1',
-    latestPriceSek: 5000,
-    firstSeenAt: '2026-07-26T10:00:00.000Z',
-    lastSeenAt: '2026-07-26T10:00:00.000Z'
-  };
-  const cache = buildTestCache(state);
-  let saves = 0;
-  const app = await buildApp({
-    config: {
-      publicDir,
-      sources: [{
-        id: 'shop',
-        label: 'Test Shop',
-        enabled: true,
-        affiliateProgram: {
-          network: 'approved',
-          linkTemplate: 'https://track.example/click?url={url}'
-        }
-      }],
-      access: {},
-      tradera: {}
-    },
-    store: {
-      getState() { return state; },
-      async savePreferences() { saves++; cache.rebuild(state); },
-      getItemHistory() { return []; }
-    },
-    productCache: cache,
-    scanState: { running: false, lastError: null },
-    triggerScan: async () => ({})
-  });
-
-  const promotionResponse = await app.inject({
-    method: 'POST',
-    url: '/api/revenue/promotions',
-    payload: {
-      sourceId: 'shop',
-      label: 'Verified code',
-      code: 'SAVE500',
-      discountType: 'fixed',
-      value: 500,
-      verified: true
-    }
-  });
-  assert.equal(promotionResponse.statusCode, 200);
-
-  const trackResponse = await app.inject({ method: 'POST', url: '/api/revenue/inventory/shop%3A1' });
-  assert.equal(trackResponse.statusCode, 200);
-  const record = trackResponse.json();
-  assert.equal(record.status, 'watching');
-
-  const soldResponse = await app.inject({
-    method: 'PATCH',
-    url: `/api/revenue/inventory/${record.id}`,
-    payload: {
-      status: 'sold',
-      purchasePriceSek: 5000,
-      promotionDiscountSek: 500,
-      salePriceSek: 7000,
-      sellingFeeSek: 200,
-      outboundShippingSek: 100
-    }
-  });
-  assert.equal(soldResponse.statusCode, 200);
-  assert.equal(soldResponse.json().realizedProfitSek, 2200);
-
-  const overview = await app.inject({ method: 'GET', url: '/api/revenue' });
-  assert.equal(overview.json().summary.realizedProfitSek, 2200);
-  assert.ok(saves >= 2);
-
-  const products = await app.inject({ method: 'GET', url: '/api/outlet-products' });
-  assert.equal(products.json().items[0].affiliate, true);
-
-  const outbound = await app.inject({ method: 'GET', url: '/api/out/shop%3A1' });
-  assert.equal(outbound.statusCode, 302);
-  assert.match(outbound.headers.location, /^https:\/\/track\.example/);
-
-  await app.close();
-});
-
-test('premium subscriber administration is disabled or authenticated', async () => {
-  const state = createDefaultState();
-  const cache = buildTestCache(state);
-  const app = await buildApp({
-    config: { publicDir, sources: [], access: { adminToken: 'admin-secret', premiumAccessKeys: [] }, tradera: {} },
-    store: {
-      getState() { return state; },
-      async savePreferences() {},
-      getItemHistory() { return []; }
-    },
-    productCache: cache,
-    scanState: { running: false, lastError: null },
-    triggerScan: async () => ({})
-  });
-
-  const unauthorized = await app.inject({ method: 'POST', url: '/api/admin/subscribers' });
-  assert.equal(unauthorized.statusCode, 401);
-
-  const created = await app.inject({
-    method: 'POST',
-    url: '/api/admin/subscribers',
-    headers: { authorization: 'Bearer admin-secret' },
-    payload: { status: 'active', minNetProfitSek: 1000 }
-  });
-  assert.equal(created.statusCode, 200);
-  const { accessKey } = created.json();
-  assert.ok(accessKey);
-
-  const status = await app.inject({
-    method: 'GET',
-    url: '/api/premium/status',
-    headers: { authorization: `Bearer ${accessKey}` }
-  });
-  assert.equal(status.statusCode, 200);
-  assert.equal(status.json().active, true);
-
-  const invalidProfile = await app.inject({
-    method: 'PATCH',
-    url: '/api/premium/profile',
-    headers: { authorization: `Bearer ${accessKey}` },
-    payload: { discordWebhook: 'http://127.0.0.1:8080/api/webhooks/123/token' }
-  });
-  assert.equal(invalidProfile.statusCode, 400);
-  assert.match(invalidProfile.json().message, /official Discord webhook URL/);
 
   await app.close();
 });

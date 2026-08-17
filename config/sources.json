@@ -265,17 +265,6 @@
       "notes": "Uses Blocket's internal BFF JSON API (no auth required). Searches for electronics keywords and paginates up to maxPagesPerKeyword pages each. ~53 results per page. Good for spotting resale deals on second-hand Swedish electronics."
     },
     {
-      "id": "tradera-sold",
-      "type": "tradera-sold",
-      "enabled": true,
-      "label": "Tradera (sålda auktioner)",
-      "category": "electronics",
-      "condition": "used",
-      "maxPagesPerKeyword": 2,
-      "maxProducts": 1500,
-      "notes": "Scrapes Tradera ended-auction (itemStatus=Ended) search HTML for high-demand resale models. Displayed prices are realized winning bids = actual sold prices, which feed the resale comp index (condition used, availability sold) for far more accurate flip valuations. Sold comps never appear in the buyable products grid."
-    },
-    {
       "id": "approved-rss-feed",
       "type": "rss",
       "enabled": false,

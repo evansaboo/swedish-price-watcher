@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const supportedSourceTypes = new Set(['rss', 'komplett-category', 'apify-elgiganten', 'elgiganten-algolia', 'elgiganten-campaigns', 'elgiganten-hotlist', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals', 'gg-deals-games', 'blocket', 'sweclockers-dagensfynd', 'inet-fyndhornan', 'kjell-outlet', 'dustin-fyndvaror', 'tradera-sold']);
+const supportedSourceTypes = new Set(['rss', 'komplett-category', 'apify-elgiganten', 'elgiganten-algolia', 'elgiganten-campaigns', 'elgiganten-hotlist', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals', 'gg-deals-games', 'blocket', 'sweclockers-dagensfynd', 'inet-fyndhornan', 'kjell-outlet', 'dustin-fyndvaror']);
 const supportedNotificationModes = new Set(['new-listings', 'favorite-events', 'none']);
 const isContainerRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.DOCKER === '1' || process.env.container);
 
@@ -147,24 +147,8 @@ export async function loadConfig() {
       minimumDiscountPercent: parsePositiveInt(process.env.MINIMUM_DISCOUNT_PERCENT, 18),
       minimumProfitSek: parsePositiveInt(process.env.MINIMUM_PROFIT_SEK, 400)
     },
-    resale: {
-      minSampleCount: parsePositiveInt(process.env.RESALE_MIN_SAMPLES, 3),
-      resaleAdjustFactor: Number.parseFloat(process.env.RESALE_ADJUST_FACTOR ?? '') || 0.95,
-      flatFeeSek: parseNonNegativeInt(process.env.RESALE_FLAT_FEE_SEK, 60),
-      minNetProfitSek: parsePositiveInt(process.env.RESALE_MIN_PROFIT_SEK, 300),
-      minRoiPercent: parsePositiveInt(process.env.RESALE_MIN_ROI_PERCENT, 8)
-    },
     access: {
-      adminToken: process.env.ADMIN_API_TOKEN?.trim() ?? '',
-      premiumAccessKeys: (process.env.PREMIUM_ACCESS_KEYS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
-      stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() ?? '',
-      stripeSecretKey: process.env.STRIPE_SECRET_KEY?.trim() ?? '',
-      stripePriceId: process.env.STRIPE_PREMIUM_PRICE_ID?.trim() ?? '',
-      publicBaseUrl: process.env.PUBLIC_BASE_URL?.trim() ?? ''
-    },
-    tradera: {
-      draftEndpoint: process.env.TRADERA_DRAFT_ENDPOINT?.trim() ?? '',
-      accessToken: process.env.TRADERA_ACCESS_TOKEN?.trim() ?? ''
+      adminToken: process.env.ADMIN_API_TOKEN?.trim() ?? ''
     },
     purchase: {
       // Discord application credentials — required for button clicks. A webhook
@@ -181,19 +165,6 @@ export async function loadConfig() {
       elgigantenEmail: process.env.ELGIGANTEN_EMAIL?.trim() ?? '',
       elgigantenPassword: process.env.ELGIGANTEN_PASSWORD ?? '',
       sessionPath: process.env.ELGIGANTEN_SESSION_PATH?.trim() || path.join(rootDir, 'data', 'elgiganten-session.json')
-    },
-    llm: {
-      enabled: (process.env.LLM_CLASSIFIER_ENABLED ?? 'true') !== 'false',
-      provider: (process.env.LLM_PROVIDER || 'gemini').toLowerCase(),
-      apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
-      ollamaUrl: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
-      ollamaModel: process.env.OLLAMA_MODEL || 'qwen2.5:3b',
-      cacheFile: path.resolve(rootDir, process.env.LLM_CACHE_FILE ?? 'data/llm-model-cache.json'),
-      batchSize: parsePositiveInt(process.env.LLM_BATCH_SIZE, 25),
-      maxTitlesPerRun: parsePositiveInt(process.env.LLM_MAX_TITLES_PER_RUN, 400),
-      requestTimeoutMs: parsePositiveInt(process.env.LLM_REQUEST_TIMEOUT_MS, 30000),
-      minRequestIntervalMs: parseNonNegativeInt(process.env.LLM_MIN_REQUEST_INTERVAL_MS, 6000)
     },
     sources: await loadSources(sourcesFile)
   };

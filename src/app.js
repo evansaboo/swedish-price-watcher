@@ -11,25 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { isSourceEnabled } from './lib/utils.js';
 import { buildProductSummaries } from './services/dealEngine.js';
 import { buildAffiliateUrl, decorateAffiliatePayload } from './services/affiliateLinks.js';
-import {
-  buildRevenueSummary,
-  createInventoryRecord,
-  ensureRevenueState,
-  materializeInventoryRecord,
-  normalizeCostDefaults,
-  normalizePromotion,
-  updateInventoryRecord
-} from './services/revenueEngine.js';
-import {
-  applyStripeEvent,
-  createSubscriber,
-  extractBearerToken,
-  findSubscriberByAccessKey,
-  normalizeDiscordWebhookUrl,
-  sanitizeSubscriber,
-  verifyStripeSignature
-} from './services/accessControl.js';
-import { buildTraderaDraft, submitTraderaDraft } from './services/traderaDrafts.js';
+import { extractBearerToken } from './services/accessControl.js';
 import {
   ensurePurchaseState,
   normalizePurchaseSettings,
@@ -53,19 +35,6 @@ const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 // ── Shared helpers ─────────────────────────────────────────────
-
-// Feature 4 — flip alert config. { enabled, minNetProfitSek, minRoiPercent, webhook }
-function normalizeFlipAlertsConfig(raw) {
-  const cfg = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const minNetProfitSek = Number.isFinite(Number(cfg.minNetProfitSek)) && Number(cfg.minNetProfitSek) >= 0 ? Math.round(Number(cfg.minNetProfitSek)) : 500;
-  const minRoiPercent = Number.isFinite(Number(cfg.minRoiPercent)) && Number(cfg.minRoiPercent) >= 0 ? Math.round(Number(cfg.minRoiPercent)) : 15;
-  return {
-    enabled: cfg.enabled === true,
-    minNetProfitSek,
-    minRoiPercent,
-    webhook: typeof cfg.webhook === 'string' ? cfg.webhook.trim() : ''
-  };
-}
 
 // Feature 3 — wishlist target-price alert config. { enabled, webhook }
 function normalizeWishlistAlertsConfig(raw) {
@@ -237,9 +206,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     return pending;
   }
 
-  function findRevenueProduct(listingKey) {
-    const flip = productCache.flips?.find((entry) => entry.listingKey === listingKey);
-    if (flip) return flip;
+  function findListingProduct(listingKey) {
     const product = productCache.products?.find((entry) => entry.listingKey === listingKey);
     if (product) return product;
     const item = store.getState().items?.[listingKey];
@@ -250,32 +217,9 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     } : null;
   }
 
-  function revenueOverview() {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    const items = Object.values(revenue.inventory)
-      .map(materializeInventoryRecord)
-      .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''));
-    return {
-      items,
-      summary: buildRevenueSummary(items),
-      promotions: revenue.promotions,
-      costDefaults: normalizeCostDefaults(revenue.costDefaults),
-      clicks: revenue.clicks
-    };
-  }
-
   function isAdmin(request) {
     const configured = config.access?.adminToken;
     return Boolean(configured && extractBearerToken(request.headers) === configured);
-  }
-
-  function premiumSubscriber(request) {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    return findSubscriberByAccessKey(
-      revenue.subscribers,
-      extractBearerToken(request.headers),
-      config.access?.premiumAccessKeys ?? []
-    );
   }
 
   // Gzip/brotli for JSON + static responses — product payloads run to hundreds
@@ -382,283 +326,11 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     return decorateAffiliatePayload(result, sourceById);
   });
 
-  // ── Flip / Resale opportunities ────────────────────────────────
-  // Buyable items valued against separated realized-sale and asking-price evidence.
-  app.get('/api/flips', async (request) => {
-    const q = request.query;
-    const result = productCache.queryFlips({
-      search: q.search,
-      demandCategory: q.demandCategory,
-      store: q.store,
-      minNetProfitSek: Number.parseInt(q.minNetProfitSek ?? q.minProfit ?? '', 10),
-      minRoiPercent: Number.parseInt(q.minRoiPercent ?? q.minRoi ?? '', 10),
-      maxBuyPriceSek: Number.parseInt(q.maxBuyPriceSek ?? q.maxPrice ?? '', 10),
-      sortBy: q.sortBy,
-      sortDir: q.sortDir,
-      page: Number.parseInt(q.page ?? '1', 10),
-      pageSize: Number.parseInt(q.pageSize ?? '50', 10)
-    });
-    return decorateAffiliatePayload(result, sourceById);
-  });
-
-  app.get('/api/flip-insights', async () => productCache.flipInsights());
-
-  // ── Revenue workbench ─────────────────────────────────────────
-  app.get('/api/revenue', async () => revenueOverview());
-
-  app.post('/api/revenue/inventory/:listingKey', async (request, reply) => {
-    const { listingKey } = request.params;
-    const product = findRevenueProduct(listingKey);
-    if (!product) { reply.code(404); return { message: 'Product not found.' }; }
-    const revenue = ensureRevenueState(store.getState().preferences);
-    const existing = Object.values(revenue.inventory).find((record) => record.listingKey === listingKey);
-    if (existing) return materializeInventoryRecord(existing);
-    try {
-      const record = createInventoryRecord(product, request.body ?? {});
-      revenue.inventory[record.id] = record;
-      await savePreferences();
-      return record;
-    } catch (error) {
-      reply.code(400);
-      return { message: error.message };
-    }
-  });
-
-  app.patch('/api/revenue/inventory/:id', async (request, reply) => {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    const existing = revenue.inventory[request.params.id];
-    if (!existing) { reply.code(404); return { message: 'Inventory record not found.' }; }
-    try {
-      const record = updateInventoryRecord(existing, request.body ?? {});
-      revenue.inventory[record.id] = record;
-      await savePreferences();
-      return record;
-    } catch (error) {
-      reply.code(400);
-      return { message: error.message };
-    }
-  });
-
-  app.delete('/api/revenue/inventory/:id', async (request, reply) => {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    if (!revenue.inventory[request.params.id]) {
-      reply.code(404);
-      return { message: 'Inventory record not found.' };
-    }
-    delete revenue.inventory[request.params.id];
-    await savePreferences();
-    return { ok: true };
-  });
-
-  app.post('/api/revenue/promotions', async (request, reply) => {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    try {
-      const promotion = normalizePromotion(request.body ?? {});
-      revenue.promotions.push(promotion);
-      await savePreferences();
-      return promotion;
-    } catch (error) {
-      reply.code(400);
-      return { message: error.message };
-    }
-  });
-
-  app.patch('/api/revenue/promotions/:id', async (request, reply) => {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    const index = revenue.promotions.findIndex((promotion) => promotion.id === request.params.id);
-    if (index < 0) { reply.code(404); return { message: 'Promotion not found.' }; }
-    try {
-      const promotion = normalizePromotion(request.body ?? {}, revenue.promotions[index]);
-      revenue.promotions[index] = promotion;
-      await savePreferences();
-      return promotion;
-    } catch (error) {
-      reply.code(400);
-      return { message: error.message };
-    }
-  });
-
-  app.delete('/api/revenue/promotions/:id', async (request, reply) => {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    const index = revenue.promotions.findIndex((promotion) => promotion.id === request.params.id);
-    if (index < 0) { reply.code(404); return { message: 'Promotion not found.' }; }
-    revenue.promotions.splice(index, 1);
-    await savePreferences();
-    return { ok: true };
-  });
-
-  app.put('/api/revenue/cost-defaults', async (request) => {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    revenue.costDefaults = normalizeCostDefaults(request.body ?? {});
-    await savePreferences();
-    return revenue.costDefaults;
-  });
-
-  app.post('/api/revenue/inventory/:id/tradera-draft', async (request, reply) => {
-    const revenue = ensureRevenueState(store.getState().preferences);
-    const record = revenue.inventory[request.params.id];
-    if (!record) { reply.code(404); return { message: 'Inventory record not found.' }; }
-    try {
-      const draft = buildTraderaDraft(record, request.body ?? {});
-      let remote = null;
-      if (request.body?.submit === true) {
-        remote = await submitTraderaDraft(draft, config.tradera);
-      }
-      record.traderaDraft = {
-        draft,
-        remote,
-        submittedAt: remote ? new Date().toISOString() : null,
-        updatedAt: new Date().toISOString()
-      };
-      record.updatedAt = record.traderaDraft.updatedAt;
-      await savePreferences();
-      return record.traderaDraft;
-    } catch (error) {
-      reply.code(/not configured/i.test(error.message) ? 501 : 400);
-      return { message: error.message };
-    }
-  });
-
-  // ── Premium access and Stripe-compatible subscription state ──
-  app.get('/api/premium/status', async (request, reply) => {
-    const subscriber = premiumSubscriber(request);
-    if (!subscriber) { reply.code(401); return { active: false }; }
-    return { active: true, subscriber: sanitizeSubscriber(subscriber) };
-  });
-
-  app.get('/api/premium/flips', async (request, reply) => {
-    if (!premiumSubscriber(request)) { reply.code(401); return { message: 'Premium access required.' }; }
-    const q = request.query;
-    return decorateAffiliatePayload(productCache.queryFlips({
-      search: q.search,
-      demandCategory: q.demandCategory,
-      store: q.store,
-      minNetProfitSek: Number.parseInt(q.minNetProfitSek ?? '', 10),
-      minRoiPercent: Number.parseInt(q.minRoiPercent ?? '', 10),
-      maxBuyPriceSek: Number.parseInt(q.maxBuyPriceSek ?? '', 10),
-      sortBy: q.sortBy,
-      sortDir: q.sortDir,
-      page: Number.parseInt(q.page ?? '1', 10),
-      pageSize: Number.parseInt(q.pageSize ?? '50', 10)
-    }), sourceById);
-  });
-
-  app.patch('/api/premium/profile', async (request, reply) => {
-    const subscriber = premiumSubscriber(request);
-    if (!subscriber || subscriber.configured) { reply.code(401); return { message: 'Managed subscriber access required.' }; }
-    try {
-      subscriber.discordWebhook = normalizeDiscordWebhookUrl(
-        request.body?.discordWebhook ?? subscriber.discordWebhook
-      );
-      subscriber.minNetProfitSek = Math.max(0, Number(request.body?.minNetProfitSek ?? subscriber.minNetProfitSek) || 0);
-      subscriber.minRoiPercent = Math.max(0, Number(request.body?.minRoiPercent ?? subscriber.minRoiPercent) || 0);
-      subscriber.updatedAt = new Date().toISOString();
-      await savePreferences();
-      return sanitizeSubscriber(subscriber);
-    } catch (error) {
-      reply.code(400);
-      return { message: error.message };
-    }
-  });
-
-  app.get('/api/admin/subscribers', async (request, reply) => {
-    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
-    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
-    return ensureRevenueState(store.getState().preferences).subscribers.map(sanitizeSubscriber);
-  });
-
-  app.post('/api/admin/subscribers', async (request, reply) => {
-    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
-    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
-    const revenue = ensureRevenueState(store.getState().preferences);
-    try {
-      const created = createSubscriber(request.body ?? {});
-      revenue.subscribers.push(created.subscriber);
-      await savePreferences();
-      return { subscriber: sanitizeSubscriber(created.subscriber), accessKey: created.accessKey };
-    } catch (error) {
-      reply.code(400);
-      return { message: error.message };
-    }
-  });
-
-  app.post('/api/billing/checkout', async (request, reply) => {
-    const { stripeSecretKey, stripePriceId, publicBaseUrl } = config.access ?? {};
-    if (!stripeSecretKey || !stripePriceId || !publicBaseUrl) {
-      reply.code(501);
-      return { message: 'Stripe checkout is not configured.' };
-    }
-    const revenue = ensureRevenueState(store.getState().preferences);
-    const pendingCutoff = Date.now() - 24 * 60 * 60 * 1000;
-    revenue.subscribers = revenue.subscribers.filter((subscriber) =>
-      subscriber.status !== 'pending' || Date.parse(subscriber.createdAt ?? '') >= pendingCutoff
-    );
-    const created = createSubscriber({ status: 'pending' });
-
-    const params = new URLSearchParams({
-      mode: 'subscription',
-      'line_items[0][price]': stripePriceId,
-      'line_items[0][quantity]': '1',
-      success_url: `${publicBaseUrl.replace(/\/$/, '')}/?subscription=success`,
-      cancel_url: `${publicBaseUrl.replace(/\/$/, '')}/?subscription=cancelled`,
-      client_reference_id: created.subscriber.id,
-      'subscription_data[metadata][subscriber_id]': created.subscriber.id,
-      'metadata[subscriber_id]': created.subscriber.id
-    });
-    let response;
-    try {
-      response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${stripeSecretKey}`,
-          'content-type': 'application/x-www-form-urlencoded'
-        },
-        body: params,
-        signal: AbortSignal.timeout(30_000)
-      });
-    } catch (error) {
-      reply.code(502);
-      return { message: `Stripe checkout failed: ${error.message}` };
-    }
-    if (!response.ok) {
-      reply.code(502);
-      return { message: `Stripe checkout failed (${response.status}).` };
-    }
-    const session = await response.json();
-    revenue.subscribers.push(created.subscriber);
-    await savePreferences();
-    return { checkoutUrl: session.url, accessKey: created.accessKey };
-  });
-
-  await app.register(async function stripeWebhookRoutes(scope) {
-    scope.addContentTypeParser('application/json', { parseAs: 'string', bodyLimit: 65_536 }, (request, body, done) => {
-      try {
-        request.rawBody = body;
-        done(null, JSON.parse(body));
-      } catch (error) {
-        error.statusCode = 400;
-        done(error);
-      }
-    });
-    scope.post('/api/billing/stripe-webhook', async (request, reply) => {
-      const secret = config.access?.stripeWebhookSecret;
-      if (!secret) { reply.code(501); return { message: 'Stripe webhook is not configured.' }; }
-      if (!verifyStripeSignature(request.rawBody, request.headers['stripe-signature'], secret)) {
-        reply.code(400);
-        return { message: 'Invalid Stripe signature.' };
-      }
-      const revenue = ensureRevenueState(store.getState().preferences);
-      const updated = applyStripeEvent(revenue.subscribers, request.body);
-      if (updated) await savePreferences();
-      return { received: true };
-    });
-  });
-
   // ── Purchase / checkout ────────────────────────────────────────
   // Every route here is gated on ADMIN_API_TOKEN: these controls automate a
   // real basket on a real account, so they are never anonymously reachable.
   function findPurchasableItem(listingKey) {
-    return store.getState().items?.[listingKey] ?? findRevenueProduct(listingKey) ?? null;
+    return store.getState().items?.[listingKey] ?? findListingProduct(listingKey) ?? null;
   }
 
   const purchaseService = createPurchaseService({
@@ -801,18 +473,10 @@ export async function buildApp({ config, store, productCache, scanState, trigger
 
   // Aggregate outbound tracking only; no visitor identifiers are stored.
   app.get('/api/out/:listingKey', async (request, reply) => {
-    const product = findRevenueProduct(request.params.listingKey);
+    const product = findListingProduct(request.params.listingKey);
     if (!product?.url) { reply.code(404); return { message: 'Product not found.' }; }
     const source = sourceById.get(product.sourceId);
     const { buyUrl } = buildAffiliateUrl(product.url, source);
-    const revenue = ensureRevenueState(store.getState().preferences);
-    const day = new Date().toISOString().slice(0, 10);
-    revenue.clicks.total = Number(revenue.clicks.total ?? 0) + 1;
-    revenue.clicks.bySource[product.sourceId] = Number(revenue.clicks.bySource[product.sourceId] ?? 0) + 1;
-    revenue.clicks.byDay[day] = Number(revenue.clicks.byDay[day] ?? 0) + 1;
-    void savePreferences().catch((error) => {
-      console.error('[affiliate-click]', error.message);
-    });
     return reply.redirect(buyUrl);
   });
 
@@ -893,7 +557,6 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   // ── Notification Settings ──────────────────────────────────────
   app.get('/api/notification-settings', async () => {
     const settings = store.getState().preferences?.notificationSettings ?? {};
-    const flipAlerts = normalizeFlipAlertsConfig(settings.flipAlerts);
     const wishlistAlerts = normalizeWishlistAlertsConfig(settings.wishlistAlerts);
 
     // Migrate legacy data to alertRules on first read
@@ -911,10 +574,10 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         if (!cw?.pattern || !cw?.webhook) continue;
         rules.push({ id: cw.id ?? `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, label: cw.label || cw.pattern, enabled: true, keywords: [], categories: [cw.pattern], webhooks: [cw.webhook] });
       }
-      return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: rules, digest: settings.digest ?? null, flipAlerts, wishlistAlerts };
+      return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: rules, digest: settings.digest ?? null, wishlistAlerts };
     }
 
-    return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: settings.alertRules, digest: settings.digest ?? null, flipAlerts, wishlistAlerts };
+    return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: settings.alertRules, digest: settings.digest ?? null, wishlistAlerts };
   });
 
   app.put('/api/notification-settings', async (request, reply) => {
@@ -969,10 +632,9 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       digest = existing.digest ?? null;
     }
 
-    const flipAlerts = has('flipAlerts') ? normalizeFlipAlertsConfig(body.flipAlerts) : normalizeFlipAlertsConfig(existing.flipAlerts);
     const wishlistAlerts = has('wishlistAlerts') ? normalizeWishlistAlertsConfig(body.wishlistAlerts) : normalizeWishlistAlertsConfig(existing.wishlistAlerts);
 
-    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules, ...(digest ? { digest } : {}), flipAlerts, wishlistAlerts } };
+    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules, ...(digest ? { digest } : {}), wishlistAlerts } };
 
     if (typeof store.savePreferences === 'function') {
       await store.savePreferences();
@@ -980,7 +642,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       await store.save();
     }
 
-    return { notificationsEnabled, alertRules, digest, flipAlerts, wishlistAlerts };
+    return { notificationsEnabled, alertRules, digest, wishlistAlerts };
   });
 
   // ── Scheduler ──────────────────────────────────────────────────

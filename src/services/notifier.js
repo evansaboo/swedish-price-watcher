@@ -121,7 +121,7 @@ export class DiscordNotifier {
     return Boolean(this.botToken && this.alertChannelId);
   }
 
-  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings, flips = [], wishlistTargets = {}, premiumSubscribers = [], purchase = null, stageListing = null }) {
+  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings, wishlistTargets = {}, purchase = null, stageListing = null }) {
     const settings = notificationSettings ?? {};
 
     // Respect global notifications-enabled flag (default: true for backward compat)
@@ -132,129 +132,17 @@ export class DiscordNotifier {
     const alertRules = Array.isArray(settings.alertRules) ? settings.alertRules.filter((r) => r.enabled !== false) : [];
     const alertSummary = await this.notifyAlertRules({ newItems, priceDrops, state, alertRules, purchase, stageListing });
 
-    // Feature 4: flip alerts — high-margin resale opportunities to a dedicated channel.
-    const flipSummary = await this.notifyFlipAlerts({ flips, state, config: settings.flipAlerts });
-
     // Feature 3: wishlist target-price alerts — a tracked item dropped to/below the user's target.
     const wishlistSummary = await this.notifyWishlistTargets({ newItems, priceDrops, state, wishlistTargets, config: settings.wishlistAlerts });
-    const premiumSummary = await this.notifyPremiumSubscribers({ flips, state, subscribers: premiumSubscribers });
 
     return {
-      sent: alertSummary.sent + flipSummary.sent + wishlistSummary.sent + premiumSummary.sent,
-      skipped: alertSummary.skipped + flipSummary.skipped + wishlistSummary.skipped + premiumSummary.skipped,
-      failed: alertSummary.failed + flipSummary.failed + wishlistSummary.failed + premiumSummary.failed,
-      errors: [...alertSummary.errors, ...flipSummary.errors, ...wishlistSummary.errors, ...premiumSummary.errors],
+      sent: alertSummary.sent + wishlistSummary.sent,
+      skipped: alertSummary.skipped + wishlistSummary.skipped,
+      failed: alertSummary.failed + wishlistSummary.failed,
+      errors: [...alertSummary.errors, ...wishlistSummary.errors],
       alertRules: alertSummary,
-      flipAlerts: flipSummary,
-      wishlistAlerts: wishlistSummary,
-      premiumAlerts: premiumSummary
+      wishlistAlerts: wishlistSummary
     };
-  }
-
-  async notifyPremiumSubscribers({ flips = [], state, subscribers = [] }) {
-    const result = { sent: 0, skipped: 0, failed: 0, errors: [] };
-    for (const subscriber of subscribers) {
-      if (subscriber?.status !== 'active' || !String(subscriber.discordWebhook ?? '').trim()) continue;
-      const qualifying = flips.filter((flip) =>
-        flip.netProfitSek >= (Number(subscriber.minNetProfitSek) || 500) &&
-        flip.roiPercent >= (Number(subscriber.minRoiPercent) || 15)
-      );
-      for (const flip of qualifying) {
-        const key = `${flip.listingKey}:premium:${subscriber.id}:${flip.effectiveBuyPriceSek ?? flip.buyPriceSek}`;
-        const previous = state.notifications[key];
-        if (previous && Date.now() - Date.parse(previous) < this.cooldownMs) {
-          result.skipped++;
-          continue;
-        }
-        try {
-          await this.#postWebhook({
-            username: 'Price Watcher Premium',
-            content: `💰 **Premium revenue alert** — ${flip.modelLabel ?? flip.title}`,
-            embeds: [{
-              title: flip.title,
-              url: flip.buyUrl ?? flip.url,
-              description: `${flip.sourceLabel} • ${flip.resaleConfidence} confidence`,
-              color: 0x1f9d68,
-              fields: [
-                { name: 'Effective buy', value: formatSek(flip.effectiveBuyPriceSek ?? flip.buyPriceSek), inline: true },
-                { name: 'Conservative resale', value: formatSek(flip.expectedResaleSek), inline: true },
-                { name: 'Projected profit', value: `+${formatSek(flip.netProfitSek)}`, inline: true },
-                { name: 'ROI', value: `${flip.roiPercent}%`, inline: true },
-                { name: 'Evidence', value: `${flip.sampleCount} ${flip.resaleBasis} comps`, inline: true },
-                ...(flip.promotion ? [{ name: 'Promotion', value: `${flip.promotion.code ?? flip.promotion.label} (−${formatSek(flip.promotionDiscountSek)})`, inline: true }] : [])
-              ],
-              footer: flip.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
-            }]
-          }, subscriber.discordWebhook);
-          state.notifications[key] = new Date().toISOString();
-          result.sent++;
-        } catch (error) {
-          result.failed++;
-          this.#recordError(result.errors, error);
-        }
-      }
-    }
-    return result;
-  }
-
-  /**
-   * Feature 4 — Flip alerts.
-   * Posts high-margin resale opportunities (net profit / ROI above the configured
-   * thresholds) to a dedicated Discord webhook. Deduped per listing per cooldown.
-   */
-  async notifyFlipAlerts({ flips = [], state, config }) {
-    const empty = { sent: 0, skipped: 0, failed: 0, errors: [] };
-    if (!config || config.enabled !== true) return { ...empty, reason: 'disabled' };
-    const webhook = typeof config.webhook === 'string' ? config.webhook.trim() : '';
-    if (!webhook) return { ...empty, reason: 'no-webhook' };
-    if (!Array.isArray(flips) || !flips.length) return empty;
-
-    const minNetProfit = Number.isFinite(config.minNetProfitSek) ? config.minNetProfitSek : 500;
-    const minRoi = Number.isFinite(config.minRoiPercent) ? config.minRoiPercent : 15;
-    const now = Date.now();
-    let sent = 0, skipped = 0, failed = 0;
-    const errors = [];
-
-    for (const flip of flips) {
-      if (!Number.isFinite(flip.netProfitSek) || flip.netProfitSek < minNetProfit) continue;
-      if (!Number.isFinite(flip.roiPercent) || flip.roiPercent < minRoi) continue;
-
-      // Dedupe per listing per buy price so a re-listing at a new price can re-alert.
-      const notificationKey = `${flip.listingKey}:flip:${flip.buyPriceSek}`;
-      const previousSentAt = state.notifications[notificationKey];
-      if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) { skipped++; continue; }
-
-      try {
-        await this.#postWebhook({
-          username: 'Price Watcher',
-          content: `⚡ **Flip opportunity** — ${flip.modelLabel ?? flip.title}`,
-          embeds: [
-            {
-              title: flip.title,
-              url: flip.buyUrl ?? flip.url,
-              description: `${flip.sourceLabel} • ${flip.demandCategory ?? ''}`,
-              color: 0xfaa61a,
-              fields: [
-                { name: 'Buy now', value: formatSek(flip.buyPriceSek), inline: true },
-                { name: 'Resale median', value: formatSek(flip.resaleMedianSek), inline: true },
-                { name: 'Net profit', value: `+${formatSek(flip.netProfitSek)}`, inline: true },
-                { name: 'ROI', value: `${flip.roiPercent}%`, inline: true },
-                { name: 'Evidence', value: `${flip.sampleCount} ${flip.resaleBasis === 'sold' ? 'sold' : 'asking'} comps`, inline: true }
-              ],
-              image: flip.imageUrl ? { url: flip.imageUrl } : undefined,
-              footer: flip.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
-            }
-          ]
-        }, webhook);
-        state.notifications[notificationKey] = new Date(now).toISOString();
-        sent++;
-      } catch (error) {
-        failed++;
-        this.#recordError(errors, error);
-      }
-    }
-
-    return { sent, skipped, failed, errors };
   }
 
   /**

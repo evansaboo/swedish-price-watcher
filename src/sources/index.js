@@ -13,7 +13,6 @@ import { collectFromPower } from './power.js';
 import { collectFromProshop } from './proshop.js';
 import { collectFromRss } from './rss.js';
 import { collectFromSweclockers } from './sweclockers.js';
-import { collectFromTradera } from './tradera.js';
 import { collectFromWebhallen } from './webhallen.js';
 
 const handlers = {
@@ -32,7 +31,6 @@ const handlers = {
   'proshop-outlet': collectFromProshop,
   rss: collectFromRss,
   'sweclockers-dagensfynd': collectFromSweclockers,
-  'tradera-sold': collectFromTradera,
   'webhallen-api': collectFromWebhallen
 };
 
