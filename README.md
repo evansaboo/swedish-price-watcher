@@ -306,10 +306,45 @@ Guard rails (all enforced server-side in `src/services/purchaseEngine.js`):
 Arm a listing from any Elgiganten card with the **⚡** button, or manage
 defaults, armed listings, and the audit log from the **⚡ Buy** panel.
 
-To enable Discord buttons, set `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`,
-`DISCORD_ALERT_CHANNEL_ID` and `DISCORD_OWNER_IDS` (see `.env.example` for the
-Developer Portal walkthrough). Without them the feature still works from the
-dashboard and alerts fall back to plain embeds.
+### Enabling Discord buttons
+
+Plain channel webhooks cannot render buttons, so a real Discord application is
+required. Without one the feature still works from the dashboard and alerts fall
+back to plain embeds.
+
+Fetch three values from <https://discord.com/developers/applications> (create an
+application first):
+
+| Value | Where |
+|-------|-------|
+| Public Key | *General Information* tab |
+| Bot Token | *Bot* tab → **Reset Token** (shown once) |
+| Your User ID | Discord → *Settings → Advanced → Developer Mode*, then right-click yourself → **Copy User ID** |
+
+Then run, on the host serving the app:
+
+```bash
+./scripts/setup-discord-buy.sh
+```
+
+It validates each credential against Discord's API *before* writing anything —
+checking the key length, that the bot token authenticates, and that the bot can
+actually see your alert channel — then writes `.env` (mode `600`, previous
+version backed up), restarts the service and confirms `discordConfigured: true`.
+It resolves the alert channel from an existing `DISCORD_WEBHOOK_URL` and
+generates `ADMIN_API_TOKEN` if either is missing. Non-interactive form:
+
+```bash
+./scripts/setup-discord-buy.sh --public-key KEY --bot-token TOKEN --owner-ids ID
+```
+
+Finally, set the **Interactions Endpoint URL** in the Developer Portal to
+`https://<your-host>/api/discord/interactions`. Do this *after* running the
+script — Discord sends a signed test request and only saves the URL once the
+public key is live. The script prints the exact URL to paste.
+
+`DISCORD_OWNER_IDS` is the allow-list: leave it empty and every button press is
+refused, including your own.
 
 ## Post-change testing checklist
 
