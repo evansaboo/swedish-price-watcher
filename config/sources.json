@@ -31,27 +31,27 @@
       "watchGroups": [
         {
           "label": "Grafikkort (GPU)",
-          "taxonomyIds": [
-            "PT263"
+          "taxonomyNames": [
+            "Grafikkort (GPU)"
           ],
           "minDiscountPct": 12
         },
         {
           "label": "RAM-minne",
-          "taxonomyIds": [
-            "PT269"
+          "taxonomyNames": [
+            "RAM-minne"
           ]
         },
         {
           "label": "Intern SSD",
-          "taxonomyIds": [
-            "PT277"
+          "taxonomyNames": [
+            "Intern SSD"
           ]
         },
         {
           "label": "MacBook",
-          "taxonomyIds": [
-            "PT254"
+          "taxonomyNames": [
+            "Laptop"
           ],
           "brands": [
             "Apple"
@@ -60,8 +60,8 @@
         },
         {
           "label": "iPhone",
-          "taxonomyIds": [
-            "PT238"
+          "taxonomyNames": [
+            "Mobiltelefon"
           ],
           "brands": [
             "Apple"

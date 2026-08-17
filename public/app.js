@@ -1611,11 +1611,15 @@ let hotlistConfig = null;
 let hotlistCatalog = { categories: [], brands: [] };
 let hotlistStatusTimer = null;
 
-function relativeTime(iso) {
+function relativeTime(iso, { assumePast = false } = {}) {
   if (!iso) return null;
-  const deltaMs = Date.parse(iso) - Date.now();
+  let deltaMs = Date.parse(iso) - Date.now();
   if (!Number.isFinite(deltaMs)) return null;
+  // The server and browser clocks drift by a second or two, which would other-
+  // wise render a poll that has already happened as "in 1s".
+  if (assumePast && deltaMs > 0) deltaMs = 0;
   const seconds = Math.round(Math.abs(deltaMs) / 1000);
+  if (seconds < 5) return assumePast ? 'just now' : 'any moment';
   const text = seconds < 60
     ? `${seconds}s`
     : seconds < 3600 ? `${Math.round(seconds / 60)}m` : `${Math.round(seconds / 3600)}h`;
@@ -1633,7 +1637,7 @@ function renderHotlistStatus(status) {
 
   const stats = [
     ['Deals tracked', status.lastCount ?? '—'],
-    ['Last poll', relativeTime(status.lastSuccessAt) ?? 'never'],
+    ['Last poll', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
     ['Next poll', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
     ['Polls', status.pollCount ?? 0]
   ];
