@@ -7,5 +7,7 @@ data/*.db-wal
 data/*.migrated
 !data/.gitkeep
 .env*.local
+# Timestamped backups written by scripts/setup-discord-buy.sh — these hold secrets.
+.env.bak.*
 version.json
 .DS_Store
