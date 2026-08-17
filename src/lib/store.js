@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeActiveWindow } from '../scheduler.js';
+import { normalizeHotlistConfig } from '../services/hotlistConfig.js';
 
 let BetterSqlite3;
 try {
@@ -63,6 +64,11 @@ function normalizeState(rawState = {}) {
     };
   } else {
     delete state.preferences.scheduler;
+  }
+  if (Object.prototype.hasOwnProperty.call(rawState.preferences ?? {}, 'hotlist')) {
+    state.preferences.hotlist = normalizeHotlistConfig(state.preferences.hotlist);
+  } else {
+    delete state.preferences.hotlist;
   }
   state.stats = {
     ...state.stats,

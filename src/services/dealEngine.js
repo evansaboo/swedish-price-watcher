@@ -183,6 +183,13 @@ export function mergeObservations(state, observations, maxHistoryEntries = 60) {
     currentItem.shippingEstimateSek = observation.shippingEstimateSek ?? 0;
     currentItem.feesEstimateSek = observation.feesEstimateSek ?? 0;
     currentItem.availability = observation.availability ?? 'unknown';
+    // Hotlist listings carry which watch rule surfaced them, so the dashboard
+    // and alerts can show *why* an item is being tracked. Set conditionally so
+    // items from other sources don't gain empty fields.
+    if (observation.watchGroup) currentItem.watchGroup = observation.watchGroup;
+    if (observation.matchedKeyword !== undefined) {
+      currentItem.matchedKeyword = observation.matchedKeyword ?? null;
+    }
     currentItem.description = observation.description ?? null;
     currentItem.imageUrl = observation.imageUrl || currentItem.imageUrl || null;
     currentItem.notes = observation.notes ?? null;

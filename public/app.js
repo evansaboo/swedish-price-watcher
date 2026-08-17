@@ -107,6 +107,15 @@ const el = {
   schedulerWindowStart: $('#scheduler-window-start'),
   schedulerWindowEnd: $('#scheduler-window-end'),
   modalSchedulerStatus: $('#modal-scheduler-status'),
+  hotlistStatus: $('#hotlist-status'),
+  hotlistEnabled: $('#hotlist-enabled'),
+  hotlistInterval: $('#hotlist-interval'),
+  hotlistJitter: $('#hotlist-jitter'),
+  hotlistMinDiscount: $('#hotlist-min-discount'),
+  hotlistGroups: $('#hotlist-groups'),
+  hotlistCountLabel: $('#hotlist-count-label'),
+  hotlistPollNow: $('#hotlist-poll-now'),
+  hotlistAddGroup: $('#hotlist-add-group'),
   favoriteChips: $('#favorite-chips'),
   favoritesSearchInput: $('#favorites-search-input'),
   favoritesEditor: $('#favorites-editor'),
@@ -1283,6 +1292,7 @@ function openDrawer() {
   el.settingsOverlay.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
   loadDrawerData();
+  startHotlistStatusPolling();
 }
 
 function closeDrawer() {
@@ -1290,9 +1300,13 @@ function closeDrawer() {
   el.settingsOverlay.classList.add('hidden');
   el.settingsOverlay.setAttribute('aria-hidden', 'true');
   document.body.style.overflow = '';
+  stopHotlistStatusPolling();
 }
 
 async function loadDrawerData() {
+  // Load hotlist config, status and the Elgiganten category catalogue.
+  loadHotlist();
+
   // Load notification settings
   try {
     const res = await fetch('/api/notification-settings');
@@ -1589,6 +1603,261 @@ function renderRuleList() {
   }
 }
 
+// ── HOTLIST (continuous Elgiganten poller) ──────────────────────
+// The hotlist is not a scheduled source: it polls on its own fast loop, so it
+// gets its own settings tab covering cadence and what to watch.
+
+let hotlistConfig = null;
+let hotlistCatalog = { categories: [], brands: [] };
+let hotlistStatusTimer = null;
+
+function relativeTime(iso) {
+  if (!iso) return null;
+  const deltaMs = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(deltaMs)) return null;
+  const seconds = Math.round(Math.abs(deltaMs) / 1000);
+  const text = seconds < 60
+    ? `${seconds}s`
+    : seconds < 3600 ? `${Math.round(seconds / 60)}m` : `${Math.round(seconds / 3600)}h`;
+  return deltaMs >= 0 ? `in ${text}` : `${text} ago`;
+}
+
+function renderHotlistStatus(status) {
+  if (!el.hotlistStatus) return;
+  if (!status) { el.hotlistStatus.innerHTML = ''; return; }
+
+  const stateClass = status.lastError ? 'error' : status.enabled ? 'ok' : 'idle';
+  const stateLabel = status.lastError
+    ? 'Failing'
+    : !status.enabled ? 'Paused' : status.running ? 'Polling…' : 'Watching';
+
+  const stats = [
+    ['Deals tracked', status.lastCount ?? '—'],
+    ['Last poll', relativeTime(status.lastSuccessAt) ?? 'never'],
+    ['Next poll', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
+    ['Polls', status.pollCount ?? 0]
+  ];
+
+  el.hotlistStatus.innerHTML = `
+    <div class="hotlist-status-head">
+      <span class="hotlist-dot ${stateClass}"></span>
+      <strong>${escapeHtml(stateLabel)}</strong>
+      ${status.lastDurationMs != null ? `<span class="hotlist-status-meta">${status.lastDurationMs} ms/poll</span>` : ''}
+    </div>
+    <div class="hotlist-status-grid">
+      ${stats.map(([k, v]) => `<div><span>${escapeHtml(k)}</span><strong>${escapeHtml(String(v))}</strong></div>`).join('')}
+    </div>
+    ${status.lastError ? `<p class="hotlist-status-error">${escapeHtml(status.lastError)}</p>` : ''}
+    ${status.lastNewListings ? `<p class="hotlist-status-note">${status.lastNewListings} new listing(s) on the last poll.</p>` : ''}`;
+}
+
+function createEmptyHotlistGroup() {
+  return {
+    id: `hg-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+    label: '',
+    enabled: true,
+    taxonomyIds: [],
+    taxonomyNames: [],
+    brands: [],
+    keywords: [],
+    strictKeywordMatch: true,
+    minDiscountPct: null,
+    minPriceSek: null,
+    maxPriceSek: null
+  };
+}
+
+function createHotlistGroupElement(group) {
+  const li = document.createElement('li');
+  li.className = `rule-card hotlist-card${group.enabled ? '' : ' rule-disabled'}`;
+  const numeric = (value) => (value != null ? value : '');
+
+  li.innerHTML = `
+    <div class="rule-header">
+      <label class="toggle-switch" title="${group.enabled ? 'Enabled' : 'Disabled'}">
+        <input type="checkbox" class="hl-enabled-cb" ${group.enabled ? 'checked' : ''} />
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      </label>
+      <input type="text" class="rule-label-input hl-label-input" placeholder="Watch name (e.g. GPU flips)" value="${escapeHtml(group.label)}" />
+      <button type="button" class="rule-delete-btn hl-delete-btn" title="Delete">✕</button>
+    </div>
+    <div class="rule-body">
+      <div class="rule-row rule-row-two-col">
+        <div class="rule-field">
+          <label class="rule-field-label">Categories <span class="rule-hint">Elgiganten's own</span></label>
+          <div class="chip-input-wrap" id="hl-cat-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="Search categories…" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
+        </div>
+        <div class="rule-field">
+          <label class="rule-field-label">Brands <span class="rule-hint">Optional</span></label>
+          <div class="chip-input-wrap" id="hl-brand-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. Apple" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
+        </div>
+      </div>
+      <div class="rule-row">
+        <div class="rule-field">
+          <label class="rule-field-label">Keywords <span class="rule-hint">Each one costs a query</span></label>
+          <div class="chip-input-wrap" id="hl-kw-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. RTX 5090" autocomplete="off" /></div>
+          <label class="toggle-switch hl-strict-toggle" title="Require the keyword to appear in the product title">
+            <input type="checkbox" class="hl-strict-cb" ${group.strictKeywordMatch !== false ? 'checked' : ''} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">Exact title match</span>
+          </label>
+        </div>
+      </div>
+      <div class="rule-row rule-row-three-col">
+        <div class="rule-field">
+          <label class="rule-field-label">Min discount %</label>
+          <input type="number" class="modal-input hl-mindiscount" placeholder="default" min="0" max="99" step="1" value="${numeric(group.minDiscountPct)}" />
+        </div>
+        <div class="rule-field">
+          <label class="rule-field-label">Min price</label>
+          <input type="number" class="modal-input hl-minprice" placeholder="any" min="0" step="100" value="${numeric(group.minPriceSek)}" />
+        </div>
+        <div class="rule-field">
+          <label class="rule-field-label">Max price</label>
+          <input type="number" class="modal-input hl-maxprice" placeholder="any" min="0" step="100" value="${numeric(group.maxPriceSek)}" />
+        </div>
+      </div>
+      ${group.taxonomyIds?.length ? `<p class="hl-legacy-note">Also matching legacy category ${group.taxonomyIds.map(escapeHtml).join(', ')}</p>` : ''}
+    </div>`;
+
+  li.querySelector('.hl-enabled-cb').addEventListener('change', (e) => {
+    group.enabled = e.target.checked;
+    li.classList.toggle('rule-disabled', !group.enabled);
+    renderHotlistCount();
+  });
+  li.querySelector('.hl-label-input').addEventListener('input', (e) => { group.label = e.target.value; });
+  li.querySelector('.hl-strict-cb').addEventListener('change', (e) => { group.strictKeywordMatch = e.target.checked; });
+  li.querySelector('.hl-delete-btn').addEventListener('click', () => {
+    hotlistConfig.groups = hotlistConfig.groups.filter((g) => g.id !== group.id);
+    renderHotlistGroups();
+  });
+
+  const numberField = (selector, key) => {
+    li.querySelector(selector).addEventListener('input', (e) => {
+      const raw = e.target.value.trim();
+      const parsed = Number(raw);
+      group[key] = raw === '' || !Number.isFinite(parsed) ? null : parsed;
+    });
+  };
+  numberField('.hl-mindiscount', 'minDiscountPct');
+  numberField('.hl-minprice', 'minPriceSek');
+  numberField('.hl-maxprice', 'maxPriceSek');
+
+  wireChipInput({
+    container: li.querySelector(`#hl-cat-${group.id}`),
+    items: group.taxonomyNames,
+    onAdd: () => {}, onRemove: () => {},
+    allOptions: hotlistCatalog.categories
+  });
+  wireChipInput({
+    container: li.querySelector(`#hl-brand-${group.id}`),
+    items: group.brands,
+    onAdd: () => {}, onRemove: () => {},
+    allOptions: hotlistCatalog.brands
+  });
+  wireChipInput({
+    container: li.querySelector(`#hl-kw-${group.id}`),
+    items: group.keywords,
+    onAdd: () => renderHotlistCount(), onRemove: () => renderHotlistCount(),
+    allOptions: null
+  });
+
+  return li;
+}
+
+function renderHotlistCount() {
+  if (!el.hotlistCountLabel || !hotlistConfig) return;
+  const groups = hotlistConfig.groups ?? [];
+  const active = groups.filter((g) => g.enabled);
+  const queries = active.reduce((sum, g) => sum + Math.max(g.keywords.length, 1), 0);
+  el.hotlistCountLabel.textContent = groups.length
+    ? `${active.length}/${groups.length} active · ${queries} quer${queries === 1 ? 'y' : 'ies'} per poll`
+    : 'No watches';
+}
+
+function renderHotlistGroups() {
+  if (!el.hotlistGroups || !hotlistConfig) return;
+  el.hotlistGroups.innerHTML = '';
+  renderHotlistCount();
+
+  if (!hotlistConfig.groups.length) {
+    el.hotlistGroups.innerHTML = '<li class="rules-empty-state"><div class="rules-empty-icon">⚡</div><p class="rules-empty-title">Nothing on the hotlist</p><p class="rules-empty-sub">Add a watch to poll Elgiganten continuously for a category, brand or keyword.</p></li>';
+    return;
+  }
+  for (const group of hotlistConfig.groups) {
+    el.hotlistGroups.appendChild(createHotlistGroupElement(group));
+  }
+}
+
+function renderHotlistForm() {
+  if (!hotlistConfig) return;
+  el.hotlistEnabled.checked = hotlistConfig.enabled !== false;
+  el.hotlistInterval.value = hotlistConfig.intervalSeconds;
+  el.hotlistJitter.value = hotlistConfig.jitterPct;
+  el.hotlistMinDiscount.value = hotlistConfig.minDiscountPct;
+  renderHotlistGroups();
+}
+
+async function loadHotlistCatalog() {
+  if (hotlistCatalog.categories.length) return;
+  try {
+    const catalog = await fetchJson('/api/hotlist/catalog?limit=1000');
+    hotlistCatalog = {
+      categories: catalog.categories.map((entry) => entry.value),
+      brands: catalog.brands.map((entry) => entry.value)
+    };
+  } catch {
+    // A missing catalogue only costs autocomplete — typing a name still works.
+    hotlistCatalog = { categories: [], brands: [] };
+  }
+}
+
+async function loadHotlist() {
+  const hotlistTab = document.querySelector('[data-tab="hotlist"]');
+  try {
+    const payload = await fetchJson('/api/hotlist');
+    hotlistConfig = payload.config;
+    renderHotlistStatus(payload.status);
+    await loadHotlistCatalog();
+    renderHotlistForm();
+  } catch {
+    // No hotlist source configured — hide the tab rather than show a dead one.
+    hotlistTab?.classList.add('hidden');
+    document.getElementById('tab-hotlist')?.classList.add('hidden');
+  }
+}
+
+async function refreshHotlistStatus() {
+  try {
+    const payload = await fetchJson('/api/hotlist');
+    renderHotlistStatus(payload.status);
+  } catch { /* transient — the next tick retries */ }
+}
+
+function startHotlistStatusPolling() {
+  stopHotlistStatusPolling();
+  hotlistStatusTimer = setInterval(refreshHotlistStatus, 10_000);
+}
+
+function stopHotlistStatusPolling() {
+  if (hotlistStatusTimer) clearInterval(hotlistStatusTimer);
+  hotlistStatusTimer = null;
+}
+
+function collectHotlistConfig() {
+  const toNumber = (input, fallback) => {
+    const parsed = Number(input.value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  return {
+    enabled: el.hotlistEnabled.checked,
+    intervalSeconds: toNumber(el.hotlistInterval, hotlistConfig.intervalSeconds),
+    jitterPct: toNumber(el.hotlistJitter, hotlistConfig.jitterPct),
+    minDiscountPct: toNumber(el.hotlistMinDiscount, hotlistConfig.minDiscountPct),
+    groups: hotlistConfig.groups
+  };
+}
+
 // ── SAVE SETTINGS ───────────────────────────────────────────────
 async function saveAllSettings() {
   el.saveSettingsBtn.disabled = true;
@@ -1631,6 +1900,18 @@ async function saveAllSettings() {
         })
       });
       renderSchedulerForm(sched);
+    }
+
+    // Save hotlist
+    if (hotlistConfig) {
+      const payload = await fetchJson('/api/hotlist', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(collectHotlistConfig())
+      });
+      hotlistConfig = payload.config;
+      renderHotlistStatus(payload.status);
+      renderHotlistForm();
     }
 
     el.drawerSaveStatus.textContent = '✓ Saved';
@@ -1763,6 +2044,30 @@ function bindEvents() {
   // Source bulk toggles
   el.sourcesAllOn?.addEventListener('click', () => bulkToggleSources(true));
   el.sourcesAllOff?.addEventListener('click', () => bulkToggleSources(false));
+
+  // Hotlist
+  el.hotlistAddGroup?.addEventListener('click', () => {
+    if (!hotlistConfig) return;
+    hotlistConfig.groups.push(createEmptyHotlistGroup());
+    renderHotlistGroups();
+  });
+
+  el.hotlistPollNow?.addEventListener('click', async () => {
+    el.hotlistPollNow.disabled = true;
+    el.hotlistPollNow.textContent = 'Polling…';
+    try {
+      const res = await fetchJson('/api/hotlist/poll', { method: 'POST' });
+      renderHotlistStatus(res.status);
+      showToast(`Hotlist: ${res.result?.count ?? 0} deal(s), ${res.result?.newCount ?? 0} new.`, 'success');
+      refresh();
+    } catch (err) {
+      showToast(`Hotlist poll failed: ${err.message}`, 'error');
+      refreshHotlistStatus();
+    } finally {
+      el.hotlistPollNow.disabled = false;
+      el.hotlistPollNow.textContent = 'Poll now';
+    }
+  });
 
   // Favorites search
   el.favoritesSearchInput?.addEventListener('input', () => renderFavoritesEditor());

@@ -3,12 +3,19 @@ import assert from 'node:assert/strict';
 
 import {
   buildGroupFilters,
+  buildGroupRequests,
   normalizeWatchGroups,
   selectOffer,
+  titleMatchesKeyword,
   collectHotlistWithKey,
   DEFAULT_WATCH_GROUPS,
   buildOutletUrl,
 } from '../src/sources/elgigantenHotlist.js';
+import {
+  MAX_SUBQUERIES,
+  normalizeHotlistConfig,
+  normalizeHotlistGroup,
+} from '../src/services/hotlistConfig.js';
 
 const NOW = '2026-08-16T12:00:00.000Z';
 
@@ -241,4 +248,130 @@ test('outlet URL derivation fails closed on unexpected shapes', () => {
   assert.equal(buildOutletUrl('https://example.com/product/x/1', '2'), null);
   assert.equal(buildOutletUrl('https://www.elgiganten.se/product/a/b/1', null), null);
   assert.equal(buildOutletUrl(null, '2'), null);
+});
+
+// ── Configurable categories and keywords ────────────────────────
+
+test('categories can be given as names instead of taxonomy IDs', () => {
+  const filters = buildGroupFilters({
+    taxonomyNames: ['Grafikkort (GPU)', 'Laptop'],
+    brands: ['Apple'],
+  });
+  assert.equal(
+    filters,
+    '(productTaxonomy.name:"Grafikkort (GPU)" OR productTaxonomy.name:"Laptop") AND (brand:"Apple")',
+  );
+});
+
+test('taxonomy IDs and names combine into one category clause', () => {
+  const filters = buildGroupFilters({ taxonomyIds: ['PT263'], taxonomyNames: ['Laptop'] });
+  assert.equal(filters, '(productTaxonomy.id:"PT263" OR productTaxonomy.name:"Laptop")');
+});
+
+test('each keyword becomes its own sub-query sharing the group filters', () => {
+  const group = normalizeHotlistGroup({
+    label: 'GPU',
+    taxonomyNames: ['Grafikkort (GPU)'],
+    keywords: ['RTX 5090', 'RTX 5080'],
+  });
+  const plans = buildGroupRequests(group, 40);
+
+  assert.equal(plans.length, 2);
+  assert.deepEqual(plans.map((p) => p.request.query), ['RTX 5090', 'RTX 5080']);
+  // The filters are identical, so the keywords narrow within the category.
+  assert.equal(plans[0].request.filters, plans[1].request.filters);
+  assert.equal(plans[0].request.hitsPerPage, 40);
+});
+
+test('a group without keywords is a single filter-only sub-query', () => {
+  const group = normalizeHotlistGroup({ label: 'GPU', taxonomyNames: ['Grafikkort (GPU)'] });
+  const plans = buildGroupRequests(group, 100);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].request.query, '');
+  assert.equal(plans[0].keyword, null);
+});
+
+test('keyword sub-queries still travel in ONE multi-query request', async () => {
+  const fetcher = makeFetcher([[], [], []]);
+  await collectHotlistWithKey({
+    source: makeSource(),
+    hotlistConfig: normalizeHotlistConfig({
+      groups: [
+        { label: 'GPU', taxonomyNames: ['Grafikkort (GPU)'], keywords: ['RTX 5090', 'RTX 5080'] },
+        { label: 'Phones', taxonomyNames: ['Mobiltelefon'] },
+      ],
+    }),
+    sourceState: {}, fetcher, now: NOW, apiKey: 'k',
+  });
+
+  assert.equal(fetcher.calls.length, 1, 'still one HTTP round-trip per poll');
+  assert.equal(fetcher.calls[0].body.requests.length, 3);
+});
+
+test('titleMatchesKeyword ignores noise but rejects a near-miss model', () => {
+  assert.equal(titleMatchesKeyword('MSI GeForce RTX 5090 SUPRIM 32G', 'RTX 5090'), true);
+  // The whole point: Algolia would happily return a 5070 for a "5090" query.
+  assert.equal(titleMatchesKeyword('MSI GeForce RTX 5070 VENTUS', 'RTX 5090'), false);
+  // Case and punctuation are not significant.
+  assert.equal(titleMatchesKeyword('Apple iPhone 16 Pro Max 256 GB', 'iphone 16 pro'), true);
+  // Short tokens are skipped so units/suffixes don't cause false rejections.
+  assert.equal(titleMatchesKeyword('Kingston FURY 32 GB DDR5', 'DDR5 32 GB'), true);
+  assert.equal(titleMatchesKeyword('anything', ''), true);
+});
+
+test('strict keyword matching filters out Algolia typo-tolerance bleed', async () => {
+  const hits = [
+    makeHit({ objectID: 'exact', title: 'MSI GeForce RTX 5090 SUPRIM', cheapestBItem: { articleNumber: 'exact-b', price: 3999 } }),
+    makeHit({ objectID: 'near', title: 'MSI GeForce RTX 5070 VENTUS', cheapestBItem: { articleNumber: 'near-b', price: 3999 } }),
+  ];
+  const config = normalizeHotlistConfig({
+    minDiscountPct: 10,
+    groups: [{ label: 'GPU', taxonomyNames: ['Grafikkort (GPU)'], keywords: ['RTX 5090'] }],
+  });
+
+  const strict = await collectHotlistWithKey({
+    source: makeSource(), hotlistConfig: config,
+    sourceState: {}, fetcher: makeFetcher([hits]), now: NOW, apiKey: 'k',
+  });
+  assert.deepEqual(strict.map((o) => o.externalId), ['exact-b']);
+  assert.equal(strict[0].matchedKeyword, 'RTX 5090');
+
+  // Turning it off restores Algolia's own (looser) relevance ranking.
+  config.groups[0].strictKeywordMatch = false;
+  const loose = await collectHotlistWithKey({
+    source: makeSource(), hotlistConfig: config,
+    sourceState: {}, fetcher: makeFetcher([hits]), now: NOW, apiKey: 'k',
+  });
+  assert.deepEqual(loose.map((o) => o.externalId), ['exact-b', 'near-b']);
+});
+
+test('a product matching several keywords is emitted only once', async () => {
+  const hit = makeHit({ title: 'MSI GeForce RTX 5090 SUPRIM', cheapestBItem: { articleNumber: 'dup-b', price: 3999 } });
+  const observations = await collectHotlistWithKey({
+    source: makeSource(),
+    hotlistConfig: normalizeHotlistConfig({
+      minDiscountPct: 10,
+      groups: [{ label: 'GPU', taxonomyNames: ['Grafikkort (GPU)'], keywords: ['RTX 5090', 'SUPRIM'] }],
+    }),
+    sourceState: {}, fetcher: makeFetcher([[hit], [hit]]), now: NOW, apiKey: 'k',
+  });
+
+  assert.equal(observations.length, 1);
+});
+
+test('the sub-query budget bounds how large a single poll can get', async () => {
+  const groups = Array.from({ length: 20 }, (_, i) => ({
+    label: `g${i}`,
+    taxonomyNames: ['Grafikkort (GPU)'],
+    keywords: Array.from({ length: 10 }, (_, k) => `kw-${i}-${k}`),
+  }));
+  const fetcher = makeFetcher([[]]);
+
+  await collectHotlistWithKey({
+    source: makeSource(),
+    hotlistConfig: normalizeHotlistConfig({ groups }),
+    sourceState: {}, fetcher, now: NOW, apiKey: 'k',
+  });
+
+  assert.equal(fetcher.calls[0].body.requests.length, MAX_SUBQUERIES);
 });

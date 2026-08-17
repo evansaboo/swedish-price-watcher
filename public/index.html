@@ -178,6 +178,7 @@
           <button type="button" class="drawer-tab active" data-tab="sources" role="tab" aria-selected="true">Sources</button>
           <button type="button" class="drawer-tab" data-tab="alerts" role="tab" aria-selected="false">Alerts</button>
           <button type="button" class="drawer-tab" data-tab="scheduler" role="tab" aria-selected="false">Scheduler</button>
+          <button type="button" class="drawer-tab" data-tab="hotlist" role="tab" aria-selected="false">Hotlist</button>
           <button type="button" class="drawer-tab" data-tab="favorites" role="tab" aria-selected="false">Favorites</button>
         </div>
 
@@ -270,6 +271,43 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Hotlist — continuous Elgiganten poller -->
+        <div id="tab-hotlist" class="drawer-tab-content hidden">
+          <div id="hotlist-status" class="hotlist-status" aria-live="polite"></div>
+
+          <div class="hotlist-controls">
+            <label class="toggle-switch">
+              <input id="hotlist-enabled" type="checkbox" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">Continuous polling</span>
+            </label>
+            <p class="section-hint">Runs on its own loop, independent of the scan scheduler — one Algolia request per poll, with randomised timing so it never hits a predictable tick.</p>
+            <div class="form-row">
+              <div class="form-field">
+                <label for="hotlist-interval">Every (seconds)</label>
+                <input id="hotlist-interval" type="number" class="field-input" min="30" max="3600" step="5" />
+              </div>
+              <div class="form-field">
+                <label for="hotlist-jitter">Jitter (%)</label>
+                <input id="hotlist-jitter" type="number" class="field-input" min="0" max="50" step="5" />
+              </div>
+              <div class="form-field">
+                <label for="hotlist-min-discount">Min discount (%)</label>
+                <input id="hotlist-min-discount" type="number" class="field-input" min="0" max="99" step="1" />
+              </div>
+            </div>
+          </div>
+
+          <div class="rules-toolbar">
+            <span id="hotlist-count-label" class="rules-count"></span>
+            <span class="hotlist-toolbar-actions">
+              <button id="hotlist-poll-now" type="button" class="ghost-btn">Poll now</button>
+              <button id="hotlist-add-group" type="button" class="ghost-btn accent">+ Add watch</button>
+            </span>
+          </div>
+          <ul id="hotlist-groups" class="rules-list hotlist-groups"></ul>
         </div>
 
         <!-- Favorites -->

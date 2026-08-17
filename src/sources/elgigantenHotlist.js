@@ -1,6 +1,14 @@
 import { normalizeProductIdentity } from '../lib/utils.js';
 import { getSharedAlgoliaApiKey } from './elgigantenAuth.js';
 import { resolveImageUrl } from './elgiganten.js';
+import {
+  MAX_SUBQUERIES,
+  activeGroups,
+  isGroupPollable,
+  normalizeHotlistConfig,
+  normalizeHotlistGroup,
+  seedHotlistConfigFromSource,
+} from '../services/hotlistConfig.js';
 
 /**
  * Elgiganten "hotlist" — a fast, narrow poller for product categories that hold
@@ -71,13 +79,22 @@ function quoteFacetValue(value) {
 /**
  * Turn a watch group into an Algolia filter expression, e.g.
  * `(productTaxonomy.id:"PT254") AND (brand:"Apple")`.
+ *
+ * Categories can be given as taxonomy IDs or as human-readable taxonomy names;
+ * both are facetable on the index and return identical result sets, so the
+ * dashboard offers names and only legacy config still carries `PT…` codes.
  */
 export function buildGroupFilters(group) {
   const clauses = [];
 
   const taxonomyIds = Array.isArray(group.taxonomyIds) ? group.taxonomyIds.filter(Boolean) : [];
-  if (taxonomyIds.length) {
-    clauses.push(`(${taxonomyIds.map((id) => `productTaxonomy.id:${quoteFacetValue(id)}`).join(' OR ')})`);
+  const taxonomyNames = Array.isArray(group.taxonomyNames) ? group.taxonomyNames.filter(Boolean) : [];
+  const categoryClauses = [
+    ...taxonomyIds.map((id) => `productTaxonomy.id:${quoteFacetValue(id)}`),
+    ...taxonomyNames.map((name) => `productTaxonomy.name:${quoteFacetValue(name)}`),
+  ];
+  if (categoryClauses.length) {
+    clauses.push(`(${categoryClauses.join(' OR ')})`);
   }
 
   const brands = Array.isArray(group.brands) ? group.brands.filter(Boolean) : [];
@@ -92,22 +109,32 @@ export function buildGroupFilters(group) {
   return clauses.join(' AND ');
 }
 
+/**
+ * Algolia is typo-tolerant and prefix-matching, which makes it a great search
+ * box and a poor alerting rule: querying "RTX 5090" happily returns RTX 5070
+ * cards. When a group uses strict matching, every significant token of the
+ * keyword must also appear literally in the product title.
+ *
+ * Short tokens (≤2 chars) are ignored so things like "16 GB" or model suffixes
+ * don't reject otherwise correct hits.
+ */
+export function titleMatchesKeyword(title, keyword) {
+  if (!keyword) return true;
+  const haystack = String(title ?? '').toLowerCase();
+  const tokens = String(keyword)
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length > 2);
+  if (!tokens.length) return true;
+  return tokens.every((token) => haystack.includes(token));
+}
+
 export function normalizeWatchGroups(rawGroups) {
   const groups = Array.isArray(rawGroups) && rawGroups.length ? rawGroups : DEFAULT_WATCH_GROUPS;
   return groups
     .filter((group) => group && group.enabled !== false)
-    .map((group, index) => ({
-      label: String(group.label ?? `Group ${index + 1}`),
-      query: typeof group.query === 'string' ? group.query : '',
-      taxonomyIds: group.taxonomyIds,
-      brands: group.brands,
-      filters: group.filters,
-      minDiscountPct: group.minDiscountPct,
-      minPriceSek: group.minPriceSek,
-      maxPriceSek: group.maxPriceSek,
-      hitsPerPage: group.hitsPerPage,
-    }))
-    .filter((group) => group.query || buildGroupFilters(group));
+    .map((group, index) => normalizeHotlistGroup(group, index))
+    .filter(isGroupPollable);
 }
 
 function positiveNumber(value) {
@@ -183,7 +210,7 @@ export function buildOutletUrl(productUrl, articleNumber) {
   return `${match[1]}/product/outlet/${match[2]}/${articleNumber}`;
 }
 
-function mapHit(hit, offer, { source, group, now }) {
+function mapHit(hit, offer, { source, group, now, keyword = null }) {
   const title = String(hit.title ?? hit.name ?? '').trim();
   const baseId = String(hit.objectID ?? hit.articleNumber ?? '').trim();
   if (!title || !baseId) return null;
@@ -225,68 +252,92 @@ function mapHit(hit, offer, { source, group, now }) {
     notes: source.notes ?? null,
     seenAt: now,
     watchGroup: group.label,
+    matchedKeyword: keyword,
     discountPct,
   };
 }
 
-export async function collectFromElgigantenHotlist({ source, sourceState = {}, fetcher, now }) {
+export async function collectFromElgigantenHotlist({ source, sourceState = {}, fetcher, now, preferences }) {
+  const hotlistConfig = preferences?.hotlist
+    ? normalizeHotlistConfig(preferences.hotlist)
+    : seedHotlistConfigFromSource(source);
   const apiKey = await getSharedAlgoliaApiKey('[elgiganten-hotlist]');
-  return collectHotlistWithKey({ source, sourceState, fetcher, now, apiKey });
+  return collectHotlistWithKey({ source, sourceState, fetcher, now, apiKey, hotlistConfig });
+}
+
+/**
+ * Expand a watch group into Algolia sub-queries — one per keyword, or a single
+ * filter-only query when the group has no keywords.
+ *
+ * Every sub-query rides in the SAME multi-query request, so adding keywords
+ * costs result-parsing time but never an extra HTTP round-trip.
+ */
+export function buildGroupRequests(group, defaultHitsPerPage) {
+  const filters = buildGroupFilters(group);
+  const hitsPerPage = Math.min(Math.max(Number(defaultHitsPerPage) || DEFAULT_HITS_PER_GROUP, 1), MAX_HITS_PER_GROUP);
+  const keywords = Array.isArray(group.keywords) && group.keywords.length ? group.keywords : [null];
+
+  return keywords.map((keyword) => ({
+    group,
+    keyword,
+    request: {
+      indexName: INDEX,
+      query: keyword ?? '',
+      filters,
+      hitsPerPage,
+      page: 0,
+    },
+  }));
 }
 
 /**
  * Pipeline without key acquisition — exported so tests can drive it with a mock
  * fetcher instead of launching a real browser to sign an Algolia key.
  */
-export async function collectHotlistWithKey({ source, sourceState = {}, fetcher, now, apiKey }) {
-  const groups = normalizeWatchGroups(source.watchGroups);
+export async function collectHotlistWithKey({ source, sourceState = {}, fetcher, now, apiKey, hotlistConfig }) {
+  const config = hotlistConfig ?? seedHotlistConfigFromSource(source);
+  const groups = activeGroups(config);
   if (!groups.length) {
     console.warn('[elgiganten-hotlist] No watch groups configured — nothing to poll.');
     return [];
   }
 
-  const defaultHits = Math.min(
-    Math.max(Number(source.hitsPerGroup) || DEFAULT_HITS_PER_GROUP, 1),
-    MAX_HITS_PER_GROUP,
-  );
-
-  // Every watch group travels in one multi-query request — a single round-trip
-  // per poll keeps this source fast and effectively invisible to rate limiting.
-  const requests = groups.map((group) => ({
-    indexName: INDEX,
-    query: group.query ?? '',
-    filters: buildGroupFilters(group),
-    hitsPerPage: Math.min(Math.max(Number(group.hitsPerPage) || defaultHits, 1), MAX_HITS_PER_GROUP),
-    page: 0,
-  }));
+  const plans = groups
+    .flatMap((group) => buildGroupRequests(group, config.hitsPerGroup))
+    .slice(0, MAX_SUBQUERIES);
 
   const startedAt = Date.now();
-  const response = await algoliaPost(fetcher, apiKey, { requests });
+  const response = await algoliaPost(fetcher, apiKey, { requests: plans.map((plan) => plan.request) });
   const results = Array.isArray(response?.results) ? response.results : [];
 
-  const globalMinDiscount = Number.isFinite(Number(source.minDiscountPct))
-    ? Number(source.minDiscountPct)
+  const globalMinDiscount = Number.isFinite(Number(config.minDiscountPct))
+    ? Number(config.minDiscountPct)
     : DEFAULT_MIN_DISCOUNT_PCT;
 
   const observations = [];
   const seenIds = new Set();
-  const groupStats = [];
+  const perGroupKept = new Map();
+  const perGroupSeen = new Map();
 
   results.forEach((result, index) => {
-    const group = groups[index];
-    if (!group) return;
+    const plan = plans[index];
+    if (!plan) return;
+    const { group, keyword } = plan;
     const hits = Array.isArray(result?.hits) ? result.hits : [];
 
-    const minDiscountPct = Number.isFinite(Number(group.minDiscountPct))
-      ? Number(group.minDiscountPct)
-      : globalMinDiscount;
+    const minDiscountPct = group.minDiscountPct ?? globalMinDiscount;
     const minPriceSek = positiveNumber(Number(group.minPriceSek ?? source.minPriceSek));
     const maxPriceSek = positiveNumber(Number(group.maxPriceSek ?? source.maxPriceSek));
 
-    let kept = 0;
+    perGroupSeen.set(group.label, (perGroupSeen.get(group.label) ?? 0) + hits.length);
+
     for (const hit of hits) {
       // Only surface things that can actually be bought right now.
       if (hit.isBuyableOnline === false) continue;
+
+      if (keyword && group.strictKeywordMatch !== false && !titleMatchesKeyword(hit.title ?? hit.name, keyword)) {
+        continue;
+      }
 
       const offer = selectOffer(hit);
       if (!offer) continue;
@@ -296,24 +347,28 @@ export async function collectHotlistWithKey({ source, sourceState = {}, fetcher,
       if (minPriceSek && offer.priceSek < minPriceSek) continue;
       if (maxPriceSek && offer.priceSek > maxPriceSek) continue;
 
-      const observation = mapHit(hit, offer, { source, group, now });
+      const observation = mapHit(hit, offer, { source, group, now, keyword });
       if (!observation) continue;
+      // The same product can legitimately match several groups or keywords;
+      // the first match wins so a listing is never duplicated.
       if (seenIds.has(observation.externalId)) continue;
 
       seenIds.add(observation.externalId);
       observations.push(observation);
-      kept += 1;
+      perGroupKept.set(group.label, (perGroupKept.get(group.label) ?? 0) + 1);
     }
-
-    groupStats.push(`${group.label}:${kept}/${hits.length}`);
   });
+
+  const groupStats = groups.map(
+    (group) => `${group.label}:${perGroupKept.get(group.label) ?? 0}/${perGroupSeen.get(group.label) ?? 0}`,
+  );
 
   sourceState.lastPollAt = now;
   sourceState.lastGroupStats = groupStats.join(' ');
 
   console.log(
     `[elgiganten-hotlist] ${observations.length} deal(s) from ${groups.length} group(s) ` +
-    `in ${Date.now() - startedAt}ms — ${groupStats.join(' ')}`,
+    `/ ${plans.length} query(s) in ${Date.now() - startedAt}ms — ${groupStats.join(' ')}`,
   );
 
   return observations;

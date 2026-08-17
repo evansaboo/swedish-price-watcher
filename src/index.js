@@ -8,6 +8,8 @@ import { buildListingKey, isSourceEnabled } from './lib/utils.js';
 import { createSchedulerController, normalizeActiveWindow } from './scheduler.js';
 import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
+import { createHotlistPoller } from './services/hotlistPoller.js';
+import { ensureHotlistConfig, normalizeHotlistConfig } from './services/hotlistConfig.js';
 import { buildDigestDeals, buildDigestPayload, shouldSendDigest } from './services/digest.js';
 import { ProductCache } from './services/productCache.js';
 import { DiscordNotifier } from './services/notifier.js';
@@ -49,6 +51,9 @@ state.deals = computeDeals(state, config.thresholds);
 const productCache = new ProductCache();
 const sourceLabelMap = new Map(config.sources.map(s => [s.id, s.label || s.id]));
 const sourceById = new Map(config.sources.map(s => [s.id, s]));
+// The hotlist runs on its own continuous loop rather than the shared scan
+// cycle, so it is excluded from every scan and owned by the poller below.
+const hotlistSource = config.sources.find((entry) => entry.type === 'elgiganten-hotlist') ?? null;
 
 productCache.rebuild(state, sourceLabelMap);
 
@@ -73,6 +78,10 @@ state.preferences = {
   ...(state.preferences ?? {}),
   scheduler: schedulerPreference
 };
+
+// Seed the hotlist watch list from config/sources.json the first time, then
+// let the dashboard own it from SQLite preferences.
+if (hotlistSource) ensureHotlistConfig(state.preferences, hotlistSource);
 
 await store.save();
 
@@ -104,6 +113,15 @@ const scanState = {
   abortController: null
 };
 
+// A full scan and a hotlist poll both mutate `state` and persist it. Every
+// mutation runs through this one chain so the two can never interleave.
+let stateCommitChain = Promise.resolve();
+function commitExclusive(fn) {
+  const result = stateCommitChain.then(fn, fn);
+  stateCommitChain = result.then(() => {}, () => {});
+  return result;
+}
+
 async function triggerScan(trigger, options = {}) {
   if (scanState.running) {
     return store.getState().stats.lastRunSummary;
@@ -114,6 +132,8 @@ async function triggerScan(trigger, options = {}) {
     : null;
 
   const sourcesToRun = config.sources.filter(entry => {
+    // Owned by the continuous hotlist poller, never by a scan.
+    if (hotlistSource && entry.id === hotlistSource.id) return false;
     if (requestedSourceIds) return requestedSourceIds.has(entry.id);
     if (!isSourceEnabled(entry, store.getState())) return false;
     if (trigger === 'scheduled' && Number.isFinite(entry.scanIntervalMinutes) && entry.scanIntervalMinutes > 0) {
@@ -220,8 +240,6 @@ async function triggerScan(trigger, options = {}) {
   }
 
   try {
-    let processingChain = Promise.resolve();
-
     await Promise.all(
       sourcesToRun.map(async (source) => {
         const sourceState = state.sourceStates[source.id] ?? {};
@@ -265,7 +283,7 @@ async function triggerScan(trigger, options = {}) {
           scanState.completedSources += 1;
         }
 
-        processingChain = processingChain.then(async () => {
+        await commitExclusive(async () => {
           // The known-ID Set is scan-scoped scratch state — a Set serializes as {},
           // so it must not leak into the persisted store.
           delete sourceState.knownExternalIds;
@@ -367,8 +385,6 @@ async function triggerScan(trigger, options = {}) {
             await flushPending();
           }
         });
-
-        await processingChain;
       })
     );
 
@@ -425,6 +441,140 @@ function cancelScan() {
   scanState.cancelling = true;
   scanState.abortController?.abort();
   return true;
+}
+
+// ── Elgiganten hotlist: continuous poller ──────────────────────
+// Deliberately independent of the scan scheduler. A scan takes minutes and
+// walks every source; a hotlist poll is one Algolia round-trip whose entire
+// value is catching a mispriced GPU before it sells out.
+
+async function runHotlistPoll() {
+  if (!hotlistSource) return { count: 0, newCount: 0 };
+
+  const startedAt = new Date().toISOString();
+  const sourceState = state.sourceStates[hotlistSource.id] ?? {};
+  state.sourceStates[hotlistSource.id] = sourceState;
+  sourceState.lastAttemptAt = startedAt;
+
+  let collected;
+  try {
+    collected = await collectSource({
+      source: hotlistSource,
+      fetcher,
+      sourceState,
+      now: startedAt,
+      preferences: state.preferences
+    });
+  } catch (error) {
+    await commitExclusive(async () => {
+      sourceState.lastError = error.message;
+      state.stats.hotlist = { ...(state.stats.hotlist ?? {}), lastPollAt: startedAt, lastError: error.message };
+    });
+    throw error;
+  }
+
+  return commitExclusive(async () => {
+    const mergeResult = mergeObservations(state, collected, config.maxHistoryEntries);
+
+    // Anything that fell out of the hotlist has sold out or stopped being a
+    // deal, so it should disappear from the dashboard too.
+    const deletedItemKeys = [];
+    if (collected.length > 0) {
+      const seenKeys = new Set(collected.map(o => buildListingKey(o.sourceId, o.externalId)));
+      for (const key of Object.keys(state.items)) {
+        if (state.items[key].sourceId !== hotlistSource.id || seenKeys.has(key)) continue;
+        const item = state.items[key];
+        const historyToArchive = item.history?.length > 0 ? item.history : store.getItemHistory?.(key) ?? [];
+        if (historyToArchive.length > 0) {
+          state.itemHistory[key] = {
+            history: historyToArchive,
+            lowestPriceSek: item.lowestPriceSek,
+            highestPriceSek: item.highestPriceSek,
+            firstSeenAt: item.firstSeenAt,
+            archivedAt: new Date().toISOString()
+          };
+        }
+        for (const notifKey of Object.keys(state.notifications)) {
+          if (notifKey.startsWith(`${key}:`)) delete state.notifications[notifKey];
+        }
+        deletedItemKeys.push(key);
+        delete state.items[key];
+      }
+    }
+
+    const isFirstSuccessfulRun = !sourceState.lastSuccessAt;
+    const skipDiscordNotifications = shouldSkipSourceNotifications({
+      source: hotlistSource, state, sourceState, scanState: {}
+    });
+    sourceState.lastSuccessAt = startedAt;
+    sourceState.lastError = null;
+    sourceState.lastCount = collected.length;
+
+    if (collected.length > 0 || deletedItemKeys.length > 0) {
+      store.flushItems(collected.map(o => buildListingKey(o.sourceId, o.externalId)), deletedItemKeys);
+    }
+
+    const changed = mergeResult.newItems.length > 0
+      || mergeResult.priceDrops.length > 0
+      || deletedItemKeys.length > 0;
+
+    // Most polls find exactly what the previous one did. Recomputing deals and
+    // rebuilding the 26k-item product cache every 90s for no change would burn
+    // seconds of event loop for nothing, so the heavy work is change-gated.
+    if (changed) {
+      state.deals = computeDeals(state, config.thresholds);
+      productCache.rebuild(state, sourceLabelMap);
+    }
+
+    if (!skipDiscordNotifications && (mergeResult.newItems.length || mergeResult.priceDrops.length)) {
+      const notif = await notifier.notifyScan({
+        deals: state.deals,
+        newItems: mergeResult.newItems.map((item) => decorateAffiliateLink(item, sourceById)),
+        priceDrops: mergeResult.priceDrops.map((item) => decorateAffiliateLink(item, sourceById)),
+        sources: config.sources,
+        state,
+        notificationSettings: { ...(state.preferences?.notificationSettings ?? {}) },
+        wishlistTargets: state.preferences?.wishlistTargets ?? {},
+        purchase: ensurePurchaseState(state.preferences),
+        stageListing: purchaseService.stageListing
+      });
+      state.stats.hotlist = { ...(state.stats.hotlist ?? {}), lastNotificationSummary: notif };
+    } else if (isFirstSuccessfulRun && collected.length) {
+      console.log(`[hotlist] First successful poll — suppressing ${collected.length} alert(s).`);
+    }
+
+    state.stats.hotlist = {
+      ...(state.stats.hotlist ?? {}),
+      lastPollAt: startedAt,
+      lastCount: collected.length,
+      lastNewListings: mergeResult.newItems.length,
+      lastPriceDrops: mergeResult.priceDrops.length,
+      lastRemoved: deletedItemKeys.length,
+      lastError: null
+    };
+
+    if (changed) {
+      await store.save({ skipItems: true });
+    }
+
+    return { count: collected.length, newCount: mergeResult.newItems.length };
+  });
+}
+
+const hotlistPoller = createHotlistPoller({
+  run: runHotlistPoll,
+  getConfig: () => state.preferences?.hotlist ?? { enabled: false, intervalSeconds: 90, jitterPct: 20 },
+  // A full scan holds the commit mutex for minutes; polling through it would
+  // just queue up stale work, so the poller yields and retries.
+  isPaused: () => scanState.running
+});
+
+async function updateHotlistConfig(nextConfig) {
+  const updated = normalizeHotlistConfig(nextConfig, state.preferences?.hotlist ?? {});
+  state.preferences = { ...(state.preferences ?? {}), hotlist: updated };
+  await (store.savePreferences ?? store.save).call(store);
+  hotlistPoller.reschedule();
+  return updated;
 }
 
 if (runOnce) {
@@ -486,11 +636,35 @@ const app = await buildApp({
   scanState,
   triggerScan,
   cancelScan,
-  scheduler: { getState: () => scheduler.getState(), update: updateScheduler }
+  fetcher,
+  scheduler: { getState: () => scheduler.getState(), update: updateScheduler },
+  hotlist: hotlistSource
+    ? {
+        source: hotlistSource,
+        getConfig: () => state.preferences?.hotlist ?? {},
+        update: updateHotlistConfig,
+        getStatus: () => ({
+          ...hotlistPoller.getStatus(),
+          ...(state.stats.hotlist ?? {}),
+          sourceId: hotlistSource.id
+        }),
+        pollNow: () => hotlistPoller.pollNow()
+      }
+    : null
 });
 
 await app.listen({ port: config.port, host: config.host });
 console.log(`Price watcher listening at http://${config.host}:${config.port}`);
+
+if (hotlistSource) {
+  hotlistPoller.start();
+  const hotlistPreference = state.preferences?.hotlist ?? {};
+  console.log(
+    `[hotlist] Continuous poller ${hotlistPreference.enabled === false ? 'configured (disabled)' : 'started'} — ` +
+    `every ~${hotlistPreference.intervalSeconds}s ±${hotlistPreference.jitterPct}% ` +
+    `across ${(hotlistPreference.groups ?? []).filter((g) => g.enabled).length} watch group(s).`
+  );
+}
 
 if (config.runOnStart) {
   triggerScan('startup').catch(error => {
@@ -501,6 +675,7 @@ if (config.runOnStart) {
 
 async function shutdown(signal) {
   scheduler.stop();
+  hotlistPoller.stop();
   await app.close();
   console.log(`${signal} received, shutting down.`);
   process.exit(0);

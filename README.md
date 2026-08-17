@@ -27,6 +27,7 @@ A production outlet price tracker for Swedish electronics stores. It supports Ra
 - Lets you mark favorite categories and filter/sort by them
 - Cancel button to abort stuck scans
 - Scheduled scans with configurable interval and active-hour windows (Swedish time)
+- **Elgiganten hotlist**: a continuous poller for resale-friendly categories, independent of the scan scheduler — see below
 - Discord alert rules fire on **new matches** and **price drops** (per-rule toggle + min-drop %)
 - **Daily digest**: top new deals by score posted once per day at a configured Stockholm time (Settings → Alerts)
 - **Cross-store matching**: the same product is linked across stores via GTIN/EAN and manufacturer part numbers (with normalized-title fallback); cards show "Cheaper at X" / "Best price of N stores"
@@ -35,6 +36,45 @@ A production outlet price tracker for Swedish electronics stores. It supports Ra
 - CSV export of the current filtered product list (`/api/export.csv` or the button in the filter panel)
 - Partial-scan protection: cancelled scans and incremental early-stops never prune items that simply weren't revisited
 - Gzip/brotli compression on all API and static responses
+
+## Elgiganten hotlist (continuous poller)
+
+The hotlist watches the categories that hold their value second-hand (GPUs, RAM,
+SSDs, MacBooks, iPhones) and is deliberately **not** part of the scan scheduler.
+A full scan walks every source and takes minutes; a hotlist poll is a single
+Algolia round-trip, and its whole value is catching a mispriced item before it
+sells out.
+
+Configure it in the dashboard under **Settings → Hotlist**:
+
+- **Cadence** — poll interval (30 s floor), jitter %, and a global minimum discount.
+- **Watches** — each watch combines any of: Elgiganten's own categories, brands,
+  and keywords, plus optional per-watch discount and price bounds.
+- **Exact title match** — Algolia is typo-tolerant, so a bare `RTX 5090` query
+  also returns 5070s. With this on (the default) a hit must literally contain the
+  keyword's significant tokens in its title.
+- **Poll now** — run a poll immediately without waiting for the next tick.
+
+Settings live in the SQLite preferences, so they survive restarts and need no
+redeploy. The `watchGroups` in `config/sources.json` are only the first-run seed.
+
+**How it stays polite.** Every watch and keyword is packed into ONE Algolia
+multi-query request, so adding keywords never adds HTTP round-trips — a poll is
+one request against the plain Algolia CDN (which is not behind Elgiganten's bot
+mitigation) using the shared cached API key. Timing is jittered so requests never
+land on a predictable tick, failures back off exponentially, and polls are
+skipped while a full scan holds the state lock. Steady-state polls that find no
+change skip the deals recompute and product-cache rebuild entirely.
+
+Status (last poll, deal count, next poll, errors) is exposed at `GET /api/hotlist`
+and included in `GET /api/status`.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/hotlist` | Current config, live poller status, and cost per poll |
+| `PUT /api/hotlist` | Update cadence and watches (merged over the current config) |
+| `POST /api/hotlist/poll` | Force an immediate poll |
+| `GET /api/hotlist/catalog?q=` | Search Elgiganten's ~700 categories / ~1000 brands (cached 6 h) |
 
 ## Setup
 

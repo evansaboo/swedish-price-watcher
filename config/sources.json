@@ -69,7 +69,8 @@
           "minDiscountPct": 8
         }
       ],
-      "notes": "Fast resale-focused poller. Packs every watchGroup into ONE Algolia multi-query request (~1s per poll, ~288 requests/day) so it can run on every 5-minute scan cycle without detection risk. Filters on productTaxonomy.id so hits carry real categories (unlike the outlet index). Emits a listing only when there is a discount signal: a cheapestBItem (B-grade/Fyndvara) unit below the new price, or an active campaign price below beforePrice. No scanIntervalMinutes = polls every cycle. Reuses the shared cached Algolia key, so it adds zero load on the bot-protected key endpoint."
+      "notes": "Continuous resale-focused poller. Runs on its own loop, NOT the scan scheduler: one Algolia multi-query round-trip per poll (~0.7s), every ~90s with randomised jitter, against the plain Algolia CDN which is not behind Elgiganten's bot mitigation. Reuses the shared cached API key, so it adds no load on the protected key endpoint. Filters on productTaxonomy so hits carry real categories (unlike the outlet index). Emits a listing only on a genuine discount signal: a cheapestBItem (B-grade/Fyndvara) unit below the new price, or a campaign price below beforePrice. The watchGroups below are only the FIRST-RUN SEED — categories, brands, keywords and cadence are owned by the dashboard (Settings -> Hotlist) and stored in SQLite preferences thereafter.",
+      "pollIntervalSeconds": 90
     },
     {
       "id": "elgiganten-outlet",

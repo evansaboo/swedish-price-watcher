@@ -13,6 +13,16 @@ import { buildProductSummaries } from './services/dealEngine.js';
 import { buildAffiliateUrl, decorateAffiliatePayload } from './services/affiliateLinks.js';
 import { extractBearerToken } from './services/accessControl.js';
 import {
+  MAX_GROUPS,
+  MAX_KEYWORDS_PER_GROUP,
+  MAX_SUBQUERIES,
+  MAX_INTERVAL_SECONDS,
+  MIN_INTERVAL_SECONDS,
+  countSubqueries,
+  normalizeHotlistConfig
+} from './services/hotlistConfig.js';
+import { getTaxonomyCatalog, searchCatalog } from './sources/elgigantenTaxonomy.js';
+import {
   ensurePurchaseState,
   normalizePurchaseSettings,
   armListing,
@@ -190,7 +200,7 @@ function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
 
 // ── Route builder ──────────────────────────────────────────────
 
-export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler }) {
+export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler, hotlist, fetcher }) {
   const app = Fastify({ logger: false });
   const sourceById = new Map((config.sources ?? []).map((source) => [source.id, source]));
   let preferencesSaveQueue = Promise.resolve();
@@ -280,7 +290,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         referencedItems: state.deals.filter(d => d.comparisonPriceSek > d.currentPriceSek).length,
         favoriteCategories: getFavoriteCategories(state).length
       },
-      scheduler: schedulerState
+      scheduler: schedulerState,
+      hotlist: hotlist ? hotlist.getStatus() : null
     };
   });
 
@@ -664,6 +675,78 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     catch (error) { reply.code(400); return { message: error.message }; }
   });
 
+  // ── Elgiganten hotlist ─────────────────────────────────────────
+  // The hotlist is a continuous poller rather than a scheduled source, so it
+  // has its own settings surface: what to watch, how often, and live status.
+  function requireHotlist(reply) {
+    if (!hotlist) {
+      reply.code(404);
+      return { message: 'Hotlist source is not configured.' };
+    }
+    return null;
+  }
+
+  app.get('/api/hotlist', async (_, reply) => {
+    const missing = requireHotlist(reply);
+    if (missing) return missing;
+    const hotlistConfig = normalizeHotlistConfig(hotlist.getConfig());
+    return {
+      config: hotlistConfig,
+      status: hotlist.getStatus(),
+      subqueriesPerPoll: countSubqueries(hotlistConfig),
+      limits: {
+        minIntervalSeconds: MIN_INTERVAL_SECONDS,
+        maxIntervalSeconds: MAX_INTERVAL_SECONDS,
+        maxGroups: MAX_GROUPS,
+        maxKeywordsPerGroup: MAX_KEYWORDS_PER_GROUP,
+        maxSubqueries: MAX_SUBQUERIES
+      }
+    };
+  });
+
+  app.put('/api/hotlist', async (request, reply) => {
+    const missing = requireHotlist(reply);
+    if (missing) return missing;
+    const body = request.body ?? {};
+    if (typeof body !== 'object' || Array.isArray(body)) {
+      reply.code(400);
+      return { message: 'Expected a hotlist configuration object.' };
+    }
+    // Merge over the current config so a partial update (e.g. just the
+    // interval) never silently wipes the watch groups.
+    const merged = { ...normalizeHotlistConfig(hotlist.getConfig()), ...body };
+    const updated = await hotlist.update(merged);
+    return { config: updated, subqueriesPerPoll: countSubqueries(updated), status: hotlist.getStatus() };
+  });
+
+  app.post('/api/hotlist/poll', async (_, reply) => {
+    const missing = requireHotlist(reply);
+    if (missing) return missing;
+    try {
+      const result = await hotlist.pollNow();
+      return { ok: true, result, status: hotlist.getStatus() };
+    } catch (error) {
+      reply.code(502);
+      return { ok: false, message: error.message, status: hotlist.getStatus() };
+    }
+  });
+
+  // Powers the category/brand pickers. The full taxonomy (~700 categories,
+  // ~1000 brands) is one cached Algolia facet request, filtered server-side.
+  app.get('/api/hotlist/catalog', async (request, reply) => {
+    const missing = requireHotlist(reply);
+    if (missing) return missing;
+    if (!fetcher) { reply.code(503); return { message: 'Catalog lookup is unavailable.' }; }
+    try {
+      const catalog = await getTaxonomyCatalog(fetcher, { force: request.query?.refresh === 'true' });
+      const limit = Math.min(Math.max(Number.parseInt(String(request.query?.limit ?? '40'), 10) || 40, 1), 200);
+      return searchCatalog(catalog, { query: request.query?.q ?? '', limit });
+    } catch (error) {
+      reply.code(502);
+      return { message: `Could not load Elgiganten's category list: ${error.message}` };
+    }
+  });
+
   // ── Sources ────────────────────────────────────────────────────
   app.get('/api/sources', async () => {
     const state = store.getState();
@@ -812,23 +895,38 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       if (unknown.length) { reply.code(400); return { ok: false, message: `Unknown source IDs: ${unknown.join(', ')}` }; }
     }
 
-    const canRun = sourceIds
-      ? config.sources.some(s => sourceIds.includes(s.id) && s.enabled)
+    // The hotlist is not part of a scan — it has its own continuous poller —
+    // so route a request for it to an immediate poll instead of failing.
+    const hotlistRequested = Boolean(hotlist && sourceIds?.includes(hotlist.source.id));
+    const scanSourceIds = hotlistRequested
+      ? sourceIds.filter((id) => id !== hotlist.source.id)
+      : sourceIds;
+
+    if (hotlistRequested) {
+      hotlist.pollNow().catch(() => {});
+      if (!scanSourceIds.length) {
+        reply.code(202);
+        return { ok: true, started: true, message: 'Hotlist poll started.' };
+      }
+    }
+
+    const canRun = scanSourceIds
+      ? config.sources.some(s => scanSourceIds.includes(s.id) && s.enabled)
       : config.sources.some(s => isSourceEnabled(s, store.getState()));
 
     if (!canRun) {
       reply.code(400);
       return {
         ok: false,
-        message: sourceIds
-          ? `None of the requested sources are enabled: ${sourceIds.join(', ')}`
+        message: scanSourceIds
+          ? `None of the requested sources are enabled: ${scanSourceIds.join(', ')}`
           : 'No sources are enabled. Add or enable a source in config/sources.json.'
       };
     }
 
-    triggerScan('manual', { sourceIds }).catch(() => {});
+    triggerScan('manual', { sourceIds: scanSourceIds }).catch(() => {});
     reply.code(202);
-    return { ok: true, started: true, message: sourceIds ? `Scanning: ${sourceIds.join(', ')}` : 'Live scan started.' };
+    return { ok: true, started: true, message: scanSourceIds ? `Scanning: ${scanSourceIds.join(', ')}` : 'Live scan started.' };
   });
 
   app.post('/api/cancel', async (request, reply) => {
