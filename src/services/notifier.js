@@ -69,7 +69,7 @@ function parseRetryDelayMs(response) {
  * - Item category must match at least one rule category (if categories are set)
  * - Item discount % must be ≥ minDiscountPercent (if set)
  */
-function itemMatchesRule(item, { keywords, categories, minDiscountPercent, filteredSources, sourceFilterMode }) {
+export function itemMatchesRule(item, { keywords, categories, minDiscountPercent, filteredSources, sourceFilterMode }) {
   // Source filter — support both include and exclude modes
   if (filteredSources && filteredSources.length) {
     const inList = filteredSources.includes(item.sourceId);
