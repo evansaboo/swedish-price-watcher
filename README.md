@@ -107,6 +107,34 @@ Open `http://127.0.0.1:3030`.
 | `ELGIGANTEN_EMAIL` | No | Elgiganten login for signed-in cart staging |
 | `ELGIGANTEN_PASSWORD` | No | Elgiganten password (staging never enters card details) |
 | `ELGIGANTEN_SESSION_PATH` | No | Where the reusable browser session is stored (mode 0600) |
+| `ELGIGANTEN_PROXY_URL` | No | HTTP(S) proxy used for Elgiganten requests — the escape hatch when your IP is firewall-blocked |
+| `ELGIGANTEN_BLOCK_COOLDOWN_HOURS` | No | How long to stand Elgiganten sources down after a hard block (default `6`) |
+
+### When Elgiganten returns 403
+
+Elgiganten sits behind a Vercel firewall. Two failure modes look similar but are
+very different:
+
+- **`429` + `x-vercel-mitigated: challenge`** — a bot challenge. Recoverable: the
+  scraper retries through a real Chromium, which normally passes it.
+- **`403` + `x-vercel-mitigated: deny`** — your egress IP is blocked outright.
+  Every path is refused, including `/robots.txt`, so no browser, header or
+  fingerprint change gets through.
+
+On a deny, all three Elgiganten sources (`elgiganten-outlet`,
+`elgiganten-campaigns`, `elgiganten-hotlist`) stand down together for
+`ELGIGANTEN_BLOCK_COOLDOWN_HOURS`. This is deliberate: retrying cannot succeed,
+and continued traffic risks prolonging the block. Other sources are unaffected.
+
+To confirm a deny:
+
+```bash
+curl -sSI https://www.elgiganten.se/ | grep -i 'HTTP/\|vercel-mitigated'
+```
+
+To recover, either wait out the cooldown or set `ELGIGANTEN_PROXY_URL` to a proxy
+on a different IP (`http://user:pass@host:port`; residential proxies are the most
+reliable) and restart.
 | `AFFILIATE_LINK_TEMPLATE_<SOURCE_ID>` | No | Approved tracking URL template containing `{url}` |
 
 

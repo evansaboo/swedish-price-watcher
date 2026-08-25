@@ -454,6 +454,13 @@ async function runHotlistPoll() {
   const startedAt = new Date().toISOString();
   const sourceState = state.sourceStates[hotlistSource.id] ?? {};
   state.sourceStates[hotlistSource.id] = sourceState;
+
+  // A source can be cooling down after an upstream block. Polling anyway would
+  // just reproduce the block, so skip until the cooldown expires.
+  if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
+    return { count: 0, newCount: 0, skipped: 'cooling-down', disabledUntil: sourceState.disabledUntil };
+  }
+
   sourceState.lastAttemptAt = startedAt;
 
   let collected;
@@ -468,7 +475,15 @@ async function runHotlistPoll() {
   } catch (error) {
     await commitExclusive(async () => {
       sourceState.lastError = error.message;
-      state.stats.hotlist = { ...(state.stats.hotlist ?? {}), lastPollAt: startedAt, lastError: error.message };
+      if (error.disableHours) {
+        sourceState.disabledUntil = new Date(Date.now() + error.disableHours * 60 * 60 * 1000).toISOString();
+      }
+      state.stats.hotlist = {
+        ...(state.stats.hotlist ?? {}),
+        lastPollAt: startedAt,
+        lastError: error.message,
+        disabledUntil: sourceState.disabledUntil ?? null
+      };
     });
     throw error;
   }
@@ -509,6 +524,7 @@ async function runHotlistPoll() {
     sourceState.lastSuccessAt = startedAt;
     sourceState.lastError = null;
     sourceState.lastCount = collected.length;
+    delete sourceState.disabledUntil;
 
     if (collected.length > 0 || deletedItemKeys.length > 0) {
       store.flushItems(collected.map(o => buildListingKey(o.sourceId, o.externalId)), deletedItemKeys);

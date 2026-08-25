@@ -37,6 +37,9 @@ const BROWSER_UA =
 const MAX_AUTH_RETRIES = 2;
 const RETRY_BASE_MS = 2000;
 const COOLDOWN_HOURS_ON_BLOCK = 2;
+// A hard deny is a firewall verdict on our egress IP, not a transient hiccup —
+// retrying in minutes cannot clear it and only reinforces it.
+const HARD_BLOCK_COOLDOWN_HOURS = Number(process.env.ELGIGANTEN_BLOCK_COOLDOWN_HOURS ?? 6);
 
 const sharedCache = {
   apiKey: null,
@@ -46,6 +49,92 @@ const sharedCache = {
 
 // Only one key acquisition runs at a time; concurrent callers await the same promise.
 let inFlight = null;
+
+// When Elgiganten hard-denies this IP the whole site is unreachable, so every
+// Elgiganten source stands down together instead of each rediscovering the
+// block on its own schedule (and relaunching a browser to do so).
+let blockedUntil = 0;
+let blockDetail = '';
+
+/**
+ * Optional egress proxy, used by both the browser and the direct-fetch path.
+ * A hard deny is keyed on the caller's IP, so routing Elgiganten traffic
+ * through a different exit is the only way to restore access from a blocked
+ * host. Format: http://user:pass@host:port
+ */
+function parseProxy(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return {
+      server: `${url.protocol}//${url.host}`,
+      username: url.username ? decodeURIComponent(url.username) : undefined,
+      password: url.password ? decodeURIComponent(url.password) : undefined,
+      url: value
+    };
+  } catch {
+    console.warn(`[elgiganten] Ignoring malformed ELGIGANTEN_PROXY_URL: ${value.slice(0, 40)}`);
+    return null;
+  }
+}
+
+/**
+ * Vercel answers a matched firewall rule with 403 + `x-vercel-mitigated: deny`.
+ * That is materially different from the 429 challenge this module was built
+ * for: a challenge can be solved by presenting a real browser, a deny cannot be
+ * solved from the same IP at all — every path, including /robots.txt, is 403.
+ */
+export function isHardDeny(status, mitigatedHeader) {
+  return Number(status) === 403 && String(mitigatedHeader ?? '').toLowerCase() === 'deny';
+}
+
+function hardBlockError(logPrefix, detail) {
+  const err = new Error(
+    `${logPrefix} blocked by Elgiganten (403 deny — ${detail}). ` +
+    `Cooling down ${HARD_BLOCK_COOLDOWN_HOURS}h; set ELGIGANTEN_PROXY_URL to use a different egress IP.`
+  );
+  err.status = 403;
+  err.blocked = true;
+  err.disableHours = HARD_BLOCK_COOLDOWN_HOURS;
+  return err;
+}
+
+function noteHardBlock(logPrefix, detail) {
+  const wasBlocked = blockedUntil > Date.now();
+  blockedUntil = Date.now() + HARD_BLOCK_COOLDOWN_HOURS * 60 * 60_000;
+  blockDetail = detail;
+  if (!wasBlocked) {
+    console.error(
+      `${logPrefix} Elgiganten is refusing this IP outright (403 x-vercel-mitigated: deny — ${detail}). ` +
+      'Every path is denied, so this is a firewall block on the egress IP, not a bot challenge. ' +
+      `Standing all Elgiganten sources down for ${HARD_BLOCK_COOLDOWN_HOURS}h. ` +
+      'Set ELGIGANTEN_PROXY_URL to route via another IP to restore access sooner.'
+    );
+  }
+  return hardBlockError(logPrefix, detail);
+}
+
+/** Current block state, for surfacing in /api/status and the dashboard. */
+export function getElgigantenBlockStatus() {
+  const now = Date.now();
+  return {
+    blocked: blockedUntil > now,
+    blockedUntil: blockedUntil > now ? new Date(blockedUntil).toISOString() : null,
+    detail: blockedUntil > now ? blockDetail : null,
+    proxyConfigured: Boolean(parseProxy(process.env.ELGIGANTEN_PROXY_URL))
+  };
+}
+
+/** Test seam: clear the shared key cache and the block state. */
+export function resetElgigantenAuthState() {
+  sharedCache.apiKey = null;
+  sharedCache.expiry = 0;
+  sharedCache.cookies.clear();
+  blockedUntil = 0;
+  blockDetail = '';
+  inFlight = null;
+}
 
 function parseSetCookiePairs(setCookieHeader) {
   // fetch() exposes multiple Set-Cookie values as one comma-joined string via
@@ -91,6 +180,30 @@ function rateLimitError(logPrefix, step, res) {
   return err;
 }
 
+/**
+ * Node's global fetch has no proxy option, so route through undici's
+ * ProxyAgent when a proxy is configured. undici is optional at runtime (it is
+ * absent from some production installs), in which case only the browser path —
+ * which proxies natively via Playwright — honours the proxy.
+ */
+let proxyDispatcher;
+async function getProxyDispatcher() {
+  if (proxyDispatcher !== undefined) return proxyDispatcher;
+  const proxy = parseProxy(process.env.ELGIGANTEN_PROXY_URL);
+  if (!proxy) {
+    proxyDispatcher = null;
+    return proxyDispatcher;
+  }
+  try {
+    const { ProxyAgent } = await import('undici');
+    proxyDispatcher = new ProxyAgent(proxy.url);
+  } catch {
+    console.warn('[elgiganten] ELGIGANTEN_PROXY_URL is set but undici is unavailable — direct fetch will not be proxied.');
+    proxyDispatcher = null;
+  }
+  return proxyDispatcher;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Primary path: fetch the key from inside a real browser (bypasses the Vercel
 // fingerprint challenge that blocks plain fetch()).
@@ -99,16 +212,24 @@ async function fetchKeyViaBrowser(logPrefix) {
   const now = Date.now();
   let browser;
   try {
+    const proxy = parseProxy(process.env.ELGIGANTEN_PROXY_URL);
     browser = await chromium.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      ...(proxy ? { proxy: { server: proxy.server, username: proxy.username, password: proxy.password } } : {})
     });
     const context = await browser.newContext({ userAgent: BROWSER_UA, locale: 'sv-SE' });
     const page = await context.newPage();
 
     // Load the homepage first so the signed-api-key request carries a real
     // referer/session — hitting the API cold (no referer) returns Forbidden.
-    await page.goto(HOMEPAGE_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    const nav = await page.goto(HOMEPAGE_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+
+    // A denied homepage means the firewall has rejected the IP itself, so the
+    // key request would only add a second denied hit. Bail out now.
+    if (nav && isHardDeny(nav.status(), nav.headers()['x-vercel-mitigated'])) {
+      throw noteHardBlock(logPrefix, `homepage returned ${nav.status()}`);
+    }
 
     // Perform the key fetch from within the page context: the request inherits
     // the browser's TLS fingerprint and same-origin credentials, so Vercel lets
@@ -118,8 +239,17 @@ async function fetchKeyViaBrowser(logPrefix) {
       const text = await res.text();
       let body = null;
       try { body = JSON.parse(text); } catch { /* not JSON */ }
-      return { status: res.status, apiKey: body?.apiKey ?? null, snippet: text.slice(0, 200) };
+      return {
+        status: res.status,
+        apiKey: body?.apiKey ?? null,
+        snippet: text.slice(0, 200),
+        mitigated: res.headers.get('x-vercel-mitigated')
+      };
     }, SIGNED_KEY_URL);
+
+    if (isHardDeny(result.status, result.mitigated)) {
+      throw noteHardBlock(logPrefix, `signed-api-key returned ${result.status}`);
+    }
 
     if (!result.apiKey) {
       throw new Error(`no apiKey from browser (status ${result.status}): ${result.snippet}`);
@@ -142,15 +272,20 @@ async function attemptDirectFetch(logPrefix) {
     Origin: 'https://www.elgiganten.se'
   };
   const existingCookies = buildCookieHeader();
+  const dispatcher = await getProxyDispatcher();
 
   // Step 1: attempt direct fetch — newer deployments return 200 + apiKey immediately.
   const res1 = await fetch(SIGNED_KEY_URL, {
     headers: existingCookies ? { ...baseHeaders, Cookie: existingCookies } : baseHeaders,
-    signal: AbortSignal.timeout(15_000)
+    signal: AbortSignal.timeout(15_000),
+    ...(dispatcher ? { dispatcher } : {})
   });
   updateCookieJar(res1.headers.get('set-cookie'));
 
   if (res1.status === 429) throw rateLimitError(logPrefix, 'fetching signed-api-key', res1);
+  if (isHardDeny(res1.status, res1.headers.get('x-vercel-mitigated'))) {
+    throw noteHardBlock(logPrefix, `signed-api-key returned ${res1.status}`);
+  }
 
   let body1 = null;
   try { body1 = await res1.clone().json(); } catch { /* not JSON */ }
@@ -171,7 +306,8 @@ async function attemptDirectFetch(logPrefix) {
   // Step 2: exchange nonce for signed API key — must send cookie + nonce header
   const res2 = await fetch(SIGNED_KEY_URL, {
     headers: { ...baseHeaders, 'x-algolia-refresh-nonce': nonce, Cookie: buildCookieHeader() },
-    signal: AbortSignal.timeout(15_000)
+    signal: AbortSignal.timeout(15_000),
+    ...(dispatcher ? { dispatcher } : {})
   });
   updateCookieJar(res2.headers.get('set-cookie'));
 
@@ -190,6 +326,8 @@ async function fetchKeyViaDirectFetch(logPrefix) {
       return await attemptDirectFetch(logPrefix);
     } catch (err) {
       lastErr = err;
+      // A deny is final for this IP — retrying just adds denied requests.
+      if (err.blocked) throw err;
       if (err.status !== 429 || attempt === MAX_AUTH_RETRIES) break;
       const backoffMs = err.retryAfterMs ?? (RETRY_BASE_MS * (attempt + 1));
       const jitter = Math.round(backoffMs * 0.2 * Math.random());
@@ -210,6 +348,8 @@ async function acquireKey(logPrefix) {
     try {
       return await fetchKeyViaBrowser(logPrefix);
     } catch (err) {
+      // The fallback shares this egress IP, so a deny applies to it too.
+      if (err.blocked) throw err;
       console.warn(`${logPrefix} browser key fetch failed (${err.message}) — falling back to direct fetch`);
     }
   }
@@ -228,6 +368,13 @@ export async function getSharedAlgoliaApiKey(logPrefix = '[elgiganten]') {
   const now = Date.now();
   if (sharedCache.apiKey && sharedCache.expiry > now + 60_000) {
     return sharedCache.apiKey;
+  }
+
+  // While the firewall is denying this IP, fail fast for every Elgiganten
+  // source. Launching a browser per source per cycle to be told 403 again is
+  // pure cost on a Raspberry Pi, and the extra traffic works against us.
+  if (blockedUntil > now) {
+    throw hardBlockError(logPrefix, blockDetail);
   }
 
   // Coalesce concurrent callers onto a single acquisition (one browser launch).
