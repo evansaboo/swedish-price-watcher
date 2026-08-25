@@ -436,3 +436,28 @@ Edit `config/sources.json`. Common fields:
 | `referenceLookup` | Enable non-outlet price matching |
 | `referenceLookupMaxPerScan` | Max items to enrich per scan |
 | `referenceLookupConcurrency` | Parallel lookup workers |
+
+#### Using a VPN or proxy to change the egress IP
+
+The deny is tied to a single IP, so any route out through a different address
+restores access. Confirmed behaviour: a blocked IP gets `403 deny`, while other
+IPs get `429 challenge`, which the browser path solves normally.
+
+Options, cheapest first:
+
+1. **Change your ISP-assigned IP.** Many consumer ISPs (Telia among them) pin
+   the DHCP lease to the router's WAN MAC address. Putting the ISP router in
+   bridge mode behind your own router and changing that router's WAN MAC
+   usually yields a new address immediately.
+2. **NordVPN (or similar) on the host.** Install the Linux client and connect;
+   all traffic then leaves through the VPN. Note this changes the egress for
+   *everything* on the host — verify inbound access still works (a Cloudflare
+   Tunnel keeps working, since it is an outbound connection).
+3. **`ELGIGANTEN_PROXY_URL`** to proxy only Elgiganten traffic and leave the
+   rest of the host untouched.
+
+> **SOCKS proxies that require a username and password will not work.** Chromium
+> cannot authenticate to a SOCKS proxy, so credentials are silently dropped.
+> NordVPN's SOCKS5 endpoints require service credentials, so they fall into this
+> category. Run a local HTTP-to-SOCKS bridge and point `ELGIGANTEN_PROXY_URL` at
+> the bridge's HTTP port instead.

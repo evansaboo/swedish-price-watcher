@@ -67,10 +67,21 @@ function parseProxy(raw) {
   if (!value) return null;
   try {
     const url = new URL(value);
+    const isSocks = url.protocol.startsWith('socks');
+    // Chromium cannot authenticate to a SOCKS proxy, so credentials are
+    // silently dropped and the connection fails. Providers that require them
+    // (NordVPN among them) need a local HTTP->SOCKS bridge instead.
+    if (isSocks && (url.username || url.password)) {
+      console.warn(
+        '[elgiganten] ELGIGANTEN_PROXY_URL uses SOCKS with credentials, which Chromium cannot authenticate to. '
+        + 'Run a local HTTP->SOCKS bridge and point ELGIGANTEN_PROXY_URL at it (see README).'
+      );
+    }
     return {
       server: `${url.protocol}//${url.host}`,
       username: url.username ? decodeURIComponent(url.username) : undefined,
       password: url.password ? decodeURIComponent(url.password) : undefined,
+      isSocks,
       url: value
     };
   } catch {
