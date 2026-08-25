@@ -137,6 +137,17 @@ export function getElgigantenBlockStatus() {
   };
 }
 
+/**
+ * Drop the cooldown so the next call retries immediately. The block is tied to
+ * the egress IP, so once that changes the remaining cooldown is stale.
+ */
+export function clearElgigantenBlock() {
+  const wasBlocked = blockedUntil > Date.now();
+  blockedUntil = 0;
+  blockDetail = '';
+  return wasBlocked;
+}
+
 /** Test seam: clear the shared key cache and the block state. */
 export function resetElgigantenAuthState() {
   sharedCache.apiKey = null;

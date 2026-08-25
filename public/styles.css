@@ -2087,3 +2087,71 @@ body.scanning { --scan-bar-height: 28px; }
   .purchase-row { flex-direction: column; align-items: stretch; }
   .purchase-row-actions { justify-content: flex-end; }
 }
+
+/* ── ELGIGANTEN BLOCK NOTICE ─────────────────────────────────────
+   A hard block halts several sources at once and is only resolvable by
+   changing the egress IP, so it warrants a persistent banner rather than a
+   transient toast the user may miss. */
+.block-notice {
+  max-width: 1440px;
+  margin: 0 auto 4px;
+  padding: 0 24px;
+}
+.block-notice.hidden { display: none; }
+.block-notice-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--gold-soft);
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-md);
+}
+.block-notice-icon {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--gold);
+  flex-shrink: 0;
+}
+.block-notice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.block-notice-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.block-notice-text {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+.block-notice-action {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.block-notice-action:hover:not(:disabled) {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: var(--text-inverse);
+}
+.block-notice-action:disabled { opacity: 0.55; cursor: default; }
+
+@media (max-width: 640px) {
+  .block-notice { padding: 0 14px; }
+  .block-notice-inner { align-items: flex-start; flex-wrap: wrap; }
+  .block-notice-action { width: 100%; }
+}

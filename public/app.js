@@ -108,6 +108,9 @@ const el = {
   schedulerWindowEnd: $('#scheduler-window-end'),
   modalSchedulerStatus: $('#modal-scheduler-status'),
   hotlistStatus: $('#hotlist-status'),
+  elgigantenBlock: $('#elgiganten-block'),
+  elgigantenBlockText: $('#elgiganten-block-text'),
+  elgigantenBlockRetry: $('#elgiganten-block-retry'),
   hotlistEnabled: $('#hotlist-enabled'),
   hotlistInterval: $('#hotlist-interval'),
   hotlistJitter: $('#hotlist-jitter'),
@@ -420,6 +423,35 @@ function syncFilterBadge() {
   } else {
     el.filterCountBadge.classList.add('hidden');
   }
+}
+
+// ── RENDER: ELGIGANTEN BLOCK NOTICE ─────────────────────────────
+/**
+ * Elgiganten's firewall denies by IP, which silently takes out several sources
+ * at once. Surfacing it here means the user sees "blocked until X" instead of
+ * an unexplained drop in results.
+ */
+function renderElgigantenBlock(block) {
+  if (!el.elgigantenBlock) return;
+
+  if (!block?.blocked) {
+    el.elgigantenBlock.classList.add('hidden');
+    return;
+  }
+
+  const parts = ['Elgiganten is refusing requests from this network\u2019s IP address, so its sources are paused.'];
+  if (block.blockedUntil) {
+    const until = new Date(block.blockedUntil);
+    if (!Number.isNaN(until.getTime())) {
+      parts.push(`Retrying automatically after ${until.toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' })}.`);
+    }
+  }
+  parts.push(block.proxyConfigured
+    ? 'A proxy is configured but still blocked \u2014 try a different exit IP.'
+    : 'Change your public IP (VPN, proxy or a new ISP lease), then hit Retry.');
+
+  el.elgigantenBlockText.textContent = parts.join(' ');
+  el.elgigantenBlock.classList.remove('hidden');
 }
 
 // ── RENDER: STATS ───────────────────────────────────────────────
@@ -1147,6 +1179,7 @@ async function pollScanStatus() {
   syncScanUI(status);
   renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
   renderSchedulerForm(status.scheduler);
+  renderElgigantenBlock(status.elgigantenBlock);
   el.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
 
   if (status.isRunning) {
@@ -1276,6 +1309,7 @@ async function loadDashboard() {
   renderStoreFilter(outletSources ?? []);
   renderCampaignFilter(outletCampaigns ?? []);
   renderSchedulerForm(status.scheduler);
+  renderElgigantenBlock(status.elgigantenBlock);
   el.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
 
   renderStats(status, response);
@@ -2070,6 +2104,23 @@ function bindEvents() {
     } finally {
       el.hotlistPollNow.disabled = false;
       el.hotlistPollNow.textContent = 'Poll now';
+    }
+  });
+
+  // Clear the Elgiganten cooldown after the user changes their egress IP.
+  el.elgigantenBlockRetry?.addEventListener('click', async () => {
+    el.elgigantenBlockRetry.disabled = true;
+    el.elgigantenBlockRetry.textContent = 'Retrying…';
+    try {
+      const res = await fetchJson('/api/elgiganten/retry', { method: 'POST' });
+      showToast(res.message, 'success');
+      el.elgigantenBlock.classList.add('hidden');
+      refresh();
+    } catch (err) {
+      showToast(`Retry failed: ${err.message}`, 'error');
+    } finally {
+      el.elgigantenBlockRetry.disabled = false;
+      el.elgigantenBlockRetry.textContent = 'Retry now';
     }
   });
 

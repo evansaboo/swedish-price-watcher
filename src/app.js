@@ -22,6 +22,7 @@ import {
   normalizeHotlistConfig
 } from './services/hotlistConfig.js';
 import { getTaxonomyCatalog, searchCatalog } from './sources/elgigantenTaxonomy.js';
+import { getElgigantenBlockStatus, clearElgigantenBlock } from './sources/elgigantenAuth.js';
 import {
   ensurePurchaseState,
   normalizePurchaseSettings,
@@ -291,7 +292,40 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         favoriteCategories: getFavoriteCategories(state).length
       },
       scheduler: schedulerState,
-      hotlist: hotlist ? hotlist.getStatus() : null
+      hotlist: hotlist ? hotlist.getStatus() : null,
+      elgigantenBlock: getElgigantenBlockStatus()
+    };
+  });
+
+  /**
+   * A hard block is tied to the egress IP, so the usual recovery is to change
+   * it (VPN, proxy, new ISP lease). Once that is done the remaining cooldown is
+   * stale — this clears it so the next scan retries immediately instead of
+   * waiting out hours of an obsolete block.
+   */
+  app.post('/api/elgiganten/retry', async () => {
+    const before = getElgigantenBlockStatus();
+    clearElgigantenBlock();
+
+    const state = store.getState();
+    const cleared = [];
+    for (const source of config.sources) {
+      if (!source.id.startsWith('elgiganten')) continue;
+      const sourceState = state.sourceStates[source.id];
+      if (sourceState?.disabledUntil) {
+        delete sourceState.disabledUntil;
+        cleared.push(source.id);
+      }
+    }
+    if (cleared.length) await store.save();
+
+    return {
+      ok: true,
+      wasBlocked: before.blocked,
+      clearedSources: cleared,
+      message: before.blocked || cleared.length
+        ? 'Elgiganten cooldown cleared — the next scan will retry immediately.'
+        : 'Elgiganten was not blocked; nothing to clear.'
     };
   });
 

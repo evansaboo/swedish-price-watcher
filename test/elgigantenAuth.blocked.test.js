@@ -8,6 +8,20 @@ import {
   resetElgigantenAuthState
 } from '../src/sources/elgigantenAuth.js';
 
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildApp } from '../src/app.js';
+import { createDefaultState } from '../src/lib/store.js';
+import { ProductCache } from '../src/services/productCache.js';
+
+const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
+
+function buildTestCache(state) {
+  const cache = new ProductCache();
+  cache.rebuild(state);
+  return cache;
+}
+
 /**
  * Elgiganten moved from a 429 bot *challenge* (solvable by presenting a real
  * browser) to a 403 firewall *deny* on the egress IP, where every path —
@@ -101,4 +115,67 @@ test('elgiganten hard-deny handling', async (t) => {
       delete process.env.ELGIGANTEN_NO_BROWSER;
     }
   });
+});
+
+test('POST /api/elgiganten/retry clears a stale cooldown', async (t) => {
+  t.afterEach(() => resetElgigantenAuthState());
+
+  const state = createDefaultState();
+  // Two Elgiganten sources cooling down, plus an unrelated source that must
+  // be left alone.
+  state.sourceStates = {
+    'elgiganten-outlet': { disabledUntil: new Date(Date.now() + 6 * 3600_000).toISOString() },
+    'elgiganten-hotlist': { disabledUntil: new Date(Date.now() + 6 * 3600_000).toISOString() },
+    'netonnet-outlet': { disabledUntil: new Date(Date.now() + 6 * 3600_000).toISOString() }
+  };
+
+  let saved = 0;
+  const app = await buildApp({
+    config: {
+      publicDir,
+      sources: [
+        { id: 'elgiganten-outlet', enabled: true },
+        { id: 'elgiganten-hotlist', enabled: true },
+        { id: 'netonnet-outlet', enabled: true }
+      ]
+    },
+    store: { getState: () => state, save: async () => { saved++; } },
+    productCache: buildTestCache(state),
+    scanState: { running: false, lastError: null },
+    triggerScan: async () => ({})
+  });
+  t.after(() => app.close());
+
+  const res = await app.inject({ method: 'POST', url: '/api/elgiganten/retry' });
+  assert.equal(res.statusCode, 200);
+
+  const body = res.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.clearedSources.sort(), ['elgiganten-hotlist', 'elgiganten-outlet']);
+  assert.equal(saved, 1, 'the cleared cooldown is persisted');
+
+  assert.equal(state.sourceStates['elgiganten-outlet'].disabledUntil, undefined);
+  assert.equal(state.sourceStates['elgiganten-hotlist'].disabledUntil, undefined);
+  assert.ok(
+    state.sourceStates['netonnet-outlet'].disabledUntil,
+    'unrelated sources keep their own cooldown'
+  );
+});
+
+test('status endpoint reports the Elgiganten block', async (t) => {
+  t.afterEach(() => resetElgigantenAuthState());
+
+  const state = createDefaultState();
+  const app = await buildApp({
+    config: { publicDir, sources: [] },
+    store: { getState: () => state, save: async () => {} },
+    productCache: buildTestCache(state),
+    scanState: { running: false, lastError: null },
+    triggerScan: async () => ({})
+  });
+  t.after(() => app.close());
+
+  const res = await app.inject({ method: 'GET', url: '/api/status' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().elgigantenBlock.blocked, false);
 });
