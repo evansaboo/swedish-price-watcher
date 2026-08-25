@@ -146,11 +146,17 @@ test('POST /api/elgiganten/retry clears a stale cooldown', async (t) => {
   });
   t.after(() => app.close());
 
+  // Stub the reachability probe so the test never touches the network.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('', { status: 429 });
+  t.after(() => { globalThis.fetch = realFetch; });
+
   const res = await app.inject({ method: 'POST', url: '/api/elgiganten/retry' });
   assert.equal(res.statusCode, 200);
 
   const body = res.json();
   assert.equal(body.ok, true);
+  assert.equal(body.stillBlocked, false, '429 is a solvable challenge, not a block');
   assert.deepEqual(body.clearedSources.sort(), ['elgiganten-hotlist', 'elgiganten-outlet']);
   assert.equal(saved, 1, 'the cleared cooldown is persisted');
 
@@ -178,4 +184,31 @@ test('status endpoint reports the Elgiganten block', async (t) => {
   const res = await app.inject({ method: 'GET', url: '/api/status' });
   assert.equal(res.statusCode, 200);
   assert.equal(res.json().elgigantenBlock.blocked, false);
+});
+
+test('retry reports when the IP is still blocked', async (t) => {
+  t.afterEach(() => resetElgigantenAuthState());
+
+  const state = createDefaultState();
+  const app = await buildApp({
+    config: { publicDir, sources: [] },
+    store: { getState: () => state, save: async () => {} },
+    productCache: buildTestCache(state),
+    scanState: { running: false, lastError: null },
+    triggerScan: async () => ({})
+  });
+  t.after(() => app.close());
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('', {
+    status: 403,
+    headers: { 'x-vercel-mitigated': 'deny' }
+  });
+  t.after(() => { globalThis.fetch = realFetch; });
+
+  const body = (await app.inject({ method: 'POST', url: '/api/elgiganten/retry' })).json();
+  assert.equal(body.stillBlocked, true);
+  assert.equal(body.probe.status, 'denied');
+  // The user must not be told it worked when the IP is still denied.
+  assert.match(body.message, /still blocked/i);
 });

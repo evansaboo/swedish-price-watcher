@@ -2113,8 +2113,9 @@ function bindEvents() {
     el.elgigantenBlockRetry.textContent = 'Retrying…';
     try {
       const res = await fetchJson('/api/elgiganten/retry', { method: 'POST' });
-      showToast(res.message, 'success');
-      el.elgigantenBlock.classList.add('hidden');
+      // Only hide the banner if the IP is actually unblocked now.
+      showToast(res.message, res.stillBlocked ? 'error' : 'success');
+      if (!res.stillBlocked) el.elgigantenBlock.classList.add('hidden');
       refresh();
     } catch (err) {
       showToast(`Retry failed: ${err.message}`, 'error');

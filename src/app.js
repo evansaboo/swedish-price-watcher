@@ -188,6 +188,37 @@ function normalizeSchedulerUpdate(payload) {
   return normalized;
 }
 
+/**
+ * Cheap liveness probe used by the Elgiganten retry endpoint, so the user gets
+ * an immediate verdict on whether an IP change worked.
+ *
+ * 403 + `x-vercel-mitigated: deny` means this IP is firewall-blocked. A 429
+ * challenge is NOT a block — it is the normal bot check that the browser-based
+ * scraper solves, so it counts as healthy here.
+ */
+async function probeElgigantenReachability(timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch('https://www.elgiganten.se/', {
+      method: 'GET',
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: { 'user-agent': 'Mozilla/5.0', accept: 'text/html' }
+    });
+    const mitigated = res.headers.get('x-vercel-mitigated');
+    if (res.status === 403 && String(mitigated ?? '').toLowerCase() === 'deny') {
+      return { status: 'denied', httpStatus: res.status };
+    }
+    if (res.status === 429) return { status: 'challenge', httpStatus: res.status };
+    return { status: 'reachable', httpStatus: res.status };
+  } catch (err) {
+    return { status: 'unknown', error: err.name === 'AbortError' ? 'timed out' : err.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
   if (!schedulerState) return null;
   if (schedulerState.nextRunAt || !schedulerState.enabled) return schedulerState;
@@ -319,13 +350,30 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
     if (cleared.length) await store.save();
 
+    // Clearing the cooldown alone gives no feedback on whether the IP change
+    // actually worked. Probe the site so the answer is immediate rather than
+    // "wait for the next scan and see".
+    const probe = await probeElgigantenReachability();
+
+    let message;
+    if (probe.status === 'denied') {
+      message = 'Cooldown cleared, but this IP is still blocked by Elgiganten. Change the egress IP (VPN, proxy or a new ISP lease) and try again.';
+    } else if (probe.status === 'reachable') {
+      message = 'Elgiganten is reachable again — the next scan will pick it up.';
+    } else if (probe.status === 'challenge') {
+      // 429 is the normal, solvable bot challenge; the browser path handles it.
+      message = 'Cooldown cleared. Elgiganten is responding normally again — the next scan will pick it up.';
+    } else {
+      message = 'Cooldown cleared — the next scan will retry immediately.';
+    }
+
     return {
       ok: true,
       wasBlocked: before.blocked,
       clearedSources: cleared,
-      message: before.blocked || cleared.length
-        ? 'Elgiganten cooldown cleared — the next scan will retry immediately.'
-        : 'Elgiganten was not blocked; nothing to clear.'
+      probe,
+      stillBlocked: probe.status === 'denied',
+      message
     };
   });
 
