@@ -312,6 +312,16 @@
                 <input id="hotlist-min-discount" type="number" class="field-input" min="0" max="99" step="1" />
               </div>
             </div>
+            <div class="form-field" style="margin-top:0.5rem">
+              <label for="hotlist-webhook">Hotlist Discord webhook</label>
+              <input id="hotlist-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
+              <p class="field-hint">Hotlist finds post here only. They are not matched against Alert rules — the watch groups below already decide what counts.</p>
+            </div>
+            <label class="toggle-switch" style="margin-top:0.5rem">
+              <input id="hotlist-notify-drops" type="checkbox" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">Also notify on price drops</span>
+            </label>
           </div>
 
           <div class="rules-toolbar">

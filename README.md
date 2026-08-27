@@ -54,6 +54,24 @@ Configure it in the dashboard under **Settings → Hotlist**:
   also returns 5070s. With this on (the default) a hit must literally contain the
   keyword's significant tokens in its title.
 - **Poll now** — run a poll immediately without waiting for the next tick.
+- **Hotlist Discord webhook** — where hotlist finds are posted.
+
+### The hotlist is separate from Alert rules
+
+Hotlist finds go **only** to the hotlist webhook and are never matched against
+the Alert rules; equally, Alert rules never fire on hotlist items.
+
+They used to share a pipeline, and it behaved badly. The watch groups already
+decide what is worth reporting, so re-filtering their output through unrelated
+keyword rules did the same job twice and got it wrong: a hotlist iPhone find
+would trigger a generic "Iphone" rule and land in that rule's channel, while the
+Hotlist tab offered no webhook field to explain where anything had gone. Routing
+now matches the mental model — one watch list, one destination.
+
+If you previously created an alert rule scoped to the hotlist source as a way of
+routing these, its webhook is adopted automatically on first start and a line is
+logged saying the rule can be deleted. Wishlist target alerts are unaffected:
+those are per-item prices you set explicitly and they have their own webhook.
 
 Settings live in the SQLite preferences, so they survive restarts and need no
 redeploy. The `watchGroups` in `config/sources.json` are only the first-run seed.

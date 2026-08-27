@@ -1343,6 +1343,15 @@ body.scanning { --scan-bar-height: 28px; }
   margin-bottom: 12px;
 }
 .rules-count { font-size: 12px; color: var(--text-tertiary); font-weight: 500; }
+
+/* Explains where a destination's messages actually go, so the routing is
+   visible in the UI instead of only in the code. */
+.field-hint {
+  margin: 0.375rem 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
 .rules-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
 .rule-item {
   padding: 14px;

@@ -90,7 +90,10 @@ const notifier = new DiscordNotifier({
   webhookUrl: config.discordWebhookUrl,
   cooldownHours: config.notificationCooldownHours,
   botToken: config.purchase?.discordBotToken,
-  alertChannelId: config.purchase?.discordAlertChannelId
+  alertChannelId: config.purchase?.discordAlertChannelId,
+  // The hotlist notifies through its own webhook; this keeps its finds out of
+  // the alert-rule pipeline.
+  hotlistSourceId: config.sources.find((entry) => entry.type === 'elgiganten-hotlist')?.id ?? ''
 });
 
 // Shared with the HTTP layer so dashboard, Discord button and proactive
@@ -543,18 +546,43 @@ async function runHotlistPoll() {
     }
 
     if (!skipDiscordNotifications && (mergeResult.newItems.length || mergeResult.priceDrops.length)) {
-      const notif = await notifier.notifyScan({
-        deals: state.deals,
-        newItems: mergeResult.newItems.map((item) => decorateAffiliateLink(item, sourceById)),
-        priceDrops: mergeResult.priceDrops.map((item) => decorateAffiliateLink(item, sourceById)),
-        sources: config.sources,
-        state,
-        notificationSettings: { ...(state.preferences?.notificationSettings ?? {}) },
-        wishlistTargets: state.preferences?.wishlistTargets ?? {},
-        purchase: ensurePurchaseState(state.preferences),
-        stageListing: purchaseService.stageListing
-      });
-      state.stats.hotlist = { ...(state.stats.hotlist ?? {}), lastNotificationSummary: notif };
+      const hotlistConfig = state.preferences?.hotlist ?? {};
+      const newItems = mergeResult.newItems.map((item) => decorateAffiliateLink(item, sourceById));
+      const priceDrops = mergeResult.priceDrops.map((item) => decorateAffiliateLink(item, sourceById));
+      const notificationSettings = { ...(state.preferences?.notificationSettings ?? {}) };
+
+      // The hotlist posts to its own channel and is deliberately not run
+      // through the alert rules — its watch groups already decided what
+      // matters, and routing through unrelated keyword rules sent finds to
+      // whichever channel happened to match.
+      const notif = notificationSettings.notificationsEnabled === false
+        ? { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'notifications-disabled' }
+        : await notifier.notifyHotlist({
+          newItems,
+          priceDrops,
+          state,
+          webhookUrl: hotlistConfig.webhookUrl,
+          notifyPriceDrops: hotlistConfig.notifyPriceDrops !== false,
+          purchase: ensurePurchaseState(state.preferences),
+          stageListing: purchaseService.stageListing
+        });
+
+      // Wishlist targets stay active: those are per-item prices the user set
+      // explicitly, and they already have their own webhook.
+      const wishlist = notificationSettings.notificationsEnabled === false
+        ? { sent: 0, skipped: 0, failed: 0, errors: [] }
+        : await notifier.notifyWishlistTargets({
+          newItems,
+          priceDrops,
+          state,
+          wishlistTargets: state.preferences?.wishlistTargets ?? {},
+          config: notificationSettings.wishlistAlerts
+        });
+
+      state.stats.hotlist = {
+        ...(state.stats.hotlist ?? {}),
+        lastNotificationSummary: { ...notif, wishlistAlerts: wishlist }
+      };
     } else if (isFirstSuccessfulRun && collected.length) {
       console.log(`[hotlist] First successful poll — suppressing ${collected.length} alert(s).`);
     }

@@ -27,6 +27,20 @@ const DEFAULT_MIN_DISCOUNT_PCT = 15;
 const DEFAULT_HITS_PER_GROUP = 100;
 const MAX_HITS_PER_GROUP = 200;
 
+/**
+ * The hotlist posts to its own Discord webhook rather than borrowing the alert
+ * rules'. Sharing them meant a hotlist find fired whichever unrelated rule
+ * happened to match its title, and the Hotlist tab gave no indication of where
+ * its notifications were going.
+ */
+export function normalizeWebhookUrl(value) {
+  const url = String(value ?? '').trim();
+  if (!url) return '';
+  // Anything else would be posted to blindly on every poll.
+  if (!/^https:\/\/(?:\w+\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(url)) return '';
+  return url;
+}
+
 function clampNumber(value, { min, max, fallback }) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -127,6 +141,10 @@ export function normalizeHotlistConfig(raw, seed = {}) {
 
   return {
     enabled: input.enabled === undefined ? seed.enabled !== false : Boolean(input.enabled),
+    webhookUrl: normalizeWebhookUrl(input.webhookUrl ?? seed.webhookUrl),
+    notifyPriceDrops: input.notifyPriceDrops === undefined
+      ? seed.notifyPriceDrops !== false
+      : Boolean(input.notifyPriceDrops),
     intervalSeconds: Math.round(clampNumber(
       input.intervalSeconds ?? seed.intervalSeconds,
       { min: MIN_INTERVAL_SECONDS, max: MAX_INTERVAL_SECONDS, fallback: DEFAULT_INTERVAL_SECONDS },
@@ -172,7 +190,39 @@ export function ensureHotlistConfig(preferences, seedSource) {
   target.hotlist = existing
     ? normalizeHotlistConfig(existing)
     : seedHotlistConfigFromSource(seedSource ?? {});
+
+  adoptWebhookFromLegacyAlertRule(target, seedSource?.id);
+
   return target.hotlist;
+}
+
+/**
+ * Before the hotlist had its own webhook, the only way to route its finds
+ * anywhere was an alert rule scoped to the hotlist source. Those rules stop
+ * matching now that the two systems are separate, so carry the webhook over
+ * rather than silently dropping notifications the user had working.
+ */
+function adoptWebhookFromLegacyAlertRule(preferences, hotlistSourceId) {
+  if (!hotlistSourceId || preferences.hotlist.webhookUrl) return;
+
+  const rules = preferences.notificationSettings?.alertRules;
+  if (!Array.isArray(rules)) return;
+
+  const legacy = rules.find((rule) => {
+    const sources = rule?.filteredSources ?? rule?.excludedSources ?? [];
+    return rule?.sourceFilterMode === 'include'
+      && sources.length === 1
+      && sources[0] === hotlistSourceId
+      && (rule.webhooks ?? []).some((w) => normalizeWebhookUrl(w));
+  });
+  if (!legacy) return;
+
+  const webhook = (legacy.webhooks ?? []).map(normalizeWebhookUrl).find(Boolean);
+  preferences.hotlist.webhookUrl = webhook;
+  console.log(
+    `[hotlist] Adopted the webhook from alert rule "${legacy.label ?? legacy.id}" — `
+    + 'that rule no longer matches hotlist items and can be deleted.'
+  );
 }
 
 export function activeGroups(config) {

@@ -115,6 +115,8 @@ const el = {
   hotlistInterval: $('#hotlist-interval'),
   hotlistJitter: $('#hotlist-jitter'),
   hotlistMinDiscount: $('#hotlist-min-discount'),
+  hotlistWebhook: $('#hotlist-webhook'),
+  hotlistNotifyDrops: $('#hotlist-notify-drops'),
   hotlistGroups: $('#hotlist-groups'),
   hotlistCountLabel: $('#hotlist-count-label'),
   hotlistPollNow: $('#hotlist-poll-now'),
@@ -1833,6 +1835,8 @@ function renderHotlistForm() {
   el.hotlistInterval.value = hotlistConfig.intervalSeconds;
   el.hotlistJitter.value = hotlistConfig.jitterPct;
   el.hotlistMinDiscount.value = hotlistConfig.minDiscountPct;
+  if (el.hotlistWebhook) el.hotlistWebhook.value = hotlistConfig.webhookUrl ?? '';
+  if (el.hotlistNotifyDrops) el.hotlistNotifyDrops.checked = hotlistConfig.notifyPriceDrops !== false;
   renderHotlistGroups();
 }
 
@@ -1892,6 +1896,8 @@ function collectHotlistConfig() {
     intervalSeconds: toNumber(el.hotlistInterval, hotlistConfig.intervalSeconds),
     jitterPct: toNumber(el.hotlistJitter, hotlistConfig.jitterPct),
     minDiscountPct: toNumber(el.hotlistMinDiscount, hotlistConfig.minDiscountPct),
+    webhookUrl: el.hotlistWebhook ? el.hotlistWebhook.value.trim() : (hotlistConfig.webhookUrl ?? ''),
+    notifyPriceDrops: el.hotlistNotifyDrops ? el.hotlistNotifyDrops.checked : hotlistConfig.notifyPriceDrops !== false,
     groups: hotlistConfig.groups
   };
 }

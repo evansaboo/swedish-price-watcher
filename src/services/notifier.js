@@ -1,5 +1,6 @@
 import { firstFinite, formatSek } from '../lib/utils.js';
 import { buildPurchaseComponents } from './purchaseEngine.js';
+import { normalizeWebhookUrl } from './hotlistConfig.js';
 
 function getInitialPrice(item) {
   return firstFinite(item.referencePriceSek, item.marketValueSek);
@@ -104,7 +105,7 @@ export function itemMatchesRule(item, { keywords, categories, minDiscountPercent
 }
 
 export class DiscordNotifier {
-  constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000, botToken = '', alertChannelId = '' }) {
+  constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000, botToken = '', alertChannelId = '', hotlistSourceId = '' }) {
     this.webhookUrl = webhookUrl;
     this.cooldownMs = cooldownHours * 60 * 60 * 1000;
     this.webhookMaxRetries = Math.max(0, Number(webhookMaxRetries) || 0);
@@ -115,6 +116,8 @@ export class DiscordNotifier {
     // interactive alerts go through it; otherwise they degrade to plain embeds.
     this.botToken = String(botToken ?? '').trim();
     this.alertChannelId = String(alertChannelId ?? '').trim();
+    // Used to keep hotlist finds out of the alert-rule pipeline.
+    this.hotlistSourceId = String(hotlistSourceId ?? '').trim();
   }
 
   get canSendComponents() {
@@ -225,9 +228,112 @@ export class DiscordNotifier {
    *   - Price drops additionally require dropPercent ≥ minPriceDropPercent (default 5)
    * Sends to all webhooks listed on the rule.
    */
+  /**
+   * Hotlist notifications, deliberately separate from alert rules.
+   *
+   * The hotlist already decides what it cares about via its watch groups, so
+   * re-filtering its finds through unrelated keyword rules was doing the same
+   * job twice and doing it wrong: a hotlist iPhone find fired the generic
+   * "Iphone" rule and went to that rule's channel, while the Hotlist tab
+   * offered no webhook field to explain where anything was going. Everything
+   * the poller matched is worth sending, to one destination the user chose.
+   */
+  async notifyHotlist({
+    newItems = [],
+    priceDrops = [],
+    state,
+    webhookUrl,
+    notifyPriceDrops = true,
+    minPriceDropPercent = 5,
+    purchase = null,
+    stageListing = null
+  }) {
+    const empty = { sent: 0, skipped: 0, failed: 0, errors: [] };
+    const webhook = normalizeWebhookUrl(webhookUrl);
+    if (!webhook) {
+      return { ...empty, skipped: newItems.length + priceDrops.length, reason: 'no-webhook' };
+    }
+
+    let sent = 0, skipped = 0, failed = 0;
+    const errors = [];
+    const now = Date.now();
+
+    const deliver = async (item, notificationKey, { isDrop = false, dropPercent = null } = {}) => {
+      const previousSentAt = state.notifications[notificationKey];
+      if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
+        skipped++;
+        return;
+      }
+
+      const discount = getDiscountSummary(item);
+      const purchaseContext = await this.#resolvePurchaseContext({ item, purchase, stageListing });
+
+      try {
+        await this.#deliverAlert({
+          payload: {
+            username: 'Price Watcher',
+            content: isDrop
+              ? `📉 **Hotlist** — price drop ${formatPercent(dropPercent)}`
+              : '⚡ **Hotlist** — new find',
+            embeds: [
+              {
+                title: item.title,
+                url: item.buyUrl ?? item.url,
+                description: [
+                  `${item.sourceLabel ?? 'Elgiganten'} • ${item.category ?? ''}`.trim(),
+                  purchaseContext.note
+                ].filter(Boolean).join('\n'),
+                color: isDrop ? 0xf59e0b : 0x22c55e,
+                fields: [
+                  { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
+                  { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
+                  { name: 'Discount', value: formatPercent(discount.discountPercent), inline: true }
+                ],
+                image: item.imageUrl ? { url: item.imageUrl } : undefined,
+                footer: item.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
+              }
+            ]
+          },
+          components: purchaseContext.components,
+          webhookUrl: webhook
+        });
+        state.notifications[notificationKey] = new Date(now).toISOString();
+        sent++;
+      } catch (error) {
+        failed++;
+        this.#recordError(errors, error);
+      }
+    };
+
+    for (const item of newItems) {
+      await deliver(item, `${item.listingKey}:hotlist`);
+    }
+
+    if (notifyPriceDrops) {
+      for (const drop of priceDrops) {
+        if (!Number.isFinite(drop.dropPercent) || drop.dropPercent < minPriceDropPercent) continue;
+        const item = { ...(state.items[drop.listingKey] ?? drop), buyUrl: drop.buyUrl, affiliate: drop.affiliate };
+        await deliver(item, `${drop.listingKey}:hotlist:drop`, { isDrop: true, dropPercent: drop.dropPercent });
+      }
+    }
+
+    return { sent, skipped, failed, errors };
+  }
+
   async notifyAlertRules({ newItems, priceDrops = [], state, alertRules, purchase = null, stageListing = null }) {
     if (!alertRules.length) {
       return { sent: 0, skipped: 0, failed: 0, errors: [], reason: 'no-alert-rules' };
+    }
+
+    // Hotlist finds have their own channel and their own matching logic. Even
+    // though the poller no longer routes through here, this guard keeps the two
+    // systems from silently re-coupling if a future caller passes them in.
+    if (this.hotlistSourceId) {
+      newItems = newItems.filter((item) => item.sourceId !== this.hotlistSourceId);
+      priceDrops = priceDrops.filter((drop) => {
+        const sourceId = drop.sourceId ?? state.items?.[drop.listingKey]?.sourceId;
+        return sourceId !== this.hotlistSourceId;
+      });
     }
 
     let sent = 0;
