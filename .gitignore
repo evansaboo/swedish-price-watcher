@@ -11,3 +11,6 @@ data/*.migrated
 .env.bak.*
 version.json
 .DS_Store
+
+# Scratch verification scripts run against the live host.
+*.tmp.mjs
