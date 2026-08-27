@@ -7,6 +7,7 @@
     "start": "node --max-old-space-size=700 src/index.js",
     "dev": "node --watch src/index.js",
     "scan": "node src/index.js --run-once",
+    "check-proxy": "node scripts/check-proxy.mjs",
     "test": "node --test",
     "postinstall": "playwright-core install chromium"
   },

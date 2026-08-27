@@ -504,7 +504,52 @@ untouched:
 ELGIGANTEN_PROXY_URL=socks5://<service-user>:<service-pass>@se.socks.nordhold.net:1080
 ```
 
-The credentials are the **service credentials**, not your Nord account login.
-Find them in the Nord dashboard under *Set up NordVPN manually*. Swedish
-endpoints (`se.socks.nordhold.net`, `stockholm.se.socks.nordhold.net`) keep the
-storefront's pricing and locale consistent.
+**Step 1 — get the service credentials.** These are *not* your Nord account
+password. Sign in at [my.nordaccount.com](https://my.nordaccount.com) →
+**NordVPN** → **Set up NordVPN manually** → verify by email → copy the
+**service username** and **service password**.
+
+**Step 2 — pick a Swedish endpoint.** Port is always `1080`:
+
+| Hostname | Notes |
+| --- | --- |
+| `se.socks.nordhold.net` | Sweden, picks a server for you |
+| `stockholm.se.socks.nordhold.net` | Pins to Stockholm |
+
+Stay in Sweden so the storefront's pricing, language and stock stay consistent
+with what the rest of the app expects.
+
+**Step 3 — configure it.** Add to `.env` (the app auto-starts the bridge):
+
+```bash
+ELGIGANTEN_PROXY_URL=socks5://<service-user>:<service-pass>@se.socks.nordhold.net:1080
+```
+
+**Step 4 — verify before trusting it:**
+
+```bash
+npm run check-proxy
+```
+
+This is worth doing. A misconfigured proxy fails in the worst possible way:
+requests still succeed, but they exit from the host's own IP, so you believe
+you are protected while the address you were trying to hide is the one in use.
+The checker compares the exit IP against the direct one and refuses to report
+success if they match:
+
+```
+  mode               credentialed SOCKS5 -> local HTTP bridge
+  IP without proxy   78.70.240.212
+  IP via proxy       89.45.90.11
+  elgiganten.se      429
+```
+
+A `429` or plain `403` there is normal — those are the bot challenge, which the
+real scraper solves in a browser. Only `mitigated: deny` means the proxy IP is
+itself firewall-blocked; switch endpoints if you see it.
+
+Then restart: `sudo systemctl restart swedish-price-watcher`.
+
+Note that only Elgiganten traffic changes exit IP. The rest of the host,
+including the inbound Cloudflare tunnel that serves the dashboard, is
+untouched — which is why this is preferable to a host-wide VPN.
