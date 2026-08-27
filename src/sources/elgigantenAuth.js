@@ -1,5 +1,9 @@
 import { chromium } from 'playwright';
+import fs from 'node:fs';
+import path from 'node:path';
 import { sleep } from '../lib/utils.js';
+import { buildFingerprint, buildLaunchArgs, STEALTH_INIT_SCRIPT } from './browserFingerprint.js';
+import { startSocksHttpBridge, needsSocksBridge } from '../services/socksBridge.js';
 
 /**
  * Shared signed-Algolia-key auth for all Elgiganten sources.
@@ -32,8 +36,9 @@ import { sleep } from '../lib/utils.js';
 
 const SIGNED_KEY_URL = 'https://www.elgiganten.se/api/algolia/signed-api-key';
 const HOMEPAGE_URL = 'https://www.elgiganten.se/';
-const BROWSER_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+// The direct path has no browser to interrogate, so it needs a version to
+// present. Kept close to the bundled Chromium so both paths look alike.
+const DIRECT_FETCH_CHROME_VERSION = process.env.ELGIGANTEN_UA_VERSION ?? '147.0.7727.0';
 const MAX_AUTH_RETRIES = 2;
 const RETRY_BASE_MS = 2000;
 const COOLDOWN_HOURS_ON_BLOCK = 2;
@@ -62,6 +67,76 @@ let blockDetail = '';
  * through a different exit is the only way to restore access from a blocked
  * host. Format: http://user:pass@host:port
  */
+/**
+ * Browser storage (cookies, localStorage) persisted between key fetches.
+ *
+ * Without this every acquisition arrives as a brand-new visitor with no
+ * history, which is a strong bot signal when it happens on a fixed schedule
+ * from one address. Reusing the jar makes the traffic look like one returning
+ * browser instead of ~96 unrelated first-time visits a day.
+ */
+const STORAGE_STATE_PATH = process.env.ELGIGANTEN_BROWSER_STATE_PATH
+  ?? path.resolve('data/elgiganten-browser-state.json');
+
+function loadStorageState() {
+  try {
+    const raw = fs.readFileSync(STORAGE_STATE_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    // Playwright rejects a malformed state, which would break key acquisition
+    // entirely — treat anything unexpected as "no state".
+    if (parsed && Array.isArray(parsed.cookies)) return parsed;
+  } catch { /* first run, or unreadable/corrupt — start fresh */ }
+  return undefined;
+}
+
+async function saveStorageState(context) {
+  try {
+    fs.mkdirSync(path.dirname(STORAGE_STATE_PATH), { recursive: true });
+    await context.storageState({ path: STORAGE_STATE_PATH });
+  } catch (err) {
+    // Persistence is an optimisation; never fail a key fetch over it.
+    console.warn(`[elgiganten] could not persist browser state: ${err.message}`);
+  }
+}
+
+/**
+ * Resolve the proxy to something Chromium can actually use.
+ *
+ * A credentialed SOCKS URL is transparently fronted by a local HTTP bridge,
+ * because Chromium drops SOCKS credentials. The bridge is started once and
+ * reused, so this stays cheap on repeat calls.
+ */
+let bridgePromise = null;
+let bridgeForUrl = null;
+
+async function resolveProxy() {
+  const raw = process.env.ELGIGANTEN_PROXY_URL;
+  if (!String(raw ?? '').trim()) return null;
+
+  if (needsSocksBridge(raw)) {
+    if (!bridgePromise || bridgeForUrl !== raw) {
+      bridgeForUrl = raw;
+      bridgePromise = startSocksHttpBridge(raw).catch((err) => {
+        console.warn(`[elgiganten] could not start SOCKS bridge: ${err.message}`);
+        bridgePromise = null;
+        return null;
+      });
+    }
+    const bridge = await bridgePromise;
+    if (bridge) return { server: bridge.url, url: bridge.url };
+  }
+
+  return parseProxy(raw);
+}
+
+/** Test seam: stop any bridge started for the proxy. */
+export async function stopElgigantenProxyBridge() {
+  const bridge = bridgePromise ? await bridgePromise : null;
+  if (bridge) await bridge.close();
+  bridgePromise = null;
+  bridgeForUrl = null;
+}
+
 function parseProxy(raw) {
   const value = String(raw ?? '').trim();
   if (!value) return null;
@@ -211,7 +286,7 @@ function rateLimitError(logPrefix, step, res) {
 let proxyDispatcher;
 async function getProxyDispatcher() {
   if (proxyDispatcher !== undefined) return proxyDispatcher;
-  const proxy = parseProxy(process.env.ELGIGANTEN_PROXY_URL);
+  const proxy = await resolveProxy();
   if (!proxy) {
     proxyDispatcher = null;
     return proxyDispatcher;
@@ -234,13 +309,27 @@ async function fetchKeyViaBrowser(logPrefix) {
   const now = Date.now();
   let browser;
   try {
-    const proxy = parseProxy(process.env.ELGIGANTEN_PROXY_URL);
+    const proxy = await resolveProxy();
     browser = await chromium.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      args: buildLaunchArgs(),
       ...(proxy ? { proxy: { server: proxy.server, username: proxy.username, password: proxy.password } } : {})
     });
-    const context = await browser.newContext({ userAgent: BROWSER_UA, locale: 'sv-SE' });
+
+    // Derive the identity from the build actually running, so the user agent,
+    // client hints and JS-visible platform cannot contradict each other.
+    const fingerprint = buildFingerprint(browser.version());
+    const context = await browser.newContext({
+      userAgent: fingerprint.userAgent,
+      locale: 'sv-SE',
+      timezoneId: 'Europe/Stockholm',
+      viewport: { width: 1440, height: 900 },
+      extraHTTPHeaders: fingerprint.headers,
+      // Reuse cookies from previous runs so we present as a returning visitor
+      // rather than a brand new one every quarter of an hour.
+      storageState: loadStorageState()
+    });
+    await context.addInitScript(STEALTH_INIT_SCRIPT);
     const page = await context.newPage();
 
     // Load the homepage first so the signed-api-key request carries a real
@@ -276,6 +365,7 @@ async function fetchKeyViaBrowser(logPrefix) {
     if (!result.apiKey) {
       throw new Error(`no apiKey from browser (status ${result.status}): ${result.snippet}`);
     }
+    await saveStorageState(context);
     return cacheAndReturn(result.apiKey, now, logPrefix);
   } finally {
     if (browser) await browser.close().catch(() => {});
@@ -288,10 +378,14 @@ async function fetchKeyViaBrowser(logPrefix) {
 // ───────────────────────────────────────────────────────────────────────────
 async function attemptDirectFetch(logPrefix) {
   const now = Date.now();
+  // Match the browser path's identity so the two paths don't present as two
+  // different clients from the same address.
+  const fingerprint = buildFingerprint(DIRECT_FETCH_CHROME_VERSION);
   const baseHeaders = {
     Referer: HOMEPAGE_URL,
-    'User-Agent': BROWSER_UA,
-    Origin: 'https://www.elgiganten.se'
+    'User-Agent': fingerprint.userAgent,
+    Origin: 'https://www.elgiganten.se',
+    ...fingerprint.headers
   };
   const existingCookies = buildCookieHeader();
   const dispatcher = await getProxyDispatcher();
@@ -386,9 +480,27 @@ async function acquireKey(logPrefix) {
  * '[elgiganten-campaigns]') — the cache, cooldown, and browser launch are
  * shared regardless.
  */
+/**
+ * How much of the key's remaining life to treat as "about to expire".
+ *
+ * The signed key lives ~15 minutes, so a fixed margin makes the browser visit
+ * land on an almost perfect quarter-hour tick — roughly 96 visits a day at
+ * metronomic spacing, which is a pattern no human produces. Randomising the
+ * margin scatters those visits across a several-minute window instead, while
+ * still renewing well before expiry.
+ */
+function renewalMarginMs(random = Math.random) {
+  const MIN_MARGIN_MS = 60_000;
+  const MAX_MARGIN_MS = 5 * 60_000;
+  return MIN_MARGIN_MS + Math.floor(random() * (MAX_MARGIN_MS - MIN_MARGIN_MS));
+}
+
+/** Exported for tests. */
+export const _renewalMarginMs = renewalMarginMs;
+
 export async function getSharedAlgoliaApiKey(logPrefix = '[elgiganten]') {
   const now = Date.now();
-  if (sharedCache.apiKey && sharedCache.expiry > now + 60_000) {
+  if (sharedCache.apiKey && sharedCache.expiry > now + renewalMarginMs()) {
     return sharedCache.apiKey;
   }
 

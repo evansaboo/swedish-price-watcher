@@ -110,6 +110,38 @@ Open `http://127.0.0.1:3030`.
 | `ELGIGANTEN_PROXY_URL` | No | HTTP(S) proxy used for Elgiganten requests — the escape hatch when your IP is firewall-blocked |
 | `ELGIGANTEN_BLOCK_COOLDOWN_HOURS` | No | How long to stand Elgiganten sources down after a hard block (default `6`) |
 
+### Avoiding detection
+
+Elgiganten fronts its site with Vercel bot management. Three things keep the
+scraper's traffic unremarkable:
+
+**1. A coherent browser identity.** Signals must agree with each other. Spoofing
+only the user agent is worse than not spoofing at all, because every other
+signal keeps telling the truth. Measured on the Pi before this was fixed, a
+single request carried:
+
+```
+user-agent          ... Chrome/131.0.0.0  (claiming macOS)
+sec-ch-ua           "HeadlessChrome";v="147", ...
+sec-ch-ua-platform  "macOS"               (on a Linux host)
+navigator.webdriver true
+```
+
+`src/sources/browserFingerprint.js` now derives the user agent and client hints
+from the running build, so version and platform always match, `HeadlessChrome`
+is never advertised, and the automation flags are masked. When changing the
+browser, keep these in sync — an inconsistency is more detectable than an
+honest headless browser.
+
+**2. Few requests to the protected host.** Product queries go to Algolia's CDN,
+which is not challenge-protected. Only the signed-key fetch touches
+`elgiganten.se`, so the scraper's footprint there is small. Keep it that way:
+add scraping to the Algolia path, not to the site.
+
+**3. Irregular timing.** The signed key lives ~15 minutes, which would put the
+key fetch on an almost perfect quarter-hour tick. The renewal margin is
+randomised over a several-minute window so the visits scatter.
+
 ### When Elgiganten returns 403
 
 Elgiganten sits behind a Vercel firewall. Two failure modes look similar but are
@@ -456,8 +488,23 @@ Options, cheapest first:
 3. **`ELGIGANTEN_PROXY_URL`** to proxy only Elgiganten traffic and leave the
    rest of the host untouched.
 
-> **SOCKS proxies that require a username and password will not work.** Chromium
-> cannot authenticate to a SOCKS proxy, so credentials are silently dropped.
-> NordVPN's SOCKS5 endpoints require service credentials, so they fall into this
-> category. Run a local HTTP-to-SOCKS bridge and point `ELGIGANTEN_PROXY_URL` at
-> the bridge's HTTP port instead.
+> **Credentialed SOCKS proxies are handled for you.** Chromium cannot
+> authenticate to a SOCKS proxy, so credentials passed to it are silently
+> dropped. If `ELGIGANTEN_PROXY_URL` is a `socks5://user:pass@...` URL, the app
+> automatically starts a local HTTP-to-SOCKS bridge
+> (`src/services/socksBridge.js`) and points the browser at that instead.
+
+#### NordVPN
+
+Use NordVPN's SOCKS5 endpoint so only Elgiganten traffic changes exit IP,
+leaving the rest of the host — including the inbound Cloudflare tunnel —
+untouched:
+
+```bash
+ELGIGANTEN_PROXY_URL=socks5://<service-user>:<service-pass>@se.socks.nordhold.net:1080
+```
+
+The credentials are the **service credentials**, not your Nord account login.
+Find them in the Nord dashboard under *Set up NordVPN manually*. Swedish
+endpoints (`se.socks.nordhold.net`, `stockholm.se.socks.nordhold.net`) keep the
+storefront's pricing and locale consistent.
