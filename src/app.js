@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isSourceEnabled } from './lib/utils.js';
+import { createIndexHtmlBuilder } from './lib/assetVersion.js';
 import { buildProductSummaries } from './services/dealEngine.js';
 import { buildAffiliateUrl, decorateAffiliatePayload } from './services/affiliateLinks.js';
 import { extractBearerToken } from './services/accessControl.js';
@@ -270,7 +271,21 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   await app.register(fastifyCompress, { global: true, threshold: 1024 });
 
   try {
-    await app.register(fastifyStatic, { root: config.publicDir, index: ['index.html'] });
+    await app.register(fastifyStatic, { root: config.publicDir, index: false });
+
+    // Served ahead of the static wildcard so the markup always references the
+    // current build of the assets, never a cached one from a previous deploy.
+    const buildIndexHtml = createIndexHtmlBuilder(config.publicDir);
+    const sendIndex = async (_, reply) => {
+      try {
+        const html = await buildIndexHtml();
+        return reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache').send(html);
+      } catch (error) {
+        return reply.code(500).send({ error: `dashboard unavailable: ${error.message}` });
+      }
+    };
+    app.get('/', sendIndex);
+    app.get('/index.html', sendIndex);
   } catch (error) {
     console.error('[static]', error.message);
   }
