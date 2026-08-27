@@ -15,6 +15,12 @@
  * client hints announced HeadlessChrome 147. On top of that
  * `navigator.webdriver` was `true`.
  *
+ * Note that spoofing the `sec-ch-ua` *header* is not sufficient. Verified
+ * against the live site: with correct headers going out, page JavaScript could
+ * still read `navigator.userAgentData.brands` and get back
+ * `HeadlessChrome/147`. Client-side fingerprinting reads that object directly,
+ * so it has to be patched in the page as well as on the wire.
+ *
  * This module derives every signal from the real browser build instead, so the
  * user agent, client hints, platform and JS-visible properties all agree. The
  * only fiction is replacing "HeadlessChrome" with "Chrome".
@@ -42,9 +48,17 @@ export function buildFingerprint(browserVersion, { platform = 'Linux' } = {}) {
 
   // Mirrors Chrome's GREASE ordering; "Google Chrome" replaces the
   // "HeadlessChrome" brand that Chromium would otherwise advertise.
-  const secChUa = `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not.A/Brand";v="24"`;
+  const brandList = [
+    { brand: 'Chromium', version: major },
+    { brand: 'Google Chrome', version: major },
+    { brand: 'Not.A/Brand', version: '24' }
+  ];
+  const secChUa = brandList.map((b) => `"${b.brand}";v="${b.version}"`).join(', ');
 
   return {
+    browserVersion: String(browserVersion ?? ''),
+    brands: brandList,
+    platform,
     userAgent,
     secChUa,
     secChUaPlatform: `"${platform}"`,
@@ -60,14 +74,64 @@ export function buildFingerprint(browserVersion, { platform = 'Linux' } = {}) {
  * Removes the automation traces Chromium leaves in the page. Runs before any
  * site script, so the site never observes the originals.
  */
-export const STEALTH_INIT_SCRIPT = `
+function stealthScript(fingerprint) {
+  const ua = JSON.stringify(fingerprint?.userAgent ?? '');
+  const brands = JSON.stringify(fingerprint?.brands ?? []);
+  const platform = JSON.stringify(fingerprint?.platform ?? 'Linux');
+
+  return `
+  // navigator.userAgentData reports the real automation brand even when the
+  // sec-ch-ua header is overridden, so align it with the headers we send.
+  // getHighEntropyValues() is the deeper API and leaks the same brand list.
+  // (Careful: this script is injected into the page, so it must not itself
+  // contain the brand name it is hiding.)
+  if (navigator.userAgentData) {
+    const brands = ${brands};
+    const platform = ${platform};
+    const data = {
+      brands,
+      mobile: false,
+      platform,
+      toJSON: () => ({ brands, mobile: false, platform }),
+      getHighEntropyValues: (hints) => {
+        const full = {
+          architecture: 'x86',
+          bitness: '64',
+          brands,
+          fullVersionList: brands,
+          mobile: false,
+          model: '',
+          platform,
+          platformVersion: '6.1.0',
+          uaFullVersion: ${JSON.stringify(String(fingerprint?.browserVersion ?? ''))}
+        };
+        const out = { brands, mobile: false, platform };
+        for (const hint of hints ?? []) {
+          if (hint in full) out[hint] = full[hint];
+        }
+        return Promise.resolve(out);
+      }
+    };
+    Object.defineProperty(Navigator.prototype, 'userAgentData', {
+      get: () => data,
+      configurable: true
+    });
+  }
+
+  // Workers and some checks re-read navigator.userAgent; keep it identical to
+  // the header rather than letting the real build's own value show up.
+  Object.defineProperty(Navigator.prototype, 'userAgent', {
+    get: () => ${ua},
+    configurable: true
+  });
+
   // navigator.webdriver is true under automation and false in a real browser.
   Object.defineProperty(Navigator.prototype, 'webdriver', {
     get: () => false,
     configurable: true
   });
 
-  // Headless Chromium reports zero plugins; real Chrome ships a few. Build a
+  // Automated Chromium reports zero plugins; real Chrome ships a few. Build a
   // plain array-like rather than mutating PluginArray.prototype, whose length
   // is getter-only and throws on assignment.
   if (navigator.plugins && navigator.plugins.length === 0) {
@@ -85,11 +149,20 @@ export const STEALTH_INIT_SCRIPT = `
     });
   }
 
-  // Headless exposes no chrome runtime object.
+  // Automated builds expose no chrome runtime object.
   if (!window.chrome) {
     window.chrome = { runtime: {}, app: { isInstalled: false } };
   }
 `;
+}
+
+/**
+ * Page script that hides the automation traces for a given identity. Runs
+ * before any site script, so the site never observes the originals.
+ */
+export function buildStealthScript(fingerprint) {
+  return stealthScript(fingerprint);
+}
 
 /**
  * Launch flags. AutomationControlled is the blink feature that sets

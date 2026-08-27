@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildFingerprint, buildLaunchArgs, STEALTH_INIT_SCRIPT } from '../src/sources/browserFingerprint.js';
+import { buildFingerprint, buildLaunchArgs, buildStealthScript } from '../src/sources/browserFingerprint.js';
 
 /**
  * These assertions encode the exact mismatches that were observed leaking from
@@ -53,13 +53,14 @@ test('browser fingerprint is self-consistent', async (t) => {
   });
 
   await t.test('stealth script masks webdriver and is syntactically valid', () => {
-    assert.match(STEALTH_INIT_SCRIPT, /webdriver/);
-    assert.match(STEALTH_INIT_SCRIPT, /get: \(\) => false/);
+    const script = buildStealthScript(buildFingerprint('147.0.7727.0'));
+    assert.match(script, /webdriver/);
+    assert.match(script, /get: \(\) => false/);
     // Guards against shipping a script that throws inside the page, which
     // would break every key fetch. An earlier revision did exactly that by
     // assigning to PluginArray's getter-only length.
-    assert.doesNotThrow(() => new Function(STEALTH_INIT_SCRIPT));
-    assert.ok(!/PluginArray\.prototype\)/.test(STEALTH_INIT_SCRIPT));
+    assert.doesNotThrow(() => new Function(script));
+    assert.ok(!/PluginArray\.prototype\)/.test(script));
   });
 });
 
@@ -76,4 +77,30 @@ test('key renewal timing is randomised', async () => {
   for (const v of samples) {
     assert.ok(v >= 60_000 && v < 300_000, `${v} out of range`);
   }
+});
+
+test('the stealth script hides the headless brand from page JavaScript', () => {
+  // Verified live: with a correctly spoofed sec-ch-ua header, page JS could
+  // still read navigator.userAgentData.brands and get "HeadlessChrome". The
+  // header alone is not enough.
+  const script = buildStealthScript(buildFingerprint('147.0.7727.0'));
+
+  assert.ok(!/headless/i.test(script), 'script must not mention the headless brand');
+  assert.match(script, /userAgentData/);
+  assert.match(script, /getHighEntropyValues/, 'the high-entropy API leaks the same brand list');
+  assert.match(script, /"Google Chrome"/);
+});
+
+test('the scripted identity matches the headers sent on the wire', () => {
+  const fp = buildFingerprint('147.0.7727.0');
+  const script = buildStealthScript(fp);
+
+  // A mismatch between the header and the JS-visible value is exactly the kind
+  // of contradiction this whole module exists to prevent.
+  for (const { brand, version } of fp.brands) {
+    assert.ok(fp.secChUa.includes(`"${brand}";v="${version}"`), `${brand} missing from header`);
+    assert.ok(script.includes(`"brand":"${brand}"`) || script.includes(`'${brand}'`),
+      `${brand} missing from script`);
+  }
+  assert.ok(script.includes(JSON.stringify(fp.userAgent)), 'script must report the same user agent');
 });

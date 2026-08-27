@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sleep } from '../lib/utils.js';
-import { buildFingerprint, buildLaunchArgs, STEALTH_INIT_SCRIPT } from './browserFingerprint.js';
+import { buildFingerprint, buildLaunchArgs, buildStealthScript } from './browserFingerprint.js';
 import { startSocksHttpBridge, needsSocksBridge } from '../services/socksBridge.js';
 
 /**
@@ -329,7 +329,7 @@ async function fetchKeyViaBrowser(logPrefix) {
       // rather than a brand new one every quarter of an hour.
       storageState: loadStorageState()
     });
-    await context.addInitScript(STEALTH_INIT_SCRIPT);
+    await context.addInitScript(buildStealthScript(fingerprint));
     const page = await context.newPage();
 
     // Load the homepage first so the signed-api-key request carries a real
