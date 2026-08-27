@@ -249,7 +249,7 @@ export class DiscordNotifier {
     stageListing = null
   }) {
     const empty = { sent: 0, skipped: 0, failed: 0, errors: [] };
-    const webhook = normalizeWebhookUrl(webhookUrl);
+    const webhook = normalizeWebhookUrl(webhookUrl) || this.webhookUrl;
     if (!webhook) {
       return { ...empty, skipped: newItems.length + priceDrops.length, reason: 'no-webhook' };
     }
@@ -528,10 +528,15 @@ export class DiscordNotifier {
 
   /** Route through the bot API when buttons are involved, else the webhook. */
   async #deliverAlert({ payload, components = [], webhookUrl }) {
-    if (components.length && this.canSendComponents) {
-      return this.#postBotMessage({ ...payload, components });
+    const finalPayload = components.length ? { ...payload, components } : payload;
+    const targetWebhook = webhookUrl || this.webhookUrl;
+    
+    // If a specific webhook was requested (e.g. Hotlist or custom alert rule), respect it over the bot.
+    // The Bot API is only used as a fallback for the global channel when components are present.
+    if (components.length && this.canSendComponents && targetWebhook === this.webhookUrl) {
+      return this.#postBotMessage(finalPayload);
     }
-    return this.#postWebhook(payload, webhookUrl);
+    return this.#postWebhook(finalPayload, targetWebhook);
   }
 
   async #postBotMessage(payload) {
