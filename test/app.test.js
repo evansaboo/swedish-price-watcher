@@ -404,3 +404,48 @@ test('PUT /api/notification-settings merges by default and never wipes omitted f
 
   await app.close();
 });
+
+test('a malformed hotlist webhook is rejected instead of silently clearing it', async () => {
+  // Normalising an unrecognised URL to '' switches hotlist notifications off
+  // while the UI shows an empty field and no explanation. A typo in a pasted
+  // webhook must be an error. (Hit for real: a bad PUT wiped a live webhook.)
+  const state = createDefaultState();
+  let config = {
+    enabled: true, intervalSeconds: 60, jitterPct: 20, minDiscountPct: 10,
+    hitsPerGroup: 100, notifyPriceDrops: true,
+    webhookUrl: 'https://discord.com/api/webhooks/1/original',
+    groups: []
+  };
+
+  const app = await buildApp({
+    config: { publicDir, sources: [] },
+    store: { getState: () => state },
+    productCache: buildTestCache(state),
+    scanState: { running: false, lastError: null },
+    triggerScan: async () => ({}),
+    hotlist: {
+      getConfig: () => config,
+      getStatus: () => ({}),
+      update: async (next) => { config = next; return next; }
+    }
+  });
+
+  const rejected = await app.inject({
+    method: 'PUT',
+    url: '/api/hotlist',
+    payload: { webhookUrl: 'https://evil.example.com/hook' }
+  });
+
+  assert.equal(rejected.statusCode, 400);
+  assert.match(rejected.json().message, /discord\.com\/api\/webhooks/);
+  assert.equal(config.webhookUrl, 'https://discord.com/api/webhooks/1/original', 'existing webhook untouched');
+
+  // Clearing it deliberately must still work.
+  const cleared = await app.inject({
+    method: 'PUT',
+    url: '/api/hotlist',
+    payload: { webhookUrl: '' }
+  });
+  assert.equal(cleared.statusCode, 200);
+  assert.equal(cleared.json().config.webhookUrl, '');
+});

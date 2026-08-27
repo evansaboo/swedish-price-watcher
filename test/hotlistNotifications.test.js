@@ -199,3 +199,95 @@ test('a broadly-scoped rule is not treated as a hotlist rule', () => {
   ensureHotlistConfig(preferences, { id: HOTLIST_SOURCE });
   assert.equal(preferences.hotlist.webhookUrl, '');
 });
+
+/**
+ * These cases replace test/hotlistAlertRouting.test.js, whose premise no longer
+ * holds. That file existed because the hotlist had no routing of its own, so a
+ * find was only announced if some alert rule happened to match it — and the
+ * largest watch group ("Intern SSD") matched none, meaning those deals were
+ * collected, scored, shown on the dashboard and never sent anywhere.
+ *
+ * Rather than keep hand-maintaining rules to cover every watch group, the
+ * hotlist now delivers everything it matched to its own webhook. The coverage
+ * gap is closed structurally: no category can fall through, because nothing is
+ * re-matched after the poller has already decided.
+ */
+test('every watched category is delivered without needing a matching rule', async () => {
+  const { notifier } = makeNotifier();
+  const state = { items: {}, notifications: {} };
+  const sent = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => { sent.push(String(url)); return { ok: true, status: 204, text: async () => '' }; };
+
+  // Real titles and categories from the live hotlist, including the SSD group
+  // that no alert rule covered.
+  const titles = [
+    ['PNY GeForce RTX 5070 Ti 16GB ARGB 3X OC grafikkort', 'Grafikkort (GPU)'],
+    ['KLEVV BOLT X DDR4 RAM 16GB (2x8GB) 3600MT/s CL18', 'RAM-minne'],
+    ['Samsung 990 Pro The Ultimate SSD 1 TB', 'Intern SSD'],
+    ['Apple MacBook Air 13" M4 16GB 256GB', 'Laptop'],
+    ['iPhone Air 5G smartphone 1TB Light Gold', 'Mobiltelefon']
+  ];
+
+  try {
+    const summary = await notifier.notifyHotlist({
+      newItems: titles.map(([title, category], i) => makeItem({ title, category, listingKey: `hk${i}` })),
+      state,
+      webhookUrl: WEBHOOK
+    });
+    assert.equal(summary.sent, titles.length, 'every watched category is delivered');
+    assert.equal(summary.failed, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  assert.ok(sent.every((u) => u.includes('/api/webhooks/')), 'all delivered to the hotlist webhook');
+});
+
+test('the same find is not re-sent within the cooldown', async () => {
+  const { notifier } = makeNotifier();
+  const state = { items: {}, notifications: {} };
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 204, text: async () => '' });
+
+  try {
+    const first = await notifier.notifyHotlist({ newItems: [makeItem()], state, webhookUrl: WEBHOOK });
+    assert.equal(first.sent, 1);
+
+    // A poll every ~60s would otherwise re-announce the same item endlessly.
+    const second = await notifier.notifyHotlist({ newItems: [makeItem()], state, webhookUrl: WEBHOOK });
+    assert.equal(second.sent, 0);
+    assert.equal(second.skipped, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('price-drop notifications can be switched off', async () => {
+  const { notifier } = makeNotifier();
+  const state = { items: { k1: makeItem() }, notifications: {} };
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 204, text: async () => '' });
+
+  try {
+    const off = await notifier.notifyHotlist({
+      newItems: [],
+      priceDrops: [{ listingKey: 'k1', dropPercent: 40 }],
+      state,
+      webhookUrl: WEBHOOK,
+      notifyPriceDrops: false
+    });
+    assert.equal(off.sent, 0);
+
+    const on = await notifier.notifyHotlist({
+      newItems: [],
+      priceDrops: [{ listingKey: 'k1', dropPercent: 40 }],
+      state,
+      webhookUrl: WEBHOOK,
+      notifyPriceDrops: true
+    });
+    assert.equal(on.sent, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

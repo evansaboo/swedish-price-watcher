@@ -19,7 +19,8 @@ import {
   MAX_INTERVAL_SECONDS,
   MIN_INTERVAL_SECONDS,
   countSubqueries,
-  normalizeHotlistConfig
+  normalizeHotlistConfig,
+  normalizeWebhookUrl
 } from './services/hotlistConfig.js';
 import { getTaxonomyCatalog, searchCatalog } from './sources/elgigantenTaxonomy.js';
 import { getElgigantenBlockStatus, clearElgigantenBlock } from './sources/elgigantenAuth.js';
@@ -797,6 +798,18 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     // Merge over the current config so a partial update (e.g. just the
     // interval) never silently wipes the watch groups.
     const merged = { ...normalizeHotlistConfig(hotlist.getConfig()), ...body };
+
+    // Normalising an unrecognised webhook to '' would silently switch hotlist
+    // notifications off, with the UI showing an empty field and no clue why.
+    // A typo in a pasted URL should be an error, not a quiet disabling.
+    if (Object.hasOwn(body, 'webhookUrl')) {
+      const raw = String(body.webhookUrl ?? '').trim();
+      if (raw && !normalizeWebhookUrl(raw)) {
+        reply.code(400);
+        return { message: 'Expected a Discord webhook URL (https://discord.com/api/webhooks/…).' };
+      }
+    }
+
     const updated = await hotlist.update(merged);
     return { config: updated, subqueriesPerPoll: countSubqueries(updated), status: hotlist.getStatus() };
   });
