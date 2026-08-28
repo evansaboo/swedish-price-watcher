@@ -566,6 +566,7 @@ async function runHotlistPoll() {
 
     if (!skipDiscordNotifications && (mergeResult.newItems.length || mergeResult.priceDrops.length)) {
       const hotlistConfig = state.preferences?.hotlist ?? {};
+      const notificationSettings = state.preferences?.notificationSettings ?? {};
       const newItems = mergeResult.newItems.map((item) => decorateAffiliateLink(item, sourceById));
       const priceDrops = mergeResult.priceDrops.map((item) => decorateAffiliateLink(item, sourceById));
       // The hotlist posts to its own channel and is deliberately not run
