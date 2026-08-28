@@ -190,8 +190,7 @@
       <div class="drawer-body">
         <div class="drawer-tabs" role="tablist">
           <button type="button" class="drawer-tab active" data-tab="sources" role="tab" aria-selected="true">Sources</button>
-          <button type="button" class="drawer-tab" data-tab="alerts" role="tab" aria-selected="false">Alerts</button>
-          <button type="button" class="drawer-tab" data-tab="scheduler" role="tab" aria-selected="false">Scheduler</button>
+          <button type="button" class="drawer-tab" data-tab="alerts" role="tab" aria-selected="false">Normal Alerts</button>
           <button type="button" class="drawer-tab" data-tab="hotlist" role="tab" aria-selected="false">Hotlist</button>
           <button type="button" class="drawer-tab" data-tab="favorites" role="tab" aria-selected="false">Favorites</button>
         </div>
@@ -205,16 +204,82 @@
           <div id="sources-list" class="sources-list"></div>
         </div>
 
-        <!-- Alerts -->
+        <!-- Normal Alerts (Scheduled Scans + Rules + Digest + Wishlist) -->
         <div id="tab-alerts" class="drawer-tab-content hidden">
-          <div class="alerts-header">
-            <label class="toggle-switch">
-              <input id="notifications-enabled-toggle" type="checkbox" checked />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">Discord alerts enabled</span>
-            </label>
+          <!-- 1. Scan Schedule & Auto-Scan -->
+          <div class="drawer-section scheduler-section">
+            <div class="section-title-row">
+              <div class="section-title-wrap">
+                <span class="section-title-icon">⏱️</span>
+                <h3>Scan Scheduler</h3>
+              </div>
+              <span class="section-badge">Normal Scans</span>
+            </div>
+            <p class="section-hint">Scheduled full scans walk all enabled store sources to discover new deals and evaluate alert rules.</p>
+            <div id="modal-scheduler-status" class="scheduler-status-box" style="margin-top:0.625rem"></div>
+            <div class="scheduler-form">
+              <label class="toggle-switch">
+                <input id="scheduler-enabled" type="checkbox" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">Auto-scan enabled</span>
+              </label>
+              <div class="form-field">
+                <label for="scheduler-interval">Interval (minutes)</label>
+                <input id="scheduler-interval" type="number" class="field-input" min="1" step="1" />
+              </div>
+              <label class="toggle-switch">
+                <input id="scheduler-window-enabled" type="checkbox" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">Active hours only</span>
+              </label>
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="scheduler-window-start">Start</label>
+                  <input id="scheduler-window-start" type="time" class="field-input" />
+                </div>
+                <div class="form-field">
+                  <label for="scheduler-window-end">End</label>
+                  <input id="scheduler-window-end" type="time" class="field-input" />
+                </div>
+              </div>
+            </div>
           </div>
+
+          <div class="drawer-divider"></div>
+
+          <!-- 2. Discord Alerts Master Switch & Rules -->
+          <div class="drawer-section rules-section">
+            <div class="section-title-row">
+              <div class="section-title-wrap">
+                <span class="section-title-icon">🔔</span>
+                <h3>Discord Alert Rules</h3>
+              </div>
+              <span class="section-badge">Triggered on Scan</span>
+            </div>
+            <div class="alerts-header">
+              <label class="toggle-switch">
+                <input id="notifications-enabled-toggle" type="checkbox" checked />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">Discord alerts enabled</span>
+              </label>
+            </div>
+            <div class="rules-toolbar">
+              <span id="rules-count-label" class="rules-count"></span>
+              <button id="add-rule-btn" type="button" class="ghost-btn accent">+ Add alert</button>
+            </div>
+            <ul id="rules-list" class="rules-list"></ul>
+          </div>
+
+          <div class="drawer-divider"></div>
+
+          <!-- 3. Daily Digest -->
           <div class="digest-section">
+            <div class="section-title-row" style="margin-bottom:8px">
+              <div class="section-title-wrap">
+                <span class="section-title-icon">📰</span>
+                <h4 style="font-size:13px;font-weight:600">Daily Digest</h4>
+              </div>
+            </div>
             <label class="toggle-switch">
               <input id="digest-enabled" type="checkbox" />
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -235,20 +300,23 @@
               <input id="digest-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
             </div>
           </div>
-          <div class="rules-toolbar">
-            <span id="rules-count-label" class="rules-count"></span>
-            <button id="add-rule-btn" type="button" class="ghost-btn accent">+ Add alert</button>
-          </div>
-          <ul id="rules-list" class="rules-list"></ul>
 
-          <!-- Wishlist target alerts (Feature 3) -->
+          <div class="drawer-divider"></div>
+
+          <!-- 4. Wishlist target alerts -->
           <div class="digest-section wishlist-alert-section">
+            <div class="section-title-row" style="margin-bottom:8px">
+              <div class="section-title-wrap">
+                <span class="section-title-icon">🎯</span>
+                <h4 style="font-size:13px;font-weight:600">Wishlist Target Alerts</h4>
+              </div>
+            </div>
             <label class="toggle-switch">
               <input id="wishlist-alerts-enabled" type="checkbox" />
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">🎯 Wishlist target alerts</span>
+              <span class="toggle-label">Wishlist target alerts</span>
             </label>
-            <p class="section-hint">Get pinged when a wishlisted item drops to or below your target price. Set targets from the ★ wishlist on each product.</p>
+            <p class="section-hint">Get pinged when a wishlisted item drops to or below your target price during scheduled scans.</p>
             <div class="form-field" style="margin-top:0.5rem">
               <label for="wishlist-alerts-webhook">Wishlist webhook</label>
               <input id="wishlist-alerts-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
@@ -256,39 +324,16 @@
           </div>
         </div>
 
-        <!-- Scheduler -->
-        <div id="tab-scheduler" class="drawer-tab-content hidden">
-          <div id="modal-scheduler-status" class="scheduler-status-box"></div>
-          <div class="scheduler-form">
-            <label class="toggle-switch">
-              <input id="scheduler-enabled" type="checkbox" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">Auto-scan enabled</span>
-            </label>
-            <div class="form-field">
-              <label for="scheduler-interval">Interval (minutes)</label>
-              <input id="scheduler-interval" type="number" class="field-input" min="1" step="1" />
-            </div>
-            <label class="toggle-switch">
-              <input id="scheduler-window-enabled" type="checkbox" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">Active hours only</span>
-            </label>
-            <div class="form-row">
-              <div class="form-field">
-                <label for="scheduler-window-start">Start</label>
-                <input id="scheduler-window-start" type="time" class="field-input" />
-              </div>
-              <div class="form-field">
-                <label for="scheduler-window-end">End</label>
-                <input id="scheduler-window-end" type="time" class="field-input" />
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- Hotlist — continuous Elgiganten poller -->
         <div id="tab-hotlist" class="drawer-tab-content hidden">
+          <div class="section-title-row" style="margin-bottom: 6px">
+            <div class="section-title-wrap">
+              <span class="section-title-icon">⚡</span>
+              <h3>Elgiganten Hotlist</h3>
+            </div>
+            <span class="section-badge hotlist-badge">Fast Loop</span>
+          </div>
+          <p class="section-hint" style="margin-bottom: 12px">A dedicated high-frequency continuous poller for Elgiganten resale finds and flash discounts. Runs on its own dedicated loop, completely independent of scheduled scans and normal alert rules.</p>
           <div id="hotlist-status" class="hotlist-status" aria-live="polite"></div>
 
           <div class="hotlist-controls">
@@ -297,8 +342,7 @@
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
               <span class="toggle-label">Continuous polling</span>
             </label>
-            <p class="section-hint">Runs on its own loop, independent of the scan scheduler — one Algolia request per poll, with randomised timing so it never hits a predictable tick.</p>
-            <div class="form-row">
+            <div class="form-row" style="margin-top:0.5rem">
               <div class="form-field">
                 <label for="hotlist-interval">Every (seconds)</label>
                 <input id="hotlist-interval" type="number" class="field-input" min="30" max="3600" step="5" />
@@ -315,7 +359,7 @@
             <div class="form-field" style="margin-top:0.5rem">
               <label for="hotlist-webhook">Hotlist Discord webhook</label>
               <input id="hotlist-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
-              <p class="field-hint">Hotlist finds post here only. They are not matched against Alert rules — the watch groups below already decide what counts.</p>
+              <p class="field-hint">Hotlist finds post directly here. They do not use the scan scheduler or normal alert rules.</p>
             </div>
             <label class="toggle-switch" style="margin-top:0.5rem">
               <input id="hotlist-notify-drops" type="checkbox" />

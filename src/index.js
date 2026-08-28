@@ -521,9 +521,8 @@ async function runHotlistPoll() {
     }
 
     const isFirstSuccessfulRun = !sourceState.lastSuccessAt;
-    const skipDiscordNotifications = shouldSkipSourceNotifications({
-      source: hotlistSource, state, sourceState, scanState: {}
-    });
+    const hotlistPreference = state.preferences?.hotlist ?? {};
+    const skipDiscordNotifications = isFirstSuccessfulRun || hotlistPreference.enabled === false;
     sourceState.lastSuccessAt = startedAt;
     sourceState.lastError = null;
     sourceState.lastCount = collected.length;

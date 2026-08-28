@@ -858,28 +858,32 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   // ── Sources ────────────────────────────────────────────────────
+  // Standard scan sources only. The Elgiganten hotlist is a continuous poller
+  // configured exclusively via /api/hotlist and has its own lifecycle.
   app.get('/api/sources', async () => {
     const state = store.getState();
-    return config.sources.map(source => {
-      const schedulerEnabled = isSourceEnabled(source, state);
-      return {
-        id: source.id,
-        label: source.label,
-        type: source.type,
-        enabled: source.enabled,
-        schedulerEnabled,
-        status: describeSourceStatus({ ...source, enabled: schedulerEnabled }, state.sourceStates[source.id]),
-        lastSuccessAt: state.sourceStates[source.id]?.lastSuccessAt ?? null,
-        lastCount: state.sourceStates[source.id]?.lastCount ?? null,
-        lastError: state.sourceStates[source.id]?.lastError ?? null,
-        disabledUntil: state.sourceStates[source.id]?.disabledUntil ?? null
-      };
-    });
+    return (config.sources ?? [])
+      .filter(source => source.type !== 'elgiganten-hotlist')
+      .map(source => {
+        const schedulerEnabled = isSourceEnabled(source, state);
+        return {
+          id: source.id,
+          label: source.label,
+          type: source.type,
+          enabled: source.enabled,
+          schedulerEnabled,
+          status: describeSourceStatus({ ...source, enabled: schedulerEnabled }, state.sourceStates[source.id]),
+          lastSuccessAt: state.sourceStates[source.id]?.lastSuccessAt ?? null,
+          lastCount: state.sourceStates[source.id]?.lastCount ?? null,
+          lastError: state.sourceStates[source.id]?.lastError ?? null,
+          disabledUntil: state.sourceStates[source.id]?.disabledUntil ?? null
+        };
+      });
   });
 
   app.patch('/api/sources/:id', async (request, reply) => {
     const sourceId = request.params.id;
-    const source = config.sources.find(s => s.id === sourceId);
+    const source = (config.sources ?? []).find(s => s.id === sourceId && s.type !== 'elgiganten-hotlist');
     if (!source) { reply.code(404); return { message: `Source not found: ${sourceId}` }; }
     if (typeof request.body?.enabled !== 'boolean') { reply.code(400); return { message: 'Provide { enabled: true|false }' }; }
 

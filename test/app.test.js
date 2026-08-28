@@ -448,4 +448,54 @@ test('a malformed hotlist webhook is rejected instead of silently clearing it', 
   });
   assert.equal(cleared.statusCode, 200);
   assert.equal(cleared.json().config.webhookUrl, '');
+
+  await app.close();
+});
+
+test('GET /api/sources excludes hotlist and PATCH refuses hotlist sourceId', async () => {
+  const state = createDefaultState();
+  const sources = [
+    { id: 'elgiganten-outlet', label: 'Elgiganten Outlet', type: 'elgiganten-algolia', enabled: true },
+    { id: 'elgiganten-hotlist', label: 'Elgiganten Hotlist', type: 'elgiganten-hotlist', enabled: true },
+    { id: 'netonnet-outlet', label: 'NetOnNet Outlet', type: 'netonnet-outlet', enabled: true }
+  ];
+
+  const app = await buildApp({
+    config: { publicDir, sources },
+    store: {
+      getState: () => state,
+      async save() {},
+      async savePreferences() {}
+    },
+    productCache: buildTestCache(state),
+    scanState: { running: false, lastError: null },
+    triggerScan: async () => ({})
+  });
+
+  const getRes = await app.inject({ method: 'GET', url: '/api/sources' });
+  assert.equal(getRes.statusCode, 200);
+  const returnedSources = getRes.json();
+  assert.equal(returnedSources.length, 2);
+  assert.equal(returnedSources.some(s => s.id === 'elgiganten-hotlist'), false, 'hotlist excluded from standard sources');
+  assert.equal(returnedSources.some(s => s.id === 'elgiganten-outlet'), true);
+  assert.equal(returnedSources.some(s => s.id === 'netonnet-outlet'), true);
+
+  // Patching standard source succeeds
+  const patchRes = await app.inject({
+    method: 'PATCH',
+    url: '/api/sources/elgiganten-outlet',
+    payload: { enabled: false }
+  });
+  assert.equal(patchRes.statusCode, 200);
+  assert.equal(state.preferences.sourceOverrides['elgiganten-outlet'], false);
+
+  // Patching hotlist through standard sources endpoint returns 404
+  const patchHotlistRes = await app.inject({
+    method: 'PATCH',
+    url: '/api/sources/elgiganten-hotlist',
+    payload: { enabled: false }
+  });
+  assert.equal(patchHotlistRes.statusCode, 404);
+
+  await app.close();
 });

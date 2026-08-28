@@ -2061,6 +2061,11 @@ function bindEvents() {
   el.settingsBtn.addEventListener('click', openDrawer);
   el.drawerClose.addEventListener('click', closeDrawer);
   el.settingsOverlay.addEventListener('click', closeDrawer);
+  el.schedulerStatus?.addEventListener('click', () => {
+    openDrawer();
+    const alertsTab = document.querySelector('.drawer-tab[data-tab="alerts"]');
+    if (alertsTab) alertsTab.click();
+  });
 
   // Drawer tabs
   for (const tab of el.drawerTabs) {
