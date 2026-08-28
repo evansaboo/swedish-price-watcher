@@ -291,3 +291,34 @@ test('price-drop notifications can be switched off', async () => {
     globalThis.fetch = original;
   }
 });
+
+test('hotlist notifications deliver regardless of normal alert notificationsEnabled state', async () => {
+  const { notifier } = makeNotifier();
+  const state = {
+    items: {},
+    notifications: {},
+    preferences: {
+      notificationSettings: {
+        notificationsEnabled: false // Normal scan alerts switched off
+      }
+    }
+  };
+  const original = globalThis.fetch;
+  let sentCount = 0;
+  globalThis.fetch = async () => {
+    sentCount++;
+    return { ok: true, status: 204, text: async () => '' };
+  };
+
+  try {
+    const summary = await notifier.notifyHotlist({
+      newItems: [makeItem({ listingKey: 'item-indep-1' })],
+      state,
+      webhookUrl: WEBHOOK
+    });
+    assert.equal(summary.sent, 1, 'hotlist delivers alert even when normal alerts toggle is off');
+    assert.equal(sentCount, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
