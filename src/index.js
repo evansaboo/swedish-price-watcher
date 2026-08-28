@@ -461,14 +461,14 @@ async function runHotlistPoll() {
   const activeHotlistSourceIds = new Set();
   const hotlistErrors = [];
 
-  for (const src of hotlistSources) {
-    if (src.enabled === false) continue;
+  const pollPromises = hotlistSources.map(async (src) => {
+    if (src.enabled === false) return;
     activeHotlistSourceIds.add(src.id);
     const sourceState = state.sourceStates[src.id] ?? {};
     state.sourceStates[src.id] = sourceState;
 
     if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
-      continue;
+      return;
     }
 
     sourceState.lastAttemptAt = startedAt;
@@ -495,7 +495,9 @@ async function runHotlistPoll() {
       }
       hotlistErrors.push(`${src.id}: ${error.message}`);
     }
-  }
+  });
+
+  await Promise.allSettled(pollPromises);
 
   if (hotlistErrors.length && !allCollected.length) {
     await commitExclusive(async () => {
