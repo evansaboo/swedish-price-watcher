@@ -23,34 +23,44 @@ const AMAZON_SE_BASE_URL = 'https://www.amazon.se';
 const DEFAULT_MIN_DISCOUNT_PCT = 15;
 
 let cachedPlaywrightBrowser = null;
+let cachedContext = null;
+let cachedPage = null;
 
-export async function fetchAmazonViaPlaywright(targetUrl, { signal = null, timeoutMs = 30000 } = {}) {
+async function getAmazonStealthPage() {
   const { chromium } = await import('playwright');
   if (!cachedPlaywrightBrowser || !cachedPlaywrightBrowser.isConnected()) {
     cachedPlaywrightBrowser = await chromium.launch({
       headless: true,
       args: buildLaunchArgs()
     });
+    cachedContext = null;
+    cachedPage = null;
   }
 
-  const fingerprint = buildFingerprint(cachedPlaywrightBrowser.version(), {
-    platform: process.platform === 'darwin' ? 'macOS' : 'Linux'
-  });
+  if (!cachedContext || !cachedPage || cachedPage.isClosed()) {
+    const fingerprint = buildFingerprint(cachedPlaywrightBrowser.version(), {
+      platform: process.platform === 'darwin' ? 'macOS' : 'Linux'
+    });
+    cachedContext = await cachedPlaywrightBrowser.newContext({
+      userAgent: fingerprint.userAgent,
+      locale: 'sv-SE',
+      viewport: { width: 1280, height: 800 },
+      extraHTTPHeaders: {
+        'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
+        'sec-ch-ua': fingerprint.secChUa,
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': fingerprint.secChUaPlatform
+      }
+    });
+    cachedPage = await cachedContext.newPage();
+    await cachedPage.addInitScript(buildStealthScript(fingerprint));
+  }
 
-  const context = await cachedPlaywrightBrowser.newContext({
-    userAgent: fingerprint.userAgent,
-    locale: 'sv-SE',
-    viewport: { width: 1280, height: 800 },
-    extraHTTPHeaders: {
-      'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
-      'sec-ch-ua': fingerprint.secChUa,
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': fingerprint.secChUaPlatform
-    }
-  });
+  return cachedPage;
+}
 
-  const page = await context.newPage();
-  await page.addInitScript(buildStealthScript(fingerprint));
+export async function fetchAmazonViaPlaywright(targetUrl, { signal = null, timeoutMs = 15000 } = {}) {
+  const page = await getAmazonStealthPage();
 
   try {
     await page.goto(targetUrl, {
@@ -58,17 +68,16 @@ export async function fetchAmazonViaPlaywright(targetUrl, { signal = null, timeo
       timeout: timeoutMs
     });
 
-    await page.waitForTimeout(3500);
-
-    const initialContent = await page.content();
-    if (initialContent.includes('bm-verify') || initialContent.includes('triggerInterstitialChallenge')) {
-      await page.waitForTimeout(4000);
-    }
+    await page.waitForSelector('[data-component-type="s-search-result"], .s-result-item, #noResultsTitle, .a-row.s-result-list-parent-container', {
+      timeout: 3500
+    }).catch(() => {});
 
     const html = await page.content();
     return html;
-  } finally {
-    await context.close().catch(() => {});
+  } catch (err) {
+    cachedPage = null;
+    cachedContext = null;
+    throw err;
   }
 }
 
@@ -297,7 +306,7 @@ export async function collectFromAmazonHotlist({
       queries.push(parts.length ? parts.join(' ') : group.label);
     }
 
-    for (const query of queries.slice(0, 2)) {
+    for (const query of queries.slice(0, 1)) {
       if (signal?.aborted) break;
       const targetUrl = buildAmazonSearchUrl(query, group.minDiscountPct ?? minDiscountPct);
 

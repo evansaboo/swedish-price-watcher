@@ -29,9 +29,8 @@ export function createHotlistPoller({
 }) {
   let timer = null;
   let started = false;
-  let inFlight = false;
+  let inFlightPromise = null;
   let consecutiveFailures = 0;
-  let pendingImmediate = null;
 
   const status = {
     running: false,
@@ -86,7 +85,10 @@ export function createHotlistPoller({
   }
 
   async function tick({ manual = false } = {}) {
-    if (inFlight) return null;
+    if (inFlightPromise) {
+      if (manual) return inFlightPromise;
+      return null;
+    }
 
     const config = getConfig();
     if (!manual && (!started || config.enabled === false)) {
@@ -102,33 +104,39 @@ export function createHotlistPoller({
       return null;
     }
 
-    inFlight = true;
     status.running = true;
     status.lastPollStartedAt = new Date(now()).toISOString();
     const startedAtMs = now();
 
+    inFlightPromise = (async () => {
+      try {
+        const result = await run({ manual });
+        consecutiveFailures = 0;
+        status.pollCount += 1;
+        status.lastSuccessAt = new Date(now()).toISOString();
+        status.lastError = null;
+        status.lastCount = result?.count ?? null;
+        status.lastNewCount = result?.newCount ?? null;
+        return result;
+      } catch (error) {
+        consecutiveFailures += 1;
+        status.failureCount += 1;
+        status.lastErrorAt = new Date(now()).toISOString();
+        status.lastError = error.message;
+        logger.error?.(`[hotlist] Poll failed (${consecutiveFailures} in a row): ${error.message}`);
+        if (manual) throw error;
+        return null;
+      } finally {
+        status.lastDurationMs = now() - startedAtMs;
+        status.running = false;
+        schedule(nextDelayMs());
+      }
+    })();
+
     try {
-      const result = await run({ manual });
-      consecutiveFailures = 0;
-      status.pollCount += 1;
-      status.lastSuccessAt = new Date(now()).toISOString();
-      status.lastError = null;
-      status.lastCount = result?.count ?? null;
-      status.lastNewCount = result?.newCount ?? null;
-      return result;
-    } catch (error) {
-      consecutiveFailures += 1;
-      status.failureCount += 1;
-      status.lastErrorAt = new Date(now()).toISOString();
-      status.lastError = error.message;
-      logger.error?.(`[hotlist] Poll failed (${consecutiveFailures} in a row): ${error.message}`);
-      if (manual) throw error;
-      return null;
+      return await inFlightPromise;
     } finally {
-      status.lastDurationMs = now() - startedAtMs;
-      status.running = false;
-      inFlight = false;
-      schedule(nextDelayMs());
+      inFlightPromise = null;
     }
   }
 
@@ -153,9 +161,7 @@ export function createHotlistPoller({
     },
     /** Force a poll now (dashboard "Poll now" button). */
     async pollNow() {
-      if (pendingImmediate) return pendingImmediate;
-      pendingImmediate = tick({ manual: true }).finally(() => { pendingImmediate = null; });
-      return pendingImmediate;
+      return tick({ manual: true });
     },
     getStatus() {
       return {
