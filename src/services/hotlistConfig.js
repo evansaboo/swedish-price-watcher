@@ -163,6 +163,12 @@ export function normalizeHotlistConfig(raw, seed = {}) {
       input.hitsPerGroup ?? seed.hitsPerGroup,
       { min: 1, max: MAX_HITS_PER_GROUP, fallback: DEFAULT_HITS_PER_GROUP },
     )),
+    sources: {
+      'elgiganten-hotlist': true,
+      'amazon-hotlist': true,
+      ...(seed.sources && typeof seed.sources === 'object' ? seed.sources : {}),
+      ...(input.sources && typeof input.sources === 'object' ? input.sources : {})
+    },
     groups,
   };
 }

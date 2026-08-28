@@ -461,8 +461,12 @@ async function runHotlistPoll() {
   const activeHotlistSourceIds = new Set();
   const hotlistErrors = [];
 
+  const hotlistConfig = state.preferences?.hotlist ?? {};
+  const sourcesEnabled = hotlistConfig.sources ?? {};
+
   const pollPromises = hotlistSources.map(async (src) => {
     if (src.enabled === false) return;
+    if (sourcesEnabled[src.id] === false) return;
     activeHotlistSourceIds.add(src.id);
     const sourceState = state.sourceStates[src.id] ?? {};
     state.sourceStates[src.id] = sourceState;

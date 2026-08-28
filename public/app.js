@@ -117,6 +117,8 @@ const el = {
   hotlistMinDiscount: $('#hotlist-min-discount'),
   hotlistWebhook: $('#hotlist-webhook'),
   hotlistNotifyDrops: $('#hotlist-notify-drops'),
+  hotlistSourceElgiganten: $('#hotlist-source-elgiganten'),
+  hotlistSourceAmazon: $('#hotlist-source-amazon'),
   hotlistGroups: $('#hotlist-groups'),
   hotlistCountLabel: $('#hotlist-count-label'),
   hotlistPollNow: $('#hotlist-poll-now'),
@@ -1837,6 +1839,12 @@ function renderHotlistForm() {
   el.hotlistMinDiscount.value = hotlistConfig.minDiscountPct;
   if (el.hotlistWebhook) el.hotlistWebhook.value = hotlistConfig.webhookUrl ?? '';
   if (el.hotlistNotifyDrops) el.hotlistNotifyDrops.checked = hotlistConfig.notifyPriceDrops !== false;
+  if (el.hotlistSourceElgiganten) {
+    el.hotlistSourceElgiganten.checked = hotlistConfig.sources?.['elgiganten-hotlist'] !== false;
+  }
+  if (el.hotlistSourceAmazon) {
+    el.hotlistSourceAmazon.checked = hotlistConfig.sources?.['amazon-hotlist'] !== false;
+  }
   renderHotlistGroups();
 }
 
@@ -1898,6 +1906,10 @@ function collectHotlistConfig() {
     minDiscountPct: toNumber(el.hotlistMinDiscount, hotlistConfig.minDiscountPct),
     webhookUrl: el.hotlistWebhook ? el.hotlistWebhook.value.trim() : (hotlistConfig.webhookUrl ?? ''),
     notifyPriceDrops: el.hotlistNotifyDrops ? el.hotlistNotifyDrops.checked : hotlistConfig.notifyPriceDrops !== false,
+    sources: {
+      'elgiganten-hotlist': el.hotlistSourceElgiganten ? el.hotlistSourceElgiganten.checked : (hotlistConfig.sources?.['elgiganten-hotlist'] !== false),
+      'amazon-hotlist': el.hotlistSourceAmazon ? el.hotlistSourceAmazon.checked : (hotlistConfig.sources?.['amazon-hotlist'] !== false)
+    },
     groups: hotlistConfig.groups
   };
 }
