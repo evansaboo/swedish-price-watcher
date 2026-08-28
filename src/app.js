@@ -858,12 +858,14 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   // ── Sources ────────────────────────────────────────────────────
-  // Standard scan sources only. The Elgiganten hotlist is a continuous poller
-  // configured exclusively via /api/hotlist and has its own lifecycle.
+  // Standard scan sources only. Hotlist sources (Elgiganten, Amazon, etc.) are continuous pollers
+  // configured exclusively via /api/hotlist and have their own lifecycles.
+  const isHotlist = (s) => s?.type?.endsWith('-hotlist') || s?.id?.endsWith('-hotlist');
+
   app.get('/api/sources', async () => {
     const state = store.getState();
     return (config.sources ?? [])
-      .filter(source => source.type !== 'elgiganten-hotlist')
+      .filter(source => !isHotlist(source))
       .map(source => {
         const schedulerEnabled = isSourceEnabled(source, state);
         return {
@@ -883,7 +885,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
 
   app.patch('/api/sources/:id', async (request, reply) => {
     const sourceId = request.params.id;
-    const source = (config.sources ?? []).find(s => s.id === sourceId && s.type !== 'elgiganten-hotlist');
+    const source = (config.sources ?? []).find(s => s.id === sourceId && !isHotlist(s));
     if (!source) { reply.code(404); return { message: `Source not found: ${sourceId}` }; }
     if (typeof request.body?.enabled !== 'boolean') { reply.code(400); return { message: 'Provide { enabled: true|false }' }; }
 

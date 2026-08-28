@@ -1,3 +1,4 @@
+import { collectFromAmazonHotlist } from './amazonHotlist.js';
 import { collectFromBlocket } from './blocket.js';
 import { collectFromApifyElgiganten } from './apifyElgiganten.js';
 import { collectFromDustin } from './dustin.js';
@@ -16,6 +17,7 @@ import { collectFromSweclockers } from './sweclockers.js';
 import { collectFromWebhallen } from './webhallen.js';
 
 const handlers = {
+  'amazon-hotlist': collectFromAmazonHotlist,
   'apify-elgiganten': collectFromApifyElgiganten,
   blocket: collectFromBlocket,
   'dustin-fyndvaror': collectFromDustin,

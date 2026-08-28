@@ -53,7 +53,8 @@ const sourceLabelMap = new Map(config.sources.map(s => [s.id, s.label || s.id]))
 const sourceById = new Map(config.sources.map(s => [s.id, s]));
 // The hotlist runs on its own continuous loop rather than the shared scan
 // cycle, so it is excluded from every scan and owned by the poller below.
-const hotlistSource = config.sources.find((entry) => entry.type === 'elgiganten-hotlist') ?? null;
+const hotlistSources = config.sources.filter((entry) => entry.type?.endsWith('-hotlist') || entry.id?.endsWith('-hotlist'));
+const hotlistSource = hotlistSources.find((entry) => entry.type === 'elgiganten-hotlist') ?? hotlistSources[0] ?? null;
 
 productCache.rebuild(state, sourceLabelMap);
 
@@ -93,7 +94,8 @@ const notifier = new DiscordNotifier({
   alertChannelId: config.purchase?.discordAlertChannelId,
   // The hotlist notifies through its own webhook; this keeps its finds out of
   // the alert-rule pipeline.
-  hotlistSourceId: config.sources.find((entry) => entry.type === 'elgiganten-hotlist')?.id ?? ''
+  hotlistSourceId: hotlistSource?.id ?? '',
+  hotlistSourceIds: hotlistSources.map(s => s.id)
 });
 
 // Shared with the HTTP layer so dashboard, Discord button and proactive
@@ -136,7 +138,7 @@ async function triggerScan(trigger, options = {}) {
 
   const sourcesToRun = config.sources.filter(entry => {
     // Owned by the continuous hotlist poller, never by a scan.
-    if (hotlistSource && entry.id === hotlistSource.id) return false;
+    if (entry.type?.endsWith('-hotlist') || entry.id?.endsWith('-hotlist')) return false;
     if (requestedSourceIds) return requestedSourceIds.has(entry.id);
     if (!isSourceEnabled(entry, store.getState())) return false;
     if (trigger === 'scheduled' && Number.isFinite(entry.scanIntervalMinutes) && entry.scanIntervalMinutes > 0) {
@@ -446,50 +448,66 @@ function cancelScan() {
   return true;
 }
 
-// ── Elgiganten hotlist: continuous poller ──────────────────────
+// ── Hotlist: continuous multi-store poller ─────────────────────
 // Deliberately independent of the scan scheduler. A scan takes minutes and
-// walks every source; a hotlist poll is one Algolia round-trip whose entire
-// value is catching a mispriced GPU before it sells out.
+// walks every source; a hotlist poll targets high-resale categories and
+// flash deals across Elgiganten and Amazon.se on a dedicated loop.
 
 async function runHotlistPoll() {
-  if (!hotlistSource) return { count: 0, newCount: 0 };
+  if (!hotlistSources.length) return { count: 0, newCount: 0 };
 
   const startedAt = new Date().toISOString();
-  const sourceState = state.sourceStates[hotlistSource.id] ?? {};
-  state.sourceStates[hotlistSource.id] = sourceState;
+  const allCollected = [];
+  const activeHotlistSourceIds = new Set();
+  const hotlistErrors = [];
 
-  // A source can be cooling down after an upstream block. Polling anyway would
-  // just reproduce the block, so skip until the cooldown expires.
-  if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
-    return { count: 0, newCount: 0, skipped: 'cooling-down', disabledUntil: sourceState.disabledUntil };
-  }
+  for (const src of hotlistSources) {
+    if (src.enabled === false) continue;
+    activeHotlistSourceIds.add(src.id);
+    const sourceState = state.sourceStates[src.id] ?? {};
+    state.sourceStates[src.id] = sourceState;
 
-  sourceState.lastAttemptAt = startedAt;
+    if (sourceState.disabledUntil && Date.parse(sourceState.disabledUntil) > Date.now()) {
+      continue;
+    }
 
-  let collected;
-  try {
-    collected = await collectSource({
-      source: hotlistSource,
-      fetcher,
-      sourceState,
-      now: startedAt,
-      preferences: state.preferences
-    });
-  } catch (error) {
-    await commitExclusive(async () => {
+    sourceState.lastAttemptAt = startedAt;
+
+    try {
+      const items = await collectSource({
+        source: src,
+        fetcher,
+        sourceState,
+        now: startedAt,
+        preferences: state.preferences
+      });
+      if (Array.isArray(items)) {
+        allCollected.push(...items);
+      }
+      sourceState.lastSuccessAt = startedAt;
+      sourceState.lastError = null;
+      sourceState.lastCount = items ? items.length : 0;
+      delete sourceState.disabledUntil;
+    } catch (error) {
       sourceState.lastError = error.message;
       if (error.disableHours) {
         sourceState.disabledUntil = new Date(Date.now() + error.disableHours * 60 * 60 * 1000).toISOString();
       }
+      hotlistErrors.push(`${src.id}: ${error.message}`);
+    }
+  }
+
+  if (hotlistErrors.length && !allCollected.length) {
+    await commitExclusive(async () => {
       state.stats.hotlist = {
         ...(state.stats.hotlist ?? {}),
         lastPollAt: startedAt,
-        lastError: error.message,
-        disabledUntil: sourceState.disabledUntil ?? null
+        lastError: hotlistErrors.join('; ')
       };
     });
-    throw error;
   }
+
+  const collected = allCollected;
 
   return commitExclusive(async () => {
     const mergeResult = mergeObservations(state, collected, config.maxHistoryEntries);
@@ -500,7 +518,7 @@ async function runHotlistPoll() {
     if (collected.length > 0) {
       const seenKeys = new Set(collected.map(o => buildListingKey(o.sourceId, o.externalId)));
       for (const key of Object.keys(state.items)) {
-        if (state.items[key].sourceId !== hotlistSource.id || seenKeys.has(key)) continue;
+        if (!activeHotlistSourceIds.has(state.items[key].sourceId) || seenKeys.has(key)) continue;
         const item = state.items[key];
         const historyToArchive = item.history?.length > 0 ? item.history : store.getItemHistory?.(key) ?? [];
         if (historyToArchive.length > 0) {
@@ -520,13 +538,15 @@ async function runHotlistPoll() {
       }
     }
 
-    const isFirstSuccessfulRun = !sourceState.lastSuccessAt;
+    const isFirstSuccessfulRun = !state.stats.hotlist?.lastSuccessAt;
     const hotlistPreference = state.preferences?.hotlist ?? {};
     const skipDiscordNotifications = isFirstSuccessfulRun || hotlistPreference.enabled === false;
-    sourceState.lastSuccessAt = startedAt;
-    sourceState.lastError = null;
-    sourceState.lastCount = collected.length;
-    delete sourceState.disabledUntil;
+    state.stats.hotlist = {
+      ...(state.stats.hotlist ?? {}),
+      lastSuccessAt: startedAt,
+      lastError: null,
+      lastCount: collected.length
+    };
 
     if (collected.length > 0 || deletedItemKeys.length > 0) {
       store.flushItems(collected.map(o => buildListingKey(o.sourceId, o.externalId)), deletedItemKeys);

@@ -328,13 +328,18 @@ export class DiscordNotifier {
     // Hotlist finds have their own channel and their own matching logic. Even
     // though the poller no longer routes through here, this guard keeps the two
     // systems from silently re-coupling if a future caller passes them in.
-    if (this.hotlistSourceId) {
-      newItems = newItems.filter((item) => item.sourceId !== this.hotlistSourceId);
-      priceDrops = priceDrops.filter((drop) => {
-        const sourceId = drop.sourceId ?? state.items?.[drop.listingKey]?.sourceId;
-        return sourceId !== this.hotlistSourceId;
-      });
-    }
+    const isHotlistSource = (sourceId) => {
+      if (!sourceId) return false;
+      if (this.hotlistSourceId && sourceId === this.hotlistSourceId) return true;
+      if (Array.isArray(this.hotlistSourceIds) && this.hotlistSourceIds.includes(sourceId)) return true;
+      return sourceId.endsWith('-hotlist');
+    };
+
+    newItems = newItems.filter((item) => !isHotlistSource(item.sourceId));
+    priceDrops = priceDrops.filter((drop) => {
+      const sourceId = drop.sourceId ?? state.items?.[drop.listingKey]?.sourceId;
+      return !isHotlistSource(sourceId);
+    });
 
     let sent = 0;
     let skipped = 0;

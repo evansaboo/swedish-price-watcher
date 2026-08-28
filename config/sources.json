@@ -73,6 +73,16 @@
       "pollIntervalSeconds": 90
     },
     {
+      "id": "amazon-hotlist",
+      "type": "amazon-hotlist",
+      "enabled": true,
+      "label": "Amazon.se Hotlist",
+      "category": "electronics",
+      "condition": "deal",
+      "minDiscountPct": 15,
+      "notes": "Targeted hotlist poller for Amazon.se. Runs targeted search queries with discount filters (pct-off) for active watch groups."
+    },
+    {
       "id": "elgiganten-outlet",
       "type": "elgiganten-algolia",
       "enabled": true,
