@@ -262,6 +262,7 @@ export async function collectFromAmazonHotlist({
   now = new Date().toISOString(),
   signal = null
 }) {
+  const start = Date.now();
   const hotlistConfig = preferences?.hotlist ?? {};
   const groups = normalizeWatchGroups(hotlistConfig.groups ?? source.watchGroups ?? []);
   const minDiscountPct = Number(hotlistConfig.minDiscountPct ?? source.minDiscountPct ?? DEFAULT_MIN_DISCOUNT_PCT);
@@ -333,6 +334,9 @@ export async function collectFromAmazonHotlist({
       }
     }
   }
+
+  const elapsedMs = Date.now() - start;
+  console.log(`[amazon-hotlist] ${collected.length} deal(s) from ${groups.length} group(s) in ${elapsedMs}ms`);
 
   return collected;
 }
