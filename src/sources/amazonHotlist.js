@@ -177,8 +177,18 @@ export function parseAmazonSearchResultsHtml(html, {
     if (!priceSek || priceSek <= 0) return;
 
     // Extract Reference / Strikethrough Price
-    const refPriceText = $el.find('.a-price.a-text-price .a-offscreen, .a-text-price span').first().text();
-    const referencePriceSek = parseAmazonPrice(refPriceText);
+    let referencePriceSek = null;
+    const refPriceText = $el.find('.a-price.a-text-price .a-offscreen, span[data-a-strike="true"] .a-offscreen, .a-text-strike').first().text();
+    if (refPriceText) {
+      referencePriceSek = parseAmazonPrice(refPriceText);
+    }
+    if (!referencePriceSek) {
+      const secondaryText = $el.find('.a-size-small.a-color-secondary, .a-color-secondary, .a-size-base.a-color-secondary').text();
+      const match = secondaryText.match(/(?:Median|Rek(?:\.\s*pris)?|Tidigare|Typiskt pris)[:\s]+([\d\s.,]+)\s*kr/i);
+      if (match) {
+        referencePriceSek = parseAmazonPrice(match[1]);
+      }
+    }
 
     // Calculate discount percentage
     let discountPct = 0;

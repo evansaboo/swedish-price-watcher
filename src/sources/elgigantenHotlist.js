@@ -120,9 +120,12 @@ export function buildGroupFilters(group) {
  */
 export function titleMatchesKeyword(title, keyword) {
   if (!keyword) return true;
-  const haystack = String(title ?? '').toLowerCase();
-  const tokens = String(keyword)
+  const normalize = (str) => String(str ?? '')
     .toLowerCase()
+    .replace(/(\d+)\s+([a-z]+)/gi, '$1$2');
+
+  const haystack = normalize(title);
+  const tokens = normalize(keyword)
     .split(/[^\p{L}\p{N}]+/u)
     .filter((token) => token.length > 2);
   if (!tokens.length) return true;
