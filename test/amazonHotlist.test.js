@@ -117,7 +117,7 @@ test('collectFromAmazonHotlist fetches and parses watch group items', async () =
   `;
 
   const mockFetcher = {
-    fetchText: async () => sampleHtml
+    fetchPageHtml: async () => sampleHtml
   };
 
   const results = await collectFromAmazonHotlist({

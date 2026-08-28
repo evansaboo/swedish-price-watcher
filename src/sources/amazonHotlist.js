@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import { normalizeProductIdentity } from '../lib/utils.js';
 import { titleMatchesKeyword, normalizeWatchGroups } from './elgigantenHotlist.js';
 import { resolveBypassBackend } from '../lib/bypassFetch.js';
+import { buildFingerprint, buildStealthScript, buildLaunchArgs } from './browserFingerprint.js';
 
 /**
  * Amazon.se Hotlist — a targeted, fast poller for hot product categories and
@@ -13,13 +14,63 @@ import { resolveBypassBackend } from '../lib/bypassFetch.js';
  *  - **Server-side discount filter**: Uses Amazon's `pct-off=X-` and `s=discount-rank`
  *    URL parameters so Amazon returns already-discounted items.
  *  - **Anti-bot resilience**: Seamlessly routes through `bypassFetch`
- *    (FlareSolverr / ScraperAPI / Scrapfly) when configured, or polite browser headers.
+ *    (FlareSolverr / ScraperAPI / Scrapfly) or stealth Playwright Chromium.
  *  - **High signal**: Only emits listings with verified discount signals
  *    (strikethrough list price vs. current buy price).
  */
 
 const AMAZON_SE_BASE_URL = 'https://www.amazon.se';
 const DEFAULT_MIN_DISCOUNT_PCT = 15;
+
+let cachedPlaywrightBrowser = null;
+
+export async function fetchAmazonViaPlaywright(targetUrl, { signal = null, timeoutMs = 30000 } = {}) {
+  const { chromium } = await import('playwright');
+  if (!cachedPlaywrightBrowser || !cachedPlaywrightBrowser.isConnected()) {
+    cachedPlaywrightBrowser = await chromium.launch({
+      headless: true,
+      args: buildLaunchArgs()
+    });
+  }
+
+  const fingerprint = buildFingerprint(cachedPlaywrightBrowser.version(), {
+    platform: process.platform === 'darwin' ? 'macOS' : 'Linux'
+  });
+
+  const context = await cachedPlaywrightBrowser.newContext({
+    userAgent: fingerprint.userAgent,
+    locale: 'sv-SE',
+    viewport: { width: 1280, height: 800 },
+    extraHTTPHeaders: {
+      'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
+      'sec-ch-ua': fingerprint.secChUa,
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': fingerprint.secChUaPlatform
+    }
+  });
+
+  const page = await context.newPage();
+  await page.addInitScript(buildStealthScript(fingerprint));
+
+  try {
+    await page.goto(targetUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: timeoutMs
+    });
+
+    await page.waitForTimeout(3500);
+
+    const initialContent = await page.content();
+    if (initialContent.includes('bm-verify') || initialContent.includes('triggerInterstitialChallenge')) {
+      await page.waitForTimeout(4000);
+    }
+
+    const html = await page.content();
+    return html;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
 
 /**
  * Parse Swedish Kronor price strings from Amazon.
@@ -214,7 +265,6 @@ export async function collectFromAmazonHotlist({
   try {
     bypassBackend = resolveBypassBackend(source, { signal });
   } catch {
-    // If no external bypass is configured, fall back to direct polite fetcher
     bypassBackend = null;
   }
 
@@ -236,7 +286,7 @@ export async function collectFromAmazonHotlist({
       queries.push(parts.length ? parts.join(' ') : group.label);
     }
 
-    for (const query of queries.slice(0, 3)) {
+    for (const query of queries.slice(0, 2)) {
       if (signal?.aborted) break;
       const targetUrl = buildAmazonSearchUrl(query, group.minDiscountPct ?? minDiscountPct);
 
@@ -244,14 +294,11 @@ export async function collectFromAmazonHotlist({
       try {
         if (bypassBackend) {
           html = await bypassBackend.fetchPage(targetUrl, signal);
-        } else if (fetcher && typeof fetcher.fetchText === 'function') {
-          html = await fetcher.fetchText(source, {}, targetUrl, {
-            headers: {
-              'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-            },
-            skipRobotsCheck: true
-          });
+        } else if (fetcher && typeof fetcher.fetchPageHtml === 'function') {
+          html = await fetcher.fetchPageHtml(targetUrl, signal);
+        } else {
+          // Use stealth Playwright browser by default to solve Akamai challenges
+          html = await fetchAmazonViaPlaywright(targetUrl, { signal, timeoutMs: 30000 });
         }
       } catch (err) {
         console.warn(`[amazon-hotlist] Failed query "${query}": ${err.message}`);
