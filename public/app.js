@@ -1698,6 +1698,7 @@ function createEmptyHotlistGroup() {
     id: `hg-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
     label: '',
     enabled: true,
+    stores: ['elgiganten-hotlist', 'amazon-hotlist'],
     taxonomyIds: [],
     taxonomyNames: [],
     brands: [],
@@ -1713,6 +1714,9 @@ function createHotlistGroupElement(group) {
   const li = document.createElement('li');
   li.className = `rule-card hotlist-card${group.enabled ? '' : ' rule-disabled'}`;
   const numeric = (value) => (value != null ? value : '');
+  if (!group.stores || !Array.isArray(group.stores) || !group.stores.length) {
+    group.stores = ['elgiganten-hotlist', 'amazon-hotlist'];
+  }
 
   li.innerHTML = `
     <div class="rule-header">
@@ -1724,13 +1728,30 @@ function createHotlistGroupElement(group) {
       <button type="button" class="rule-delete-btn hl-delete-btn" title="Delete">✕</button>
     </div>
     <div class="rule-body">
+      <div class="rule-row" style="margin-bottom: 6px;">
+        <div class="rule-field">
+          <label class="rule-field-label">Target Stores</label>
+          <div class="hl-stores-row" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:3px;">
+            <label class="toggle-switch" title="Watch on Elgiganten">
+              <input type="checkbox" class="hl-store-elgiganten" ${group.stores.includes('elgiganten-hotlist') || group.stores.includes('all') ? 'checked' : ''} />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label" style="font-size:12px;">Elgiganten</span>
+            </label>
+            <label class="toggle-switch" title="Watch on Amazon.se">
+              <input type="checkbox" class="hl-store-amazon" ${group.stores.includes('amazon-hotlist') || group.stores.includes('all') ? 'checked' : ''} />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label" style="font-size:12px;">Amazon.se</span>
+            </label>
+          </div>
+        </div>
+      </div>
       <div class="rule-row rule-row-two-col">
         <div class="rule-field">
-          <label class="rule-field-label">Categories <span class="rule-hint">Elgiganten's own</span></label>
+          <label class="rule-field-label">Categories <span class="rule-hint">e.g. GPU, Laptop, SSD</span></label>
           <div class="chip-input-wrap" id="hl-cat-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="Search categories…" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
         </div>
         <div class="rule-field">
-          <label class="rule-field-label">Brands <span class="rule-hint">Optional</span></label>
+          <label class="rule-field-label">Brands <span class="rule-hint">e.g. Apple, Asus, Sony</span></label>
           <div class="chip-input-wrap" id="hl-brand-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. Apple" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
         </div>
       </div>
@@ -1761,6 +1782,15 @@ function createHotlistGroupElement(group) {
       </div>
       ${group.taxonomyIds?.length ? `<p class="hl-legacy-note">Also matching legacy category ${group.taxonomyIds.map(escapeHtml).join(', ')}</p>` : ''}
     </div>`;
+
+  const updateStores = () => {
+    const s = [];
+    if (li.querySelector('.hl-store-elgiganten')?.checked) s.push('elgiganten-hotlist');
+    if (li.querySelector('.hl-store-amazon')?.checked) s.push('amazon-hotlist');
+    group.stores = s;
+  };
+  li.querySelector('.hl-store-elgiganten')?.addEventListener('change', updateStores);
+  li.querySelector('.hl-store-amazon')?.addEventListener('change', updateStores);
 
   li.querySelector('.hl-enabled-cb').addEventListener('change', (e) => {
     group.enabled = e.target.checked;

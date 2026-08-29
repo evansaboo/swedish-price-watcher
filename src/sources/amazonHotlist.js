@@ -111,15 +111,33 @@ export function parseAmazonPrice(raw) {
 }
 
 /**
+ * Clean category name for Amazon search engine (e.g. "Grafikkort (GPU)" -> "Grafikkort").
+ */
+export function cleanCategoryForAmazon(categoryName) {
+  if (!categoryName) return '';
+  return String(categoryName)
+    .replace(/\s*\([^)]*\)/g, '')
+    .replace(/[/\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Build Amazon.se targeted search URL for a query with discount and deal parameters.
  */
-export function buildAmazonSearchUrl(query, minDiscountPct = DEFAULT_MIN_DISCOUNT_PCT) {
+export function buildAmazonSearchUrl(query, minDiscountPct = DEFAULT_MIN_DISCOUNT_PCT, brands = []) {
   const discount = Math.max(0, Math.min(99, Math.round(minDiscountPct)));
   const params = new URLSearchParams({
     k: query,
     'pct-off': `${discount}-`,
     s: 'discount-rank'
   });
+  if (Array.isArray(brands) && brands.length) {
+    const cleanBrands = brands.map((b) => String(b).trim()).filter(Boolean);
+    if (cleanBrands.length) {
+      params.set('rh', `p_89:${cleanBrands.join('|')}`);
+    }
+  }
   return `${AMAZON_SE_BASE_URL}/s?${params.toString()}`;
 }
 
@@ -218,6 +236,22 @@ export function parseAmazonSearchResultsHtml(html, {
       return;
     }
 
+    // Filter by price constraints if configured
+    if (group.minPriceSek && priceSek < group.minPriceSek) return;
+    if (group.maxPriceSek && priceSek > group.maxPriceSek) return;
+
+    // Filter by brands if configured
+    if (Array.isArray(group.brands) && group.brands.length) {
+      const titleLower = title.toLowerCase();
+      const brandMatch = group.brands.some((b) => titleLower.includes(b.toLowerCase().trim()));
+      if (!brandMatch) {
+        const brandTag = $el.find('.a-size-small.a-color-base, .a-row.a-size-base.a-color-secondary, .a-size-base-plus').text().toLowerCase();
+        if (!group.brands.some((b) => brandTag.includes(b.toLowerCase().trim()))) {
+          return;
+        }
+      }
+    }
+
     // Extract Image URL
     const imageUrl = $el.find('img.s-image').first().attr('src') || null;
 
@@ -253,8 +287,8 @@ export function parseAmazonSearchResultsHtml(html, {
       availability: 'in_stock',
       imageUrl,
       discountPct,
-      seenAt: now,
-      firstSeenAt: now
+      scannedAt: now,
+      isBuyable: true
     });
   });
 
@@ -273,7 +307,7 @@ export async function collectFromAmazonHotlist({
 }) {
   const start = Date.now();
   const hotlistConfig = preferences?.hotlist ?? {};
-  const groups = normalizeWatchGroups(hotlistConfig.groups ?? source.watchGroups ?? []);
+  const groups = normalizeWatchGroups(hotlistConfig.groups ?? source.watchGroups ?? [], 'amazon-hotlist');
   const minDiscountPct = Number(hotlistConfig.minDiscountPct ?? source.minDiscountPct ?? DEFAULT_MIN_DISCOUNT_PCT);
 
   if (!groups.length) {
@@ -299,16 +333,16 @@ export async function collectFromAmazonHotlist({
     if (Array.isArray(group.keywords) && group.keywords.length) {
       queries.push(...group.keywords);
     } else {
-      const parts = [
-        ...(Array.isArray(group.brands) ? group.brands : []),
-        ...(Array.isArray(group.taxonomyNames) ? group.taxonomyNames : [])
-      ].filter(Boolean);
-      queries.push(parts.length ? parts.join(' ') : group.label);
+      const cleanCats = (group.taxonomyNames ?? []).map(cleanCategoryForAmazon).filter(Boolean);
+      const brands = (group.brands ?? []).filter(Boolean);
+      const parts = [...brands, ...cleanCats];
+      const queryStr = parts.length ? parts.join(' ') : cleanCategoryForAmazon(group.label);
+      if (queryStr) queries.push(queryStr);
     }
 
     for (const query of queries.slice(0, 1)) {
       if (signal?.aborted) break;
-      const targetUrl = buildAmazonSearchUrl(query, group.minDiscountPct ?? minDiscountPct);
+      const targetUrl = buildAmazonSearchUrl(query, group.minDiscountPct ?? minDiscountPct, group.brands);
 
       let html = '';
       try {

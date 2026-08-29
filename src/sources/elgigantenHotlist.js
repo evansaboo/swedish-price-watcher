@@ -4,6 +4,7 @@ import { resolveImageUrl } from './elgiganten.js';
 import {
   MAX_SUBQUERIES,
   activeGroups,
+  isGroupEnabledForSource,
   isGroupPollable,
   normalizeHotlistConfig,
   normalizeHotlistGroup,
@@ -132,11 +133,12 @@ export function titleMatchesKeyword(title, keyword) {
   return tokens.every((token) => haystack.includes(token));
 }
 
-export function normalizeWatchGroups(rawGroups) {
+export function normalizeWatchGroups(rawGroups, sourceId = 'elgiganten-hotlist') {
   const groups = Array.isArray(rawGroups) && rawGroups.length ? rawGroups : DEFAULT_WATCH_GROUPS;
   return groups
     .filter((group) => group && group.enabled !== false)
     .map((group, index) => normalizeHotlistGroup(group, index))
+    .filter((group) => isGroupEnabledForSource(group, sourceId))
     .filter(isGroupPollable);
 }
 

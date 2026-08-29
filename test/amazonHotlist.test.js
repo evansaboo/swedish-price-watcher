@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseAmazonPrice,
   extractAsin,
+  cleanCategoryForAmazon,
   buildAmazonSearchUrl,
   parseAmazonSearchResultsHtml,
   collectFromAmazonHotlist
@@ -28,11 +29,21 @@ test('extractAsin extracts 10-char alphanumeric ASIN', () => {
   assert.equal(extractAsin('invalid-asin', 'https://example.com/other'), null);
 });
 
-test('buildAmazonSearchUrl constructs targeted discount search URL', () => {
-  const url = buildAmazonSearchUrl('RTX 5070', 20);
-  assert.ok(url.includes('k=RTX+5070') || url.includes('k=RTX%205070'));
-  assert.ok(url.includes('pct-off=20-'));
-  assert.ok(url.includes('s=discount-rank'));
+test('cleanCategoryForAmazon strips parentheses and normalizes whitespace', () => {
+  assert.equal(cleanCategoryForAmazon('Grafikkort (GPU)'), 'Grafikkort');
+  assert.equal(cleanCategoryForAmazon('Processorer (CPU)'), 'Processorer');
+  assert.equal(cleanCategoryForAmazon('Kylning & Fläktar'), 'Kylning & Fläktar');
+  assert.equal(cleanCategoryForAmazon(''), '');
+});
+
+test('buildAmazonSearchUrl constructs targeted discount search URL with brands', () => {
+  const url1 = buildAmazonSearchUrl('RTX 5070', 20);
+  assert.ok(url1.includes('k=RTX+5070') || url1.includes('k=RTX%205070'));
+  assert.ok(url1.includes('pct-off=20-'));
+  assert.ok(url1.includes('s=discount-rank'));
+
+  const url2 = buildAmazonSearchUrl('Laptop', 10, ['Apple', 'Asus']);
+  assert.ok(url2.includes('rh=p_89%3AApple%7CAsus') || url2.includes('rh=p_89%3AApple%7CAsus') || url2.includes('p_89:Apple|Asus'));
 });
 
 test('parseAmazonSearchResultsHtml extracts deals with reference price and discount', () => {
@@ -139,4 +150,39 @@ test('collectFromAmazonHotlist fetches and parses watch group items', async () =
   assert.equal(results[0].priceSek, 7490);
   assert.equal(results[0].referencePriceSek, 9990);
   assert.equal(results[0].discountPct, 25);
+});
+
+test('collectFromAmazonHotlist respects group store targeting', async () => {
+  const sampleHtml = `
+    <div data-component-type="s-search-result" data-asin="B0GPU50700">
+      <h2><a href="/dp/B0GPU50700"><span>ASUS TUF Gaming GeForce RTX 5070 12GB GDDR7</span></a></h2>
+      <div class="a-price"><span class="a-offscreen">7 490,00 kr</span></div>
+      <div class="a-price a-text-price"><span class="a-offscreen">9 990,00 kr</span></div>
+    </div>
+  `;
+
+  let fetchedCount = 0;
+  const mockFetcher = {
+    fetchPageHtml: async () => {
+      fetchedCount += 1;
+      return sampleHtml;
+    }
+  };
+
+  // Group targeting Elgiganten ONLY should be skipped by Amazon hotlist
+  const results = await collectFromAmazonHotlist({
+    source: { id: 'amazon-hotlist', label: 'Amazon.se Hotlist', type: 'amazon-hotlist' },
+    fetcher: mockFetcher,
+    preferences: {
+      hotlist: {
+        minDiscountPct: 15,
+        groups: [
+          { label: 'Elgiganten Only GPU', keywords: ['RTX 5070'], stores: ['elgiganten-hotlist'] }
+        ]
+      }
+    }
+  });
+
+  assert.equal(results.length, 0);
+  assert.equal(fetchedCount, 0, 'No HTTP request should be made for elgiganten-only group');
 });

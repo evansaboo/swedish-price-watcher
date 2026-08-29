@@ -97,11 +97,18 @@ export function normalizeHotlistGroup(raw, index = 0) {
   const taxonomyNames = normalizeStringList(group.taxonomyNames);
   const brands = normalizeStringList(group.brands);
   const keywords = normalizeStringList(group.keywords, MAX_KEYWORDS_PER_GROUP);
+  const rawStores = Array.isArray(group.stores)
+    ? group.stores.map((s) => String(s).trim()).filter(Boolean)
+    : typeof group.stores === 'string' && group.stores.trim()
+      ? [group.stores.trim()]
+      : [];
+  const stores = rawStores.length ? rawStores : ['elgiganten-hotlist', 'amazon-hotlist'];
 
   return {
     id: String(group.id ?? '').trim() || makeGroupId(),
     label: String(group.label ?? '').trim() || `Watch group ${index + 1}`,
     enabled: group.enabled !== false,
+    stores,
     taxonomyIds,
     taxonomyNames,
     brands,
@@ -115,6 +122,15 @@ export function normalizeHotlistGroup(raw, index = 0) {
     minPriceSek: optionalPositiveNumber(group.minPriceSek),
     maxPriceSek: optionalPositiveNumber(group.maxPriceSek),
   };
+}
+
+/**
+ * Check if a watch group is targeted to a specific source (e.g. 'elgiganten-hotlist', 'amazon-hotlist').
+ */
+export function isGroupEnabledForSource(group, sourceId) {
+  if (!group || group.enabled === false) return false;
+  if (!group.stores || !Array.isArray(group.stores) || !group.stores.length) return true;
+  return group.stores.includes(sourceId) || group.stores.includes('all');
 }
 
 /**

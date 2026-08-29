@@ -19,6 +19,51 @@ const MAX_FACET_VALUES = 1000;
 let cache = null;
 let inFlight = null;
 
+const STANDARD_CATEGORIES = [
+  'Grafikkort (GPU)',
+  'Processorer (CPU)',
+  'Moderkort',
+  'RAM-minne',
+  'Intern SSD',
+  'Extern SSD',
+  'M.2 SSD',
+  'Hårddiskar',
+  'Nätaggregat (PSU)',
+  'Datorchassi',
+  'Vattenkylning & Fläktar',
+  'Laptop',
+  'Stationär dator',
+  'Datorskärmar',
+  'Tangentbord',
+  'Möss & Mattor',
+  'Headset & Hörlurar',
+  'Mobiltelefon',
+  'Surfplatta',
+  'Smartklocka',
+  'TV',
+  'Soundbar & Högtalare',
+  'Spelkonsoler (PS5, Xbox, Switch)',
+  'Handkontroller & Tillbehör',
+  'Nätverk & Routrar',
+  'Smarta hem & Belysning',
+  'Kameror & Drönare',
+];
+
+const STANDARD_BRANDS = [
+  'Apple', 'Asus', 'Sony', 'Samsung', 'Logitech', 'Corsair', 'MSI', 'Lenovo',
+  'Dell', 'Kingston', 'Crucial', 'Western Digital', 'SanDisk', 'Gigabyte',
+  'Nintendo', 'Bose', 'JBL', 'Sennheiser', 'SteelSeries', 'Razer', 'AMD',
+  'Intel', 'NVIDIA', 'Google', 'OnePlus', 'Xiaomi', 'Nothing', 'LG', 'Philips',
+  'Sonos', 'Garmin', 'Anker', 'Seagate', 'Noctua', 'NZXT', 'Lian Li',
+  'Fractal Design', 'be quiet!', 'Thermalright', 'ASRock', 'Zotac', 'Palit',
+  'Gainward', 'Inno3D', 'PowerColor', 'Sapphire', 'XFX', 'HyperX', 'Glorious',
+  'Keychron', 'Elgato', 'Ducky', 'Audio-Technica', 'Beyerdynamic', 'Shure',
+  'Marshall', 'Bang & Olufsen', 'Fitbit', 'Polar', 'Suunto', 'DJI', 'GoPro',
+  'Canon', 'Nikon', 'Fujifilm', 'Panasonic', 'Roborock', 'Dyson', 'Ecovacs',
+  'Ubiquiti', 'TP-Link', 'Netgear', 'Synology', 'QNAP', 'Belkin', 'UGREEN',
+  'Baseus', 'Anker Soundcore', 'Twelve South', 'Spigen', 'Peak Design',
+];
+
 function toSortedEntries(facet) {
   return Object.entries(facet ?? {})
     .map(([value, count]) => ({ value, count }))
@@ -51,10 +96,27 @@ async function fetchCatalog(fetcher) {
   });
 
   const facets = response?.results?.[0]?.facets ?? {};
+
+  const categoryMap = new Map();
+  for (const cat of STANDARD_CATEGORIES) {
+    categoryMap.set(cat.toLowerCase(), { value: cat, count: 50 });
+  }
+  for (const entry of toSortedEntries(facets['productTaxonomy.name'])) {
+    categoryMap.set(entry.value.toLowerCase(), entry);
+  }
+
+  const brandMap = new Map();
+  for (const b of STANDARD_BRANDS) {
+    brandMap.set(b.toLowerCase(), { value: b, count: 50 });
+  }
+  for (const entry of toSortedEntries(facets.brand)) {
+    brandMap.set(entry.value.toLowerCase(), entry);
+  }
+
   return {
     fetchedAt: new Date().toISOString(),
-    categories: toSortedEntries(facets['productTaxonomy.name']),
-    brands: toSortedEntries(facets.brand),
+    categories: Array.from(categoryMap.values()).sort((a, b) => b.count - a.count),
+    brands: Array.from(brandMap.values()).sort((a, b) => b.count - a.count),
   };
 }
 
