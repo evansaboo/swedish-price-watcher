@@ -99,18 +99,22 @@ async function fetchCatalog(fetcher) {
 
   const categoryMap = new Map();
   for (const cat of STANDARD_CATEGORIES) {
-    categoryMap.set(cat.toLowerCase(), { value: cat, count: 50 });
+    categoryMap.set(cat.toLowerCase(), { value: cat, count: 99999 });
   }
   for (const entry of toSortedEntries(facets['productTaxonomy.name'])) {
-    categoryMap.set(entry.value.toLowerCase(), entry);
+    if (!categoryMap.has(entry.value.toLowerCase())) {
+      categoryMap.set(entry.value.toLowerCase(), entry);
+    }
   }
 
   const brandMap = new Map();
   for (const b of STANDARD_BRANDS) {
-    brandMap.set(b.toLowerCase(), { value: b, count: 50 });
+    brandMap.set(b.toLowerCase(), { value: b, count: 99999 });
   }
   for (const entry of toSortedEntries(facets.brand)) {
-    brandMap.set(entry.value.toLowerCase(), entry);
+    if (!brandMap.has(entry.value.toLowerCase())) {
+      brandMap.set(entry.value.toLowerCase(), entry);
+    }
   }
 
   return {

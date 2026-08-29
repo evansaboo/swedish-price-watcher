@@ -849,7 +849,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     if (!fetcher) { reply.code(503); return { message: 'Catalog lookup is unavailable.' }; }
     try {
       const catalog = await getTaxonomyCatalog(fetcher, { force: request.query?.refresh === 'true' });
-      const limit = Math.min(Math.max(Number.parseInt(String(request.query?.limit ?? '40'), 10) || 40, 1), 200);
+      const limit = Math.min(Math.max(Number.parseInt(String(request.query?.limit ?? '1000'), 10) || 1000, 1), 2000);
       return searchCatalog(catalog, { query: request.query?.q ?? '', limit });
     } catch (error) {
       reply.code(502);
