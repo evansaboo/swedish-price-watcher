@@ -24,6 +24,7 @@ import {
   normalizeWebhookUrl
 } from './services/hotlistConfig.js';
 import { getTaxonomyCatalog, searchCatalog } from './sources/elgigantenTaxonomy.js';
+import { fetchAmazonSuggestions } from './sources/amazonHotlist.js';
 import { getElgigantenBlockStatus, clearElgigantenBlock } from './sources/elgigantenAuth.js';
 import {
   ensurePurchaseState,
@@ -854,6 +855,17 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     } catch (error) {
       reply.code(502);
       return { message: `Could not load Elgiganten's category list: ${error.message}` };
+    }
+  });
+
+  app.get('/api/hotlist/amazon-suggestions', async (request, reply) => {
+    const prefix = request.query?.q ?? '';
+    if (!prefix || !prefix.trim()) return [];
+    try {
+      const suggestions = await fetchAmazonSuggestions(prefix);
+      return suggestions;
+    } catch {
+      return [];
     }
   });
 

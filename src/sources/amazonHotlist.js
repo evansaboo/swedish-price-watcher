@@ -3,7 +3,6 @@ import { normalizeProductIdentity } from '../lib/utils.js';
 import { titleMatchesKeyword, normalizeWatchGroups } from './elgigantenHotlist.js';
 import { resolveBypassBackend } from '../lib/bypassFetch.js';
 import { buildFingerprint, buildStealthScript, buildLaunchArgs } from './browserFingerprint.js';
-import { searchPaapi, normalizePaapiItem } from './amazonPaapi.js';
 
 /**
  * Amazon.se Hotlist — a targeted, fast poller for hot product categories and
@@ -297,9 +296,29 @@ export function parseAmazonSearchResultsHtml(html, {
 }
 
 /**
- * Collects hot deals from Amazon.se matching configured watch groups.
- * If Amazon PA-API credentials (access key, secret key, partner tag) are present,
- * uses direct PA-API v5 requests. Otherwise, uses stealth Playwright browser scraping.
+ * Fetches real-time keyword suggestions from Amazon Sweden (zero credentials required).
+ */
+export async function fetchAmazonSuggestions(prefix) {
+  if (!prefix || typeof prefix !== 'string' || !prefix.trim()) return [];
+  const url = `https://completion.amazon.se/api/2017/suggestions?prefix=${encodeURIComponent(prefix.trim())}&mid=A2NODRKZP88ZB9&alias=aps`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data?.suggestions ?? []).map((s) => s.value).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Collects hot deals from Amazon.se matching configured watch groups
+ * using targeted stealth Playwright browser scraping.
  */
 export async function collectFromAmazonHotlist({
   source,
@@ -316,11 +335,6 @@ export async function collectFromAmazonHotlist({
   if (!groups.length) {
     return [];
   }
-
-  const paapiAccessKey = process.env.AMAZON_PAAPI_ACCESS_KEY || preferences?.amazon?.accessKey || preferences?.hotlist?.amazonAccessKey;
-  const paapiSecretKey = process.env.AMAZON_PAAPI_SECRET_KEY || preferences?.amazon?.secretKey || preferences?.hotlist?.amazonSecretKey;
-  const paapiPartnerTag = process.env.AMAZON_PAAPI_PARTNER_TAG || preferences?.amazon?.partnerTag || preferences?.hotlist?.amazonPartnerTag || 'zpeedx-21';
-  const usePaapi = Boolean(paapiAccessKey && paapiSecretKey);
 
   // Resolve bypass fetcher if FlareSolverr, ScraperAPI, or Scrapfly configured
   let bypassBackend = null;
@@ -351,35 +365,6 @@ export async function collectFromAmazonHotlist({
     for (const query of queries.slice(0, 1)) {
       if (signal?.aborted) break;
 
-      // Try PA-API first if credentials provided
-      if (usePaapi) {
-        try {
-          const rawItems = await searchPaapi({
-            keywords: query,
-            brand: group.brands?.[0] || undefined,
-            minDiscountPct: group.minDiscountPct ?? minDiscountPct,
-            minPriceSek: group.minPriceSek,
-            maxPriceSek: group.maxPriceSek,
-            accessKey: paapiAccessKey,
-            secretKey: paapiSecretKey,
-            partnerTag: paapiPartnerTag,
-            fetcher
-          });
-
-          for (const raw of rawItems) {
-            const item = normalizePaapiItem(raw, { source, group, now });
-            if (item && !seenAsins.has(item.externalId)) {
-              seenAsins.add(item.externalId);
-              collected.push(item);
-            }
-          }
-          continue;
-        } catch (paapiErr) {
-          console.warn(`[amazon-hotlist] PA-API failed for "${query}", falling back to scraper: ${paapiErr.message}`);
-        }
-      }
-
-      // Fallback: stealth scraper
       const targetUrl = buildAmazonSearchUrl(query, group.minDiscountPct ?? minDiscountPct, group.brands);
 
       let html = '';
@@ -417,7 +402,7 @@ export async function collectFromAmazonHotlist({
   }
 
   const elapsedMs = Date.now() - start;
-  console.log(`[amazon-hotlist] ${collected.length} deal(s) from ${groups.length} group(s) in ${elapsedMs}ms (${usePaapi ? 'PA-API' : 'Playwright'})`);
+  console.log(`[amazon-hotlist] ${collected.length} deal(s) from ${groups.length} group(s) in ${elapsedMs}ms`);
 
   return collected;
 }

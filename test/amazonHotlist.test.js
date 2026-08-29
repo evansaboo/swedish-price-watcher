@@ -6,7 +6,8 @@ import {
   cleanCategoryForAmazon,
   buildAmazonSearchUrl,
   parseAmazonSearchResultsHtml,
-  collectFromAmazonHotlist
+  collectFromAmazonHotlist,
+  fetchAmazonSuggestions
 } from '../src/sources/amazonHotlist.js';
 
 test('parseAmazonPrice handles Swedish currency string formats', () => {
@@ -185,4 +186,11 @@ test('collectFromAmazonHotlist respects group store targeting', async () => {
 
   assert.equal(results.length, 0);
   assert.equal(fetchedCount, 0, 'No HTTP request should be made for elgiganten-only group');
+});
+
+test('fetchAmazonSuggestions handles empty or invalid prefix', async () => {
+  const r1 = await fetchAmazonSuggestions('');
+  const r2 = await fetchAmazonSuggestions(null);
+  assert.deepEqual(r1, []);
+  assert.deepEqual(r2, []);
 });

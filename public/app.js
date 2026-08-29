@@ -1418,7 +1418,7 @@ function createEmptyRule() {
   };
 }
 
-function wireChipInput({ container, items, onAdd, onRemove, allOptions, placeholder }) {
+function wireChipInput({ container, items, onAdd, onRemove, allOptions, fetchOptions, placeholder }) {
   const chipList = container.querySelector('.chip-list');
   const textInput = container.querySelector('.chip-text-input');
   const dropdown = container.querySelector('.kw-cat-dropdown');
@@ -1470,9 +1470,28 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions, placehol
     else if (e.key === 'Backspace' && !textInput.value && items.length) { const last = items[items.length - 1]; items.splice(items.length - 1, 1); onRemove(last); refreshChips(); }
   });
 
+  let fetchTimer = null;
   if (dropdown) {
-    textInput.addEventListener('focus', () => { renderDropdown(); dropdown.classList.remove('hidden'); });
-    textInput.addEventListener('input', () => { renderDropdown(); dropdown.classList.remove('hidden'); });
+    textInput.addEventListener('focus', () => {
+      if (allOptions) { renderDropdown(); dropdown.classList.remove('hidden'); }
+    });
+    textInput.addEventListener('input', () => {
+      if (allOptions) { renderDropdown(); dropdown.classList.remove('hidden'); }
+      if (typeof fetchOptions === 'function') {
+        clearTimeout(fetchTimer);
+        const q = textInput.value.trim();
+        if (q.length >= 2) {
+          fetchTimer = setTimeout(async () => {
+            const suggestions = await fetchOptions(q);
+            if (Array.isArray(suggestions) && suggestions.length) {
+              allOptions = suggestions;
+              renderDropdown();
+              dropdown.classList.remove('hidden');
+            }
+          }, 100);
+        }
+      }
+    });
     textInput.addEventListener('blur', () => { setTimeout(() => dropdown.classList.add('hidden'), 150); });
   }
   refreshChips();
@@ -1757,8 +1776,8 @@ function createHotlistGroupElement(group) {
       </div>
       <div class="rule-row">
         <div class="rule-field">
-          <label class="rule-field-label">Keywords <span class="rule-hint">Each one costs a query</span></label>
-          <div class="chip-input-wrap" id="hl-kw-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. RTX 5090" autocomplete="off" /></div>
+          <label class="rule-field-label">Keywords <span class="rule-hint">Live search suggestions</span></label>
+          <div class="chip-input-wrap" id="hl-kw-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. RTX 5090, MacBook M3, 990 PRO" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
           <label class="toggle-switch hl-strict-toggle" title="Require the keyword to appear in the product title">
             <input type="checkbox" class="hl-strict-cb" ${group.strictKeywordMatch !== false ? 'checked' : ''} />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -1831,7 +1850,15 @@ function createHotlistGroupElement(group) {
     container: li.querySelector(`#hl-kw-${group.id}`),
     items: group.keywords,
     onAdd: () => renderHotlistCount(), onRemove: () => renderHotlistCount(),
-    allOptions: null
+    allOptions: null,
+    fetchOptions: async (query) => {
+      try {
+        const res = await fetchJson(`/api/hotlist/amazon-suggestions?q=${encodeURIComponent(query)}`);
+        return Array.isArray(res) ? res : [];
+      } catch {
+        return [];
+      }
+    }
   });
 
   return li;
