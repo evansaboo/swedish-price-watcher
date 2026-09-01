@@ -63,6 +63,26 @@ if (store.onInvalidate) {
   store.onInvalidate(() => productCache.rebuild(store.getState(), sourceLabelMap));
 }
 
+// Reset Discount Bandit users on request if database exists
+try {
+  const fs = await import('fs');
+  const banditDbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
+  if (fs.existsSync(banditDbPath)) {
+    const Database = (await import('better-sqlite3')).default;
+    const banditDb = new Database(banditDbPath);
+    banditDb.prepare('DELETE FROM users').run();
+    banditDb.prepare('DELETE FROM sessions').run();
+    banditDb.prepare('DELETE FROM password_reset_tokens').run();
+    banditDb.prepare('DELETE FROM authentication_log').run();
+    banditDb.prepare('DELETE FROM breezy_sessions').run();
+    banditDb.prepare('DELETE FROM personal_access_tokens').run();
+    console.log('[bandit] Reset all users and sessions from Discount Bandit database.');
+    banditDb.close();
+  }
+} catch (bErr) {
+  console.warn('[bandit] Startup user reset skipped:', bErr.message);
+}
+
 const configuredInterval = Number.isFinite(config.scanIntervalMinutes) && config.scanIntervalMinutes > 0 ? config.scanIntervalMinutes : 180;
 const existingSchedulerPreference = state.preferences?.scheduler ?? {};
 const parsedSchedulerInterval = Number.parseInt(String(existingSchedulerPreference.intervalMinutes ?? ''), 10);

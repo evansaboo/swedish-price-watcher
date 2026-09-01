@@ -869,6 +869,30 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
+  app.post('/api/bandit/reset-users', async (request, reply) => {
+    try {
+      const fs = await import('fs');
+      const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
+      if (!fs.existsSync(dbPath)) {
+        return { ok: false, message: 'Discount Bandit database not found at ' + dbPath };
+      }
+      const Database = (await import('better-sqlite3')).default;
+      const db = new Database(dbPath);
+      const uCount = db.prepare('SELECT count(*) as count FROM users').get().count;
+      db.prepare('DELETE FROM users').run();
+      db.prepare('DELETE FROM sessions').run();
+      db.prepare('DELETE FROM password_reset_tokens').run();
+      db.prepare('DELETE FROM authentication_log').run();
+      db.prepare('DELETE FROM breezy_sessions').run();
+      db.prepare('DELETE FROM personal_access_tokens').run();
+      db.close();
+      return { ok: true, message: `Successfully cleared ${uCount} user(s). Discount Bandit is ready for fresh registration.` };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
   // ── Sources ────────────────────────────────────────────────────
   // Standard scan sources only. Hotlist sources (Elgiganten, Amazon, etc.) are continuous pollers
   // configured exclusively via /api/hotlist and have their own lifecycles.
