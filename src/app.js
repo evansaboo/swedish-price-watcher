@@ -913,7 +913,9 @@ export async function buildApp({ config, store, productCache, scanState, trigger
             for (const f of files) {
               if (f.endsWith('.log')) {
                 const content = fs.readFileSync(`${d}/${f}`, 'utf8');
-                laravelLogs += `\n--- ${f} (last 4000 chars) ---\n` + content.slice(-4000) + '\n';
+                const errorMatches = content.match(/\[\d{4}-\d{2}-\d{2}[^\]]+\]\s+production\.\w+:\s+[^\n]+/g) || [];
+                laravelLogs += `\n=== ${f} Recent Error Messages (${errorMatches.length} total) ===\n` + errorMatches.slice(-10).join('\n') + '\n';
+                laravelLogs += `\n--- ${f} Raw End (last 3000 chars) ---\n` + content.slice(-3000) + '\n';
               }
             }
           }
