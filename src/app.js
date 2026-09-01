@@ -905,11 +905,13 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       }
       
       let storeStatuses = [];
+      let usersList = [];
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
       if (fs.existsSync(dbPath)) {
         const Database = (await import('better-sqlite3')).default;
         const db = new Database(dbPath);
         storeStatuses = db.prepare('SELECT DISTINCT status FROM stores').all();
+        usersList = db.prepare('SELECT id, name, email FROM users').all();
         db.close();
       }
 
@@ -930,7 +932,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           }
         } catch {}
       }
-      return { ok: true, enumCode, storeStatuses, laravelLogs };
+      return { ok: true, enumCode, storeStatuses, usersList, laravelLogs };
     } catch (err) {
       reply.code(500);
       return { ok: false, error: err.message };
