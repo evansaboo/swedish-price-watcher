@@ -893,6 +893,39 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
+  app.get('/api/bandit/diagnostics', async (request, reply) => {
+    try {
+      const { execSync } = await import('child_process');
+      const fs = await import('fs');
+      let dockerLogs = '';
+      try {
+        dockerLogs = execSync('sudo docker logs --tail 120 discount-bandit 2>&1', { encoding: 'utf8', timeout: 5000 });
+      } catch (e) {
+        dockerLogs = 'Docker logs error: ' + (e.stdout || e.message);
+      }
+      let laravelLogs = '';
+      const logDirs = ['/home/zpeedx/discount-bandit/logs', '/home/zpeedx/discount-bandit'];
+      for (const d of logDirs) {
+        try {
+          if (fs.existsSync(d)) {
+            const files = fs.readdirSync(d);
+            laravelLogs += `\nFiles in ${d}: ${files.join(', ')}\n`;
+            for (const f of files) {
+              if (f.endsWith('.log')) {
+                const content = fs.readFileSync(`${d}/${f}`, 'utf8');
+                laravelLogs += `\n--- ${f} (last 4000 chars) ---\n` + content.slice(-4000) + '\n';
+              }
+            }
+          }
+        } catch {}
+      }
+      return { ok: true, dockerLogs, laravelLogs };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
   // ── Sources ────────────────────────────────────────────────────
   // Standard scan sources only. Hotlist sources (Elgiganten, Amazon, etc.) are continuous pollers
   // configured exclusively via /api/hotlist and have their own lifecycles.
