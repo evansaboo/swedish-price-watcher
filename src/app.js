@@ -897,19 +897,28 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     try {
       const { execSync } = await import('child_process');
       const fs = await import('fs');
-      let dockerLogs = '';
+      let enumCode = '';
       try {
-        dockerLogs = execSync('sudo docker logs --tail 120 discount-bandit 2>&1', { encoding: 'utf8', timeout: 5000 });
+        enumCode = execSync('docker exec discount-bandit cat app/Enums/StoreStatusEnum.php', { encoding: 'utf8', timeout: 5000 });
       } catch (e) {
-        dockerLogs = 'Docker logs error: ' + (e.stdout || e.message);
+        enumCode = 'docker exec error: ' + (e.stdout || e.stderr || e.message);
       }
+      
+      let storeStatuses = [];
+      const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
+      if (fs.existsSync(dbPath)) {
+        const Database = (await import('better-sqlite3')).default;
+        const db = new Database(dbPath);
+        storeStatuses = db.prepare('SELECT DISTINCT status FROM stores').all();
+        db.close();
+      }
+
       let laravelLogs = '';
       const logDirs = ['/home/zpeedx/discount-bandit/logs', '/home/zpeedx/discount-bandit'];
       for (const d of logDirs) {
         try {
           if (fs.existsSync(d)) {
             const files = fs.readdirSync(d);
-            laravelLogs += `\nFiles in ${d}: ${files.join(', ')}\n`;
             for (const f of files) {
               if (f.endsWith('.log')) {
                 const content = fs.readFileSync(`${d}/${f}`, 'utf8');
@@ -921,7 +930,26 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           }
         } catch {}
       }
-      return { ok: true, dockerLogs, laravelLogs };
+      return { ok: true, enumCode, storeStatuses, laravelLogs };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  app.post('/api/bandit/fix-stores', async (request, reply) => {
+    try {
+      const fs = await import('fs');
+      const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
+      if (!fs.existsSync(dbPath)) return { ok: false, message: 'DB not found' };
+      const Database = (await import('better-sqlite3')).default;
+      const db = new Database(dbPath);
+      // Check what valid enum values are from request body or default
+      const activeValue = request.body?.active || 'active';
+      const inactiveValue = request.body?.inactive || 'disabled';
+      const res = db.prepare(`UPDATE stores SET status = ? WHERE status = 'enabled'`).run(activeValue);
+      db.close();
+      return { ok: true, changes: res.changes, updatedTo: activeValue };
     } catch (err) {
       reply.code(500);
       return { ok: false, error: err.message };
