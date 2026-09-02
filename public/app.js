@@ -580,7 +580,14 @@ function renderProducts(response) {
     if (condition) badgesLeft += `<span class="badge badge-condition">${escapeHtml(condition)}</span>`;
 
     // Image
-    const imgSrc = product.imageUrl;
+    let imgSrc = product.imageUrl;
+    if (product.sourceId === 'nvidia-fe' || (imgSrc && imgSrc.includes('images.nvidia.com'))) {
+      const match = product.title?.match(/(\b5090\b|\b5080\b|\b5070\b|\b4090\b|\b4080\b|\b4070\b)/i);
+      if (match) {
+        const isSuper = /super/i.test(product.title || '');
+        imgSrc = `/images/gpu/${match[1].toLowerCase()}${isSuper ? 's' : ''}.svg`;
+      }
+    }
     const imageHtml = imgSrc
       ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder-img\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'" />`
       : `<div class="card-placeholder-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
@@ -1195,44 +1202,59 @@ async function refreshNvidiaCards() {
     container.innerHTML = res.cards.map(card => {
       const isAvailable = card.available;
       const isMonitored = monitoredSet.has(card.cardKey);
-      const statusBg = isAvailable ? '#10b981' : '#64748b';
-      const statusText = isAvailable ? 'IN STOCK 🚀' : 'Out of stock';
-      const priceStr = card.priceSek ? `${Number(card.priceSek).toLocaleString('sv-SE')} SEK` : '';
+      const priceStr = card.priceSek ? `${Number(card.priceSek).toLocaleString('sv-SE')} SEK` : `${Number(card.msrpSek).toLocaleString('sv-SE')} SEK`;
       const buyUrl = isAvailable && card.product_url ? card.product_url : card.store_url;
+      const svgThumb = `/images/gpu/${card.cardKey.toLowerCase()}.svg`;
 
       return `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--bg-secondary, rgba(255,255,255,0.05)); border:1px solid ${isAvailable ? '#10b981' : 'var(--border, rgba(255,255,255,0.1))'}; border-radius:8px; gap:12px;">
-          <!-- Checkbox to listen/monitor -->
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; flex-shrink:0;" title="Check to listen/alert on this GPU">
-            <input type="checkbox" class="nvidia-card-toggle" data-card="${escapeHtml(card.cardKey)}" ${isMonitored ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;" />
-            <span style="font-size:0.75rem; font-weight:600; color:${isMonitored ? '#76b900' : 'var(--text-muted, #777)'};">Listen</span>
-          </label>
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:var(--bg-surface, #1e1e24); border:1px solid ${isAvailable ? 'rgba(16, 185, 129, 0.7)' : isMonitored ? 'rgba(118, 185, 0, 0.35)' : 'var(--border, rgba(255,255,255,0.1))'}; border-radius:12px; gap:16px; transition:border-color 0.2s, box-shadow 0.2s; ${isAvailable ? 'box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);' : ''}">
+          <!-- Left: Listen Checkbox + GPU Thumbnail + Name & Info -->
+          <div style="display:flex; align-items:center; gap:14px; flex:1; min-width:0;">
+            <!-- Listen toggle -->
+            <label style="display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; flex-shrink:0; padding:6px 8px; border-radius:8px; background:${isMonitored ? 'rgba(118,185,0,0.12)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${isMonitored ? 'rgba(118,185,0,0.35)' : 'var(--border, rgba(255,255,255,0.08))'}; min-width:44px;" title="${isMonitored ? 'Monitored by background scheduler' : 'Click to monitor with background scheduler'}">
+              <input type="checkbox" class="nvidia-card-toggle" data-card="${escapeHtml(card.cardKey)}" ${isMonitored ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer; accent-color:#76b900;" />
+              <span style="font-size:0.62rem; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:${isMonitored ? '#76b900' : 'var(--text-muted, #777)'};">${isMonitored ? 'ON' : 'OFF'}</span>
+            </label>
 
-          <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:0;">
-            ${card.imageUrl ? `<img src="${card.imageUrl}" alt="${escapeHtml(card.name)}" style="width:44px; height:44px; object-fit:contain; border-radius:4px; flex-shrink:0;" />` : ''}
-            <div style="min-width:0;">
-              <div style="font-weight:600; font-size:0.95rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                ${escapeHtml(card.fullName || card.name)}
+            <!-- Crisp GPU Thumbnail -->
+            <div style="width:54px; height:54px; border-radius:10px; background:#141518; border:1px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden; box-shadow:0 3px 8px rgba(0,0,0,0.4);">
+              <img src="${escapeHtml(svgThumb)}" alt="${escapeHtml(card.name)}" style="width:100%; height:100%; object-fit:contain; display:block;" onerror="this.src='${escapeHtml(svgThumb)}'" />
+            </div>
+
+            <!-- Title, SKU & API status -->
+            <div style="min-width:0; flex:1;">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <span style="font-weight:700; font-size:0.98rem; color:var(--text-primary); letter-spacing:-0.01em;">${escapeHtml(card.fullName || card.name)}</span>
+                <span style="font-size:0.62rem; font-weight:700; padding:1px 6px; border-radius:4px; background:rgba(118,185,0,0.15); color:#76b900; border:1px solid rgba(118,185,0,0.3);">FE</span>
               </div>
-              <div style="font-size:0.75rem; opacity:0.6; display:flex; gap:8px; margin-top:2px; flex-wrap:wrap;">
-                <span>SKU: <code>${escapeHtml(card.sku)}</code></span>
-                <span>MSRP: ${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</span>
+              <div style="font-size:0.75rem; opacity:0.7; display:flex; align-items:center; gap:10px; margin-top:4px; flex-wrap:wrap;">
+                <span>SKU: <code style="font-family:monospace; font-size:0.72rem; background:rgba(255,255,255,0.06); padding:2px 5px; border-radius:4px;">${escapeHtml(card.sku)}</code></span>
+                <span>MSRP: <strong>${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</strong></span>
+                <span style="display:inline-flex; align-items:center; gap:4px; font-size:0.72rem; color:${card.api_reachable ? '#10b981' : '#ef4444'};">
+                  <span style="width:6px; height:6px; border-radius:50%; background:${card.api_reachable ? '#10b981' : '#ef4444'};"></span>
+                  ${card.api_reachable ? 'API Online' : 'API Error'}
+                </span>
               </div>
             </div>
           </div>
 
-          <div style="display:flex; align-items:center; gap:12px; flex-shrink:0;">
+          <!-- Right: Price, Stock Status Badge & Buy Button -->
+          <div style="display:flex; align-items:center; gap:16px; flex-shrink:0;">
             <div style="text-align:right;">
-              <div style="font-weight:700; font-size:1rem; color:${isAvailable ? '#10b981' : 'inherit'};">
+              <div style="font-weight:800; font-size:1.05rem; color:${isAvailable ? '#10b981' : 'var(--text-primary)'};">
                 ${priceStr}
               </div>
-              <span style="display:inline-block; padding:2px 8px; font-size:0.7rem; font-weight:700; border-radius:12px; background:${statusBg}; color:#fff; text-transform:uppercase;">
-                ${statusText}
-              </span>
+              <div style="margin-top:2px;">
+                ${isAvailable
+                  ? `<span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; font-size:0.72rem; font-weight:800; border-radius:20px; background:#10b981; color:#fff; text-transform:uppercase; box-shadow:0 0 10px rgba(16,185,129,0.5);">🟢 IN STOCK</span>`
+                  : `<span style="display:inline-block; padding:2px 8px; font-size:0.72rem; font-weight:600; border-radius:12px; background:rgba(255,255,255,0.06); color:var(--text-tertiary, #888); border:1px solid var(--border, rgba(255,255,255,0.1));">Out of stock</span>`
+                }
+              </div>
             </div>
+
             ${buyUrl ? `
-              <a href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" class="action-btn" style="text-decoration:none; padding:6px 12px; font-size:0.8rem; background:${isAvailable ? '#10b981' : 'transparent'}; border:1px solid ${isAvailable ? '#10b981' : 'var(--border, rgba(255,255,255,0.2))'}; color:#fff; font-weight:600; white-space:nowrap;">
-                ${isAvailable ? 'Buy Now 🛒' : 'View'}
+              <a href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" class="action-btn" style="text-decoration:none; padding:8px 16px; font-size:0.82rem; font-weight:700; border-radius:8px; white-space:nowrap; ${isAvailable ? 'background:#10b981; border:1px solid #10b981; color:#fff; box-shadow:0 2px 8px rgba(16,185,129,0.4);' : 'background:transparent; border:1px solid var(--border, rgba(255,255,255,0.2)); color:var(--text-secondary, #ccc);'}">
+                ${isAvailable ? 'Buy Now 🛒' : 'Store Link ↗'}
               </a>
             ` : ''}
           </div>

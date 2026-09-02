@@ -81,42 +81,42 @@ export const CARD_METADATA = {
     name: 'NVIDIA GeForce RTX 5090 Founders Edition',
     shortName: 'RTX 5090 FE',
     msrpSek: 25990,
-    imageUrl: 'https://images.nvidia.com/aem-dam/Solutions/geforce/rtx-5090/geforce-rtx-5090-product-gallery-full-1.png',
+    imageUrl: '/images/gpu/5090.svg',
     defaultUrl: 'https://marketplace.nvidia.com/sv-se/consumer/graphics-cards/nvidia-geforce-rtx-5090/'
   },
   '5080': {
     name: 'NVIDIA GeForce RTX 5080 Founders Edition',
     shortName: 'RTX 5080 FE',
     msrpSek: 13990,
-    imageUrl: 'https://images.nvidia.com/aem-dam/Solutions/geforce/rtx-5080/geforce-rtx-5080-product-gallery-full-1.png',
+    imageUrl: '/images/gpu/5080.svg',
     defaultUrl: 'https://marketplace.nvidia.com/sv-se/consumer/graphics-cards/nvidia-geforce-rtx-5080/'
   },
   '5070': {
     name: 'NVIDIA GeForce RTX 5070 Founders Edition',
     shortName: 'RTX 5070 FE',
     msrpSek: 7990,
-    imageUrl: 'https://images.nvidia.com/aem-dam/Solutions/geforce/rtx-5070/geforce-rtx-5070-product-gallery-full-1.png',
+    imageUrl: '/images/gpu/5070.svg',
     defaultUrl: 'https://marketplace.nvidia.com/sv-se/consumer/graphics-cards/nvidia-geforce-rtx-5070/'
   },
   '4090': {
     name: 'NVIDIA GeForce RTX 4090 Founders Edition',
     shortName: 'RTX 4090 FE',
     msrpSek: 21990,
-    imageUrl: 'https://images.nvidia.com/aem-dam/Solutions/geforce/ada/rtx-4090/geforce-rtx-4090-product-gallery-full-1.png',
+    imageUrl: '/images/gpu/4090.svg',
     defaultUrl: 'https://marketplace.nvidia.com/sv-se/consumer/graphics-cards/nvidia-geforce-rtx-4090/'
   },
   '4080S': {
     name: 'NVIDIA GeForce RTX 4080 SUPER Founders Edition',
     shortName: 'RTX 4080 SUPER FE',
     msrpSek: 12490,
-    imageUrl: 'https://images.nvidia.com/aem-dam/Solutions/geforce/ada/rtx-4080-super/geforce-rtx-4080-super-product-gallery-full-1.png',
+    imageUrl: '/images/gpu/4080s.svg',
     defaultUrl: 'https://marketplace.nvidia.com/sv-se/consumer/graphics-cards/nvidia-geforce-rtx-4080-super/'
   },
   '4070S': {
     name: 'NVIDIA GeForce RTX 4070 SUPER Founders Edition',
     shortName: 'RTX 4070 SUPER FE',
     msrpSek: 7490,
-    imageUrl: 'https://images.nvidia.com/aem-dam/Solutions/geforce/ada/rtx-4070-super/geforce-rtx-4070-super-product-gallery-full-1.png',
+    imageUrl: '/images/gpu/4070s.svg',
     defaultUrl: 'https://marketplace.nvidia.com/sv-se/consumer/graphics-cards/nvidia-geforce-rtx-4070-super/'
   }
 };
