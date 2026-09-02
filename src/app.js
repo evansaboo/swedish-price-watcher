@@ -970,25 +970,25 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       const tableInfo = db.prepare('PRAGMA table_info(categories)').all();
       const colNames = tableInfo.map(c => c.name);
       
-      let userId = 1;
-      const user = db.prepare('SELECT id FROM users LIMIT 1').get();
+      let userId = 2; // Default to Evan if available
+      const user = db.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get();
       if (user) userId = user.id;
 
       const defaultCategories = [
-        { name: 'GPU (Graphics Cards)', slug: 'gpu' },
-        { name: 'CPU (Processors)', slug: 'cpu' },
-        { name: 'RAM (Memory)', slug: 'ram' },
-        { name: 'Motherboards (Moderkort)', slug: 'motherboards' },
-        { name: 'Storage & SSD (Lagring)', slug: 'storage-ssd' },
-        { name: 'Power Supplies (PSU)', slug: 'power-supplies' },
-        { name: 'PC Cases (Chassi)', slug: 'pc-cases' },
-        { name: 'Cooling & Fans (Kylning)', slug: 'cooling' },
-        { name: 'Monitors (Skärmar)', slug: 'monitors' },
-        { name: 'Laptops & Computers', slug: 'laptops' },
-        { name: 'Peripherals (Mus & Tangentbord)', slug: 'peripherals' },
-        { name: 'Audio & Headsets (Ljud)', slug: 'audio' },
-        { name: 'Price Drops & Big Deals', slug: 'price-drops' },
-        { name: 'Networking (Nätverk)', slug: 'networking' }
+        { name: 'GPU (Graphics Cards)', color: '#8b5cf6' },
+        { name: 'CPU (Processors)', color: '#3b82f6' },
+        { name: 'RAM (Memory)', color: '#06b6d4' },
+        { name: 'Motherboards (Moderkort)', color: '#10b981' },
+        { name: 'Storage & SSD (Lagring)', color: '#14b8a6' },
+        { name: 'Power Supplies (PSU)', color: '#f59e0b' },
+        { name: 'PC Cases (Chassi)', color: '#64748b' },
+        { name: 'Cooling & Fans (Kylning)', color: '#0ea5e9' },
+        { name: 'Monitors (Skärmar)', color: '#a855f7' },
+        { name: 'Laptops & Computers (Datorer)', color: '#6366f1' },
+        { name: 'Peripherals (Mus & Tangentbord)', color: '#ec4899' },
+        { name: 'Audio & Headsets (Ljud & Headset)', color: '#f43f5e' },
+        { name: 'Price Drops & Big Deals (Prissänkningar)', color: '#ef4444' },
+        { name: 'Networking (Nätverk & Routers)', color: '#84cc16' }
       ];
 
       const categoriesToAdd = Array.isArray(request.body?.categories) && request.body.categories.length > 0
@@ -997,15 +997,15 @@ export async function buildApp({ config, store, productCache, scanState, trigger
 
       const inserted = [];
       for (const cat of categoriesToAdd) {
-        const existing = db.prepare('SELECT id FROM categories WHERE name = ? OR slug = ?').get(cat.name, cat.slug);
+        const existing = db.prepare('SELECT id FROM categories WHERE name = ?').get(cat.name);
         if (!existing) {
           const insertObj = {
             name: cat.name,
-            slug: cat.slug || cat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+            color: cat.color || '#3b82f6',
+            user_id: userId,
+            created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
+            updated_at: new Date().toISOString().replace('T', ' ').substring(0, 19)
           };
-          if (colNames.includes('user_id')) insertObj.user_id = userId;
-          if (colNames.includes('created_at')) insertObj.created_at = new Date().toISOString();
-          if (colNames.includes('updated_at')) insertObj.updated_at = new Date().toISOString();
 
           const cols = Object.keys(insertObj).join(', ');
           const placeholders = Object.keys(insertObj).map(k => '@' + k).join(', ');
