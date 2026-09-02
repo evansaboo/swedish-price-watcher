@@ -10,6 +10,8 @@ import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { createHotlistPoller } from './services/hotlistPoller.js';
 import { ensureHotlistConfig, normalizeHotlistConfig } from './services/hotlistConfig.js';
+import { ensureNvidiaConfig, normalizeNvidiaConfig } from './services/nvidiaConfig.js';
+import { createNvidiaPoller } from './services/nvidiaPoller.js';
 import { buildDigestDeals, buildDigestPayload, shouldSendDigest } from './services/digest.js';
 import { ProductCache } from './services/productCache.js';
 import { DiscordNotifier } from './services/notifier.js';
@@ -83,6 +85,7 @@ state.preferences = {
 // Seed the hotlist watch list from config/sources.json the first time, then
 // let the dashboard own it from SQLite preferences.
 if (hotlistSource) ensureHotlistConfig(state.preferences, hotlistSource);
+ensureNvidiaConfig(state.preferences);
 
 await store.save();
 
@@ -642,6 +645,20 @@ async function updateHotlistConfig(nextConfig) {
   return updated;
 }
 
+const nvidiaPoller = createNvidiaPoller({
+  getConfig: () => state.preferences?.nvidiaFe ?? {},
+  notifier,
+  logger: console
+});
+
+async function updateNvidiaConfig(nextConfig) {
+  const updated = normalizeNvidiaConfig({ ...(state.preferences?.nvidiaFe ?? {}), ...nextConfig });
+  state.preferences = { ...(state.preferences ?? {}), nvidiaFe: updated };
+  await (store.savePreferences ?? store.save).call(store);
+  nvidiaPoller.restart();
+  return updated;
+}
+
 if (runOnce) {
   const summary = await triggerScan('cli');
   console.log(JSON.stringify(summary, null, 2));
@@ -702,6 +719,7 @@ const app = await buildApp({
   triggerScan,
   cancelScan,
   fetcher,
+  notifier,
   scheduler: { getState: () => scheduler.getState(), update: updateScheduler },
   hotlist: hotlistSource
     ? {
@@ -715,7 +733,13 @@ const app = await buildApp({
         }),
         pollNow: () => hotlistPoller.pollNow()
       }
-    : null
+    : null,
+  nvidia: {
+    poller: nvidiaPoller,
+    getConfig: () => state.preferences?.nvidiaFe ?? {},
+    updateConfig: updateNvidiaConfig,
+    getStatus: () => nvidiaPoller.getStatus()
+  }
 });
 
 await app.listen({ port: config.port, host: config.host });
@@ -728,6 +752,14 @@ if (hotlistSource) {
     `[hotlist] Continuous poller ${hotlistPreference.enabled === false ? 'configured (disabled)' : 'started'} — ` +
     `every ~${hotlistPreference.intervalSeconds}s ±${hotlistPreference.jitterPct}% ` +
     `across ${(hotlistPreference.groups ?? []).filter((g) => g.enabled).length} watch group(s).`
+  );
+}
+
+nvidiaPoller.start();
+const nvidiaPref = state.preferences?.nvidiaFe ?? {};
+if (nvidiaPref.enabled) {
+  console.log(
+    `[nvidia] Continuous poller started — checking every ${nvidiaPref.intervalSeconds}s for ${nvidiaPref.monitoredCards.join(', ')} (${nvidiaPref.locale})`
   );
 }
 

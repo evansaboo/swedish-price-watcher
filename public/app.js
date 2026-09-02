@@ -942,13 +942,60 @@ function closePriceHistoryModal() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
-// ── NVIDIA Founders Edition Modal ─────────────────────────────────
+// ── NVIDIA Founders Edition (Notify-FE Scheduler & Tracker) ──────
+let nvidiaState = {
+  config: null,
+  poller: null,
+  cards: [],
+  countdownTimer: null,
+  knownInStock: new Set()
+};
+
+function playNvidiaChime() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(880, now); // A5
+    gain1.gain.setValueAtTime(0.25, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.2);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1174.66, now + 0.12); // D6
+    gain2.gain.setValueAtTime(0.25, now + 0.12);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.12);
+    osc2.stop(now + 0.4);
+  } catch (err) {
+    console.warn('Audio chime unavailable:', err.message);
+  }
+}
+
 async function openNvidiaModal() {
   const modal = document.getElementById('nvidia-modal');
   if (!modal) return;
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden', 'false');
+
+  // Activate cards tab by default
+  switchNvidiaTab('cards');
+
+  await loadNvidiaConfig();
   await refreshNvidiaCards();
+  startNvidiaCountdown();
 }
 
 function closeNvidiaModal() {
@@ -956,6 +1003,147 @@ function closeNvidiaModal() {
   if (!modal) return;
   modal.classList.add('hidden');
   modal.setAttribute('aria-hidden', 'true');
+  stopNvidiaCountdown();
+}
+
+function switchNvidiaTab(tab) {
+  const tabCards = document.getElementById('nvidia-tab-cards');
+  const tabSettings = document.getElementById('nvidia-tab-settings');
+  const paneCards = document.getElementById('nvidia-pane-cards');
+  const paneSettings = document.getElementById('nvidia-pane-settings');
+
+  if (tab === 'settings') {
+    tabCards?.classList.remove('active');
+    tabSettings?.classList.add('active');
+    paneCards?.classList.add('hidden');
+    paneSettings?.classList.remove('hidden');
+  } else {
+    tabSettings?.classList.remove('active');
+    tabCards?.classList.add('active');
+    paneSettings?.classList.add('hidden');
+    paneCards?.classList.remove('hidden');
+  }
+}
+
+async function loadNvidiaConfig() {
+  try {
+    const data = await fetchJson('/api/nvidia/config');
+    if (!data?.ok) return;
+
+    nvidiaState.config = data.config || {};
+    nvidiaState.poller = data.poller || {};
+
+    const cfg = nvidiaState.config;
+    const enabledInput = document.getElementById('nvidia-enabled-input');
+    const intervalSelect = document.getElementById('nvidia-interval-select');
+    const webhookInput = document.getElementById('nvidia-webhook-input');
+    const soundInput = document.getElementById('nvidia-sound-input');
+    const autoOpenInput = document.getElementById('nvidia-auto-open-input');
+    const apiAlarmInput = document.getElementById('nvidia-api-alarm-input');
+    const localeSelect = document.getElementById('nvidia-locale-select');
+
+    if (enabledInput) enabledInput.checked = Boolean(cfg.enabled);
+    if (intervalSelect) intervalSelect.value = String(cfg.intervalSeconds || 15);
+    if (webhookInput) webhookInput.value = cfg.discordWebhookUrl || '';
+    if (soundInput) soundInput.checked = cfg.soundEnabled !== false;
+    if (autoOpenInput) autoOpenInput.checked = Boolean(cfg.autoOpenShop);
+    if (apiAlarmInput) apiAlarmInput.checked = Boolean(cfg.apiAlarmEnabled);
+    if (localeSelect && cfg.locale) localeSelect.value = cfg.locale;
+
+    updateNvidiaPollerBadge();
+  } catch (err) {
+    console.error('Failed to load NVIDIA config:', err);
+  }
+}
+
+function updateNvidiaPollerBadge() {
+  const badge = document.getElementById('nvidia-poller-badge');
+  if (!badge) return;
+
+  const isRunning = Boolean(nvidiaState.config?.enabled);
+  const interval = nvidiaState.config?.intervalSeconds || 15;
+
+  if (isRunning) {
+    badge.textContent = `🟢 Poller Active (${interval}s)`;
+    badge.style.background = 'rgba(16, 185, 129, 0.15)';
+    badge.style.color = '#10b981';
+    badge.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+  } else {
+    badge.textContent = '⚪ Poller Disabled';
+    badge.style.background = 'rgba(255, 255, 255, 0.08)';
+    badge.style.color = 'var(--text-muted, #888)';
+    badge.style.border = '1px solid var(--border, rgba(255,255,255,0.1))';
+  }
+}
+
+async function saveNvidiaSettingsForm(e) {
+  if (e) e.preventDefault();
+  const enabledInput = document.getElementById('nvidia-enabled-input');
+  const intervalSelect = document.getElementById('nvidia-interval-select');
+  const webhookInput = document.getElementById('nvidia-webhook-input');
+  const soundInput = document.getElementById('nvidia-sound-input');
+  const autoOpenInput = document.getElementById('nvidia-auto-open-input');
+  const apiAlarmInput = document.getElementById('nvidia-api-alarm-input');
+  const localeSelect = document.getElementById('nvidia-locale-select');
+
+  const payload = {
+    enabled: enabledInput?.checked ?? false,
+    intervalSeconds: Number(intervalSelect?.value) || 15,
+    discordWebhookUrl: webhookInput?.value?.trim() || '',
+    soundEnabled: soundInput?.checked ?? true,
+    autoOpenShop: autoOpenInput?.checked ?? false,
+    apiAlarmEnabled: apiAlarmInput?.checked ?? false,
+    locale: localeSelect?.value || 'sv-se'
+  };
+
+  try {
+    const res = await fetchJson('/api/nvidia/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res?.ok) throw new Error(res?.error || 'Failed to save settings');
+
+    nvidiaState.config = res.config;
+    updateNvidiaPollerBadge();
+    showToast('NVIDIA scheduler settings saved successfully!', 'success');
+    switchNvidiaTab('cards');
+    await refreshNvidiaCards();
+  } catch (err) {
+    showToast(`Failed to save: ${err.message}`, 'error');
+  }
+}
+
+async function toggleNvidiaCardMonitor(cardKey, isChecked) {
+  const currentMonitored = new Set(nvidiaState.config?.monitoredCards || ['5090', '5080', '5070']);
+  if (isChecked) {
+    currentMonitored.add(cardKey);
+  } else {
+    currentMonitored.delete(cardKey);
+  }
+
+  const monitoredCards = Array.from(currentMonitored);
+  try {
+    const res = await fetchJson('/api/nvidia/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monitoredCards })
+    });
+    if (res?.ok) {
+      nvidiaState.config = res.config;
+      updateMonitoredCountBadge();
+    }
+  } catch (err) {
+    showToast(`Failed to update monitored cards: ${err.message}`, 'error');
+  }
+}
+
+function updateMonitoredCountBadge() {
+  const badge = document.getElementById('nvidia-monitored-count');
+  if (!badge) return;
+  const count = nvidiaState.config?.monitoredCards?.length || 0;
+  badge.textContent = `${count} monitored`;
 }
 
 async function refreshNvidiaCards() {
@@ -967,20 +1155,46 @@ async function refreshNvidiaCards() {
 
   const locale = localeSelect?.value || 'sv-se';
   if (refreshBtn) refreshBtn.disabled = true;
-  container.innerHTML = '<div style="text-align:center; padding:2rem; opacity:0.6;">Checking NVIDIA Store inventory...</div>';
 
   try {
-    const res = await fetchJson(`/api/nvidia/status?locale=${encodeURIComponent(locale)}`);
+    const res = await fetchJson(`/api/nvidia/status?locale=${encodeURIComponent(locale)}&refresh=true`);
     if (!res?.ok || !Array.isArray(res.cards)) {
       throw new Error(res?.error || 'Failed to fetch inventory');
     }
+
+    nvidiaState.cards = res.cards;
+    if (res.poller) nvidiaState.poller = res.poller;
 
     if (lastCheckEl) {
       lastCheckEl.textContent = `Updated: ${new Date().toLocaleTimeString('sv-SE')}`;
     }
 
+    updateMonitoredCountBadge();
+
+    const monitoredSet = new Set(nvidiaState.config?.monitoredCards || ['5090', '5080', '5070']);
+
+    // Check for newly in-stock cards
+    for (const card of res.cards) {
+      const isMonitored = monitoredSet.has(card.cardKey);
+      if (card.available && isMonitored && !nvidiaState.knownInStock.has(card.cardKey)) {
+        nvidiaState.knownInStock.add(card.cardKey);
+        // Play client chime
+        if (nvidiaState.config?.soundEnabled !== false) {
+          playNvidiaChime();
+        }
+        // Auto open shop link
+        if (nvidiaState.config?.autoOpenShop && card.product_url) {
+          window.open(card.product_url, '_blank', 'noopener,noreferrer');
+        }
+        showToast(`🎯 ${card.name} IS IN STOCK!`, 'success');
+      } else if (!card.available) {
+        nvidiaState.knownInStock.delete(card.cardKey);
+      }
+    }
+
     container.innerHTML = res.cards.map(card => {
       const isAvailable = card.available;
+      const isMonitored = monitoredSet.has(card.cardKey);
       const statusBg = isAvailable ? '#10b981' : '#64748b';
       const statusText = isAvailable ? 'IN STOCK 🚀' : 'Out of stock';
       const priceStr = card.priceSek ? `${Number(card.priceSek).toLocaleString('sv-SE')} SEK` : '';
@@ -988,18 +1202,25 @@ async function refreshNvidiaCards() {
 
       return `
         <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--bg-secondary, rgba(255,255,255,0.05)); border:1px solid ${isAvailable ? '#10b981' : 'var(--border, rgba(255,255,255,0.1))'}; border-radius:8px; gap:12px;">
+          <!-- Checkbox to listen/monitor -->
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; flex-shrink:0;" title="Check to listen/alert on this GPU">
+            <input type="checkbox" class="nvidia-card-toggle" data-card="${escapeHtml(card.cardKey)}" ${isMonitored ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;" />
+            <span style="font-size:0.75rem; font-weight:600; color:${isMonitored ? '#76b900' : 'var(--text-muted, #777)'};">Listen</span>
+          </label>
+
           <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:0;">
-            ${card.imageUrl ? `<img src="${card.imageUrl}" alt="${escapeHtml(card.name)}" style="width:48px; height:48px; object-fit:contain; border-radius:4px; flex-shrink:0;" />` : ''}
+            ${card.imageUrl ? `<img src="${card.imageUrl}" alt="${escapeHtml(card.name)}" style="width:44px; height:44px; object-fit:contain; border-radius:4px; flex-shrink:0;" />` : ''}
             <div style="min-width:0;">
               <div style="font-weight:600; font-size:0.95rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                 ${escapeHtml(card.fullName || card.name)}
               </div>
-              <div style="font-size:0.75rem; opacity:0.6; display:flex; gap:8px; margin-top:2px;">
+              <div style="font-size:0.75rem; opacity:0.6; display:flex; gap:8px; margin-top:2px; flex-wrap:wrap;">
                 <span>SKU: <code>${escapeHtml(card.sku)}</code></span>
                 <span>MSRP: ${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</span>
               </div>
             </div>
           </div>
+
           <div style="display:flex; align-items:center; gap:12px; flex-shrink:0;">
             <div style="text-align:right;">
               <div style="font-weight:700; font-size:1rem; color:${isAvailable ? '#10b981' : 'inherit'};">
@@ -1018,10 +1239,55 @@ async function refreshNvidiaCards() {
         </div>
       `;
     }).join('');
+
+    // Attach checkbox listeners
+    container.querySelectorAll('.nvidia-card-toggle').forEach(chk => {
+      chk.addEventListener('change', (e) => {
+        const cardKey = e.target.dataset.card;
+        toggleNvidiaCardMonitor(cardKey, e.target.checked);
+      });
+    });
+
   } catch (err) {
     container.innerHTML = `<div style="text-align:center; padding:1.5rem; color:#ef4444;">Error checking inventory: ${escapeHtml(err.message)}</div>`;
   } finally {
     if (refreshBtn) refreshBtn.disabled = false;
+  }
+}
+
+function startNvidiaCountdown() {
+  stopNvidiaCountdown();
+  const cdEl = document.getElementById('nvidia-countdown');
+
+  nvidiaState.countdownTimer = setInterval(async () => {
+    if (!nvidiaState.config?.enabled) {
+      if (cdEl) cdEl.textContent = '';
+      return;
+    }
+
+    const nextPoll = nvidiaState.poller?.nextPollAt ? new Date(nvidiaState.poller.nextPollAt).getTime() : 0;
+    const now = Date.now();
+    const diffSecs = Math.max(0, Math.round((nextPoll - now) / 1000));
+
+    if (cdEl) {
+      if (diffSecs > 0) {
+        cdEl.textContent = `⏱ Next check in ${diffSecs}s`;
+      } else {
+        cdEl.textContent = `⏱ Checking...`;
+      }
+    }
+
+    // When timer expires, fetch status silently
+    if (diffSecs === 0 && nextPoll > 0) {
+      await refreshNvidiaCards();
+    }
+  }, 1000);
+}
+
+function stopNvidiaCountdown() {
+  if (nvidiaState.countdownTimer) {
+    clearInterval(nvidiaState.countdownTimer);
+    nvidiaState.countdownTimer = null;
   }
 }
 
@@ -2318,6 +2584,37 @@ function bindEvents() {
   document.getElementById('nvidia-modal-close')?.addEventListener('click', closeNvidiaModal);
   document.getElementById('nvidia-refresh-btn')?.addEventListener('click', refreshNvidiaCards);
   document.getElementById('nvidia-locale-select')?.addEventListener('change', refreshNvidiaCards);
+  document.getElementById('nvidia-tab-cards')?.addEventListener('click', () => switchNvidiaTab('cards'));
+  document.getElementById('nvidia-tab-settings')?.addEventListener('click', () => switchNvidiaTab('settings'));
+  document.getElementById('nvidia-settings-form')?.addEventListener('submit', saveNvidiaSettingsForm);
+
+  document.getElementById('nvidia-test-webhook-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('nvidia-test-webhook-btn');
+    const input = document.getElementById('nvidia-webhook-input');
+    const webhookUrl = input?.value?.trim();
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await fetchJson('/api/nvidia/test-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhookUrl })
+      });
+      if (!res?.ok) throw new Error(res?.error || 'Failed to send test alert');
+      showToast('Discord test notification sent successfully!', 'success');
+      playNvidiaChime();
+    } catch (err) {
+      showToast(`Webhook test failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  document.getElementById('nvidia-test-sound-btn')?.addEventListener('click', () => {
+    playNvidiaChime();
+    showToast('🔊 Played test audio chime', 'info');
+  });
+
   document.getElementById('nvidia-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'nvidia-modal') closeNvidiaModal();
   });

@@ -485,39 +485,133 @@
     </div>
 
     <div id="nvidia-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-dialog" style="max-width: 650px;">
-        <div class="modal-header">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-size:1.2rem;">🟢</span>
+      <div class="modal-dialog" style="max-width: 720px; width: 95vw;">
+        <div class="modal-header" style="padding-bottom: 0.75rem;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-size:1.4rem;">🟢</span>
             <div>
-              <h3 style="margin:0;">NVIDIA Founders Edition Tracker</h3>
-              <span style="font-size:0.75rem; opacity:0.7;">Powered by Notify-FE • Direct NVIDIA Store Inventory</span>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <h3 style="margin:0; font-size:1.15rem;">NVIDIA Founders Edition</h3>
+                <span id="nvidia-poller-badge" style="display:inline-block; font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.1); color:var(--text-muted, #888);">
+                  Loading...
+                </span>
+              </div>
+              <span style="font-size:0.75rem; opacity:0.7;">Powered by Notify-FE • Continuous Stock Scheduler & Discord Alerts</span>
             </div>
           </div>
           <button id="nvidia-modal-close" type="button" class="modal-close" aria-label="Close">×</button>
         </div>
-        <div class="modal-body">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:8px;">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <label for="nvidia-locale-select" style="font-size:0.85rem; font-weight:500;">Region:</label>
-              <select id="nvidia-locale-select" class="field-input" style="padding:4px 8px; font-size:0.85rem; width:auto;">
-                <option value="sv-se" selected>Sverige (sv-se)</option>
-                <option value="de-de">Deutschland (de-de)</option>
-                <option value="en-gb">United Kingdom (en-gb)</option>
-                <option value="fr-fr">France (fr-fr)</option>
-                <option value="en-us">United States (en-us)</option>
-                <option value="nb-no">Norge (nb-no)</option>
-                <option value="da-dk">Danmark (da-dk)</option>
-                <option value="fi-fi">Suomi (fi-fi)</option>
-              </select>
+
+        <!-- Navigation Tabs -->
+        <div style="display:flex; gap:6px; border-bottom:1px solid var(--border, rgba(255,255,255,0.1)); padding:0 1.25rem 0.5rem 1.25rem;">
+          <button id="nvidia-tab-cards" type="button" class="view-btn active" style="padding:6px 14px; font-size:0.85rem; font-weight:600; border-radius:6px;">
+            🎮 GPU Stock & Watchlist
+          </button>
+          <button id="nvidia-tab-settings" type="button" class="view-btn" style="padding:6px 14px; font-size:0.85rem; font-weight:600; border-radius:6px;">
+            ⚙️ Scheduler & Alerts
+          </button>
+        </div>
+
+        <div class="modal-body" style="padding-top: 1rem;">
+          <!-- TAB 1: GPU Cards List -->
+          <div id="nvidia-pane-cards">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:8px;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <label for="nvidia-locale-select" style="font-size:0.85rem; font-weight:500;">Region:</label>
+                <select id="nvidia-locale-select" class="field-input" style="padding:4px 8px; font-size:0.85rem; width:auto;">
+                  <option value="sv-se" selected>Sverige (sv-se)</option>
+                  <option value="de-de">Deutschland (de-de)</option>
+                  <option value="en-gb">United Kingdom (en-gb)</option>
+                  <option value="fr-fr">France (fr-fr)</option>
+                  <option value="en-us">United States (en-us)</option>
+                  <option value="nb-no">Norge (nb-no)</option>
+                  <option value="da-dk">Danmark (da-dk)</option>
+                  <option value="fi-fi">Suomi (fi-fi)</option>
+                </select>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span id="nvidia-countdown" style="font-size:0.75rem; color:#76b900; font-weight:600;"></span>
+                <span id="nvidia-last-check" style="font-size:0.75rem; opacity:0.6;"></span>
+                <button id="nvidia-refresh-btn" type="button" class="action-btn" style="padding:4px 12px; font-size:0.8rem;">⟳ Check Now</button>
+              </div>
             </div>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <span id="nvidia-last-check" style="font-size:0.75rem; opacity:0.6;"></span>
-              <button id="nvidia-refresh-btn" type="button" class="action-btn" style="padding:4px 12px; font-size:0.8rem;">⟳ Refresh</button>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 12px; background:var(--bg-secondary, rgba(255,255,255,0.03)); border-radius:6px; margin-bottom:10px; font-size:0.78rem; opacity:0.8;">
+              <span>Select GPUs to monitor in the background scheduler:</span>
+              <span id="nvidia-monitored-count" style="font-weight:600; color:#76b900;">3 monitored</span>
+            </div>
+
+            <div id="nvidia-cards-container" class="nvidia-cards-list" style="display:flex; flex-direction:column; gap:10px;">
+              <!-- Rendered dynamically by app.js -->
             </div>
           </div>
-          <div id="nvidia-cards-container" class="nvidia-cards-list" style="display:flex; flex-direction:column; gap:10px;">
-            <!-- Rendered by app.js -->
+
+          <!-- TAB 2: Scheduler & Alerts Settings -->
+          <div id="nvidia-pane-settings" class="hidden">
+            <form id="nvidia-settings-form" style="display:flex; flex-direction:column; gap:16px;">
+              <!-- Poller Enable Switch -->
+              <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:var(--bg-secondary, rgba(255,255,255,0.05)); border:1px solid var(--border, rgba(255,255,255,0.1)); border-radius:8px;">
+                <div>
+                  <div style="font-weight:600; font-size:0.95rem;">Background Stock Scheduler</div>
+                  <div style="font-size:0.75rem; opacity:0.7;">Continuously polls NVIDIA Store in background and dispatches instant drop alerts.</div>
+                </div>
+                <label class="switch" style="position:relative; display:inline-block; width:44px; height:24px;">
+                  <input type="checkbox" id="nvidia-enabled-input" style="opacity:0; width:0; height:0;">
+                  <span class="slider round" style="position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background-color:#ccc; transition:.3s; border-radius:24px;"></span>
+                </label>
+              </div>
+
+              <!-- Frequency / Interval -->
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <label for="nvidia-interval-select" style="font-size:0.85rem; font-weight:600;">Check Frequency (Interval):</label>
+                <select id="nvidia-interval-select" class="field-input" style="padding:6px 10px; font-size:0.85rem;">
+                  <option value="10">Every 10 seconds (⚡ Lightning Drop Sniffer)</option>
+                  <option value="15" selected>Every 15 seconds (Notify-FE Recommended)</option>
+                  <option value="30">Every 30 seconds</option>
+                  <option value="60">Every 60 seconds (1 minute)</option>
+                  <option value="120">Every 2 minutes</option>
+                  <option value="300">Every 5 minutes</option>
+                </select>
+                <span style="font-size:0.72rem; opacity:0.6;">Uses Akamai-friendly HTTP/2 session connection with browser headers.</span>
+              </div>
+
+              <!-- Discord Webhook URL -->
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <label for="nvidia-webhook-input" style="font-size:0.85rem; font-weight:600;">Discord Webhook URL for Stock Drops:</label>
+                <div style="display:flex; gap:8px;">
+                  <input type="text" id="nvidia-webhook-input" class="field-input" placeholder="https://discord.com/api/webhooks/..." style="flex:1; padding:6px 10px; font-size:0.85rem;" />
+                  <button type="button" id="nvidia-test-webhook-btn" class="action-btn" style="white-space:nowrap; padding:6px 14px; font-size:0.85rem;">🧪 Test</button>
+                </div>
+                <span style="font-size:0.72rem; opacity:0.6;">Leave blank to use the global server Discord webhook. Alerts post loud green embeds with direct purchase buttons.</span>
+              </div>
+
+              <!-- Extra Notify-FE features -->
+              <div style="display:flex; flex-direction:column; gap:10px; padding:12px; background:var(--bg-secondary, rgba(255,255,255,0.03)); border-radius:8px; border:1px solid var(--border, rgba(255,255,255,0.08));">
+                <div style="font-weight:600; font-size:0.85rem; margin-bottom:2px;">Browser Client Features (Notify-FE):</div>
+                
+                <label style="display:flex; align-items:center; gap:10px; font-size:0.85rem; cursor:pointer;">
+                  <input type="checkbox" id="nvidia-sound-input" checked style="width:16px; height:16px;" />
+                  <span style="flex:1;">🔊 Play sound alarm in browser when monitored GPU comes in stock</span>
+                  <button type="button" id="nvidia-test-sound-btn" class="action-btn" style="padding:2px 8px; font-size:0.75rem;">▶ Test Sound</button>
+                </label>
+
+                <label style="display:flex; align-items:center; gap:10px; font-size:0.85rem; cursor:pointer;">
+                  <input type="checkbox" id="nvidia-auto-open-input" style="width:16px; height:16px;" />
+                  <span>🚀 Auto-open official store purchase page in a new tab when stock is detected</span>
+                </label>
+
+                <label style="display:flex; align-items:center; gap:10px; font-size:0.85rem; cursor:pointer;">
+                  <input type="checkbox" id="nvidia-api-alarm-input" style="width:16px; height:16px;" />
+                  <span>⚠️ Alarm if NVIDIA Store API becomes unreachable or blocked</span>
+                </label>
+              </div>
+
+              <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:4px;">
+                <button type="submit" class="action-btn primary" style="padding:8px 20px; font-size:0.9rem; font-weight:600;">
+                  💾 Save & Apply Settings
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       </div>

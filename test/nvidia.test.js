@@ -107,3 +107,69 @@ describe('nvidia source - mapNvidiaCard', () => {
     assert.ok(obs.notes.includes('In Stock 🚀'));
   });
 });
+
+describe('nvidiaConfig - normalizeNvidiaConfig', () => {
+  it('applies defaults on empty input', async () => {
+    const { normalizeNvidiaConfig } = await import('../src/services/nvidiaConfig.js');
+    const cfg = normalizeNvidiaConfig({});
+    assert.equal(cfg.enabled, false);
+    assert.equal(cfg.intervalSeconds, 15);
+    assert.equal(cfg.locale, 'sv-se');
+    assert.deepEqual(cfg.monitoredCards, ['5090', '5080', '5070']);
+    assert.equal(cfg.discordWebhookUrl, '');
+    assert.equal(cfg.soundEnabled, true);
+    assert.equal(cfg.autoOpenShop, false);
+  });
+
+  it('clamps intervalSeconds and normalizes locale and cards', async () => {
+    const { normalizeNvidiaConfig } = await import('../src/services/nvidiaConfig.js');
+    const cfg = normalizeNvidiaConfig({
+      enabled: true,
+      intervalSeconds: 2, // too low, should clamp or fallback
+      locale: 'DE-DE ',
+      monitoredCards: ['5090', '4090'],
+      discordWebhookUrl: ' https://discord.com/api/webhooks/123/xyz  ',
+      soundEnabled: false,
+      autoOpenShop: true
+    });
+    assert.equal(cfg.enabled, true);
+    assert.equal(cfg.intervalSeconds, 15);
+    assert.equal(cfg.locale, 'de-de');
+    assert.deepEqual(cfg.monitoredCards, ['5090', '4090']);
+    assert.equal(cfg.discordWebhookUrl, 'https://discord.com/api/webhooks/123/xyz');
+    assert.equal(cfg.soundEnabled, false);
+    assert.equal(cfg.autoOpenShop, true);
+  });
+
+  it('respects valid intervals like 30s or 60s', async () => {
+    const { normalizeNvidiaConfig } = await import('../src/services/nvidiaConfig.js');
+    const cfg = normalizeNvidiaConfig({ intervalSeconds: 60 });
+    assert.equal(cfg.intervalSeconds, 60);
+  });
+});
+
+describe('nvidiaPoller - lifecycle and status', () => {
+  it('starts and stops cleanly without error', async () => {
+    const { createNvidiaPoller } = await import('../src/services/nvidiaPoller.js');
+    let config = { enabled: false, intervalSeconds: 15 };
+    const poller = createNvidiaPoller({
+      getConfig: () => config,
+      notifier: null,
+      setTimeoutFn: () => {},
+      clearTimeoutFn: () => {}
+    });
+
+    const status1 = poller.getStatus();
+    assert.equal(status1.running, false);
+
+    config.enabled = true;
+    poller.start();
+    const status2 = poller.getStatus();
+    assert.equal(status2.enabled, true);
+    assert.equal(status2.intervalSeconds, 15);
+
+    poller.stop();
+    const status3 = poller.getStatus();
+    assert.equal(status3.running, false);
+  });
+});

@@ -482,6 +482,78 @@ export class DiscordNotifier {
     return this.#postWebhook(payload, webhookUrl);
   }
 
+  /** Send instant stock alert for an NVIDIA Founders Edition GPU drop. */
+  async notifyNvidiaStockDrop({ card, webhookUrl }) {
+    const targetWebhook = webhookUrl || this.webhookUrl;
+    if (!targetWebhook) {
+      throw new Error('No Discord webhook URL configured');
+    }
+
+    const priceFormatted = card.priceSek ? `${Number(card.priceSek).toLocaleString('sv-SE')} SEK` : 'MSRP';
+    const storeLink = card.product_url || card.store_url || 'https://marketplace.nvidia.com/';
+
+    const payload = {
+      username: 'NVIDIA FE Alert',
+      avatar_url: 'https://images.nvidia.com/aem-dam/Solutions/geforce/rtx-5090/geforce-rtx-5090-product-gallery-full-1.png',
+      content: `🚨 **NVIDIA Founders Edition Stock Alert!** 🎯 @everyone`,
+      embeds: [
+        {
+          title: `🟢 ${card.fullName || card.name} is IN STOCK!`,
+          url: storeLink,
+          description: `Direct NVIDIA Store stock detected!\n\n👉 **[CLICK HERE TO BUY DIRECTLY ON NVIDIA STORE](${storeLink})**`,
+          color: 0x76b900,
+          fields: [
+            { name: 'Model', value: card.name || card.cardKey, inline: true },
+            { name: 'Price', value: priceFormatted, inline: true },
+            { name: 'Region', value: (card.locale || 'sv-se').toUpperCase(), inline: true },
+            { name: 'SKU', value: `\`${card.sku}\``, inline: true },
+            { name: 'Status', value: '🟢 **IN STOCK**', inline: true },
+            { name: 'Store Link', value: `[Direct Checkout](${storeLink})`, inline: true }
+          ],
+          thumbnail: card.imageUrl ? { url: card.imageUrl } : undefined,
+          footer: {
+            text: 'Swedish Price Watcher • NVIDIA FE Live Poller'
+          },
+          timestamp: new Date().toISOString()
+        }
+      ]
+    };
+
+    return this.#postWebhook(payload, targetWebhook);
+  }
+
+  /** Send test notification to verify Discord webhook configuration for NVIDIA tracker. */
+  async testNvidiaWebhook({ webhookUrl }) {
+    const targetWebhook = webhookUrl || this.webhookUrl;
+    if (!targetWebhook) {
+      throw new Error('No Discord webhook URL configured');
+    }
+
+    const payload = {
+      username: 'NVIDIA FE Alert',
+      avatar_url: 'https://images.nvidia.com/aem-dam/Solutions/geforce/rtx-5090/geforce-rtx-5090-product-gallery-full-1.png',
+      content: `🧪 **Test Notification from NVIDIA Founders Edition Tracker**`,
+      embeds: [
+        {
+          title: '✅ Discord Integration Verified!',
+          description: 'Your Discord webhook is working properly. When any monitored NVIDIA Founders Edition GPU comes into stock, instant drop alerts will be posted here automatically.',
+          color: 0x76b900,
+          fields: [
+            { name: 'Integration', value: 'Notify-FE Scheduler', inline: true },
+            { name: 'Status', value: '🟢 Connected', inline: true },
+            { name: 'Time', value: new Date().toLocaleTimeString('sv-SE'), inline: true }
+          ],
+          footer: {
+            text: 'Swedish Price Watcher • NVIDIA FE Live Poller'
+          },
+          timestamp: new Date().toISOString()
+        }
+      ]
+    };
+
+    return this.#postWebhook(payload, targetWebhook);
+  }
+
   /**
    * Work out which checkout model applies to an alert.
    *

@@ -43,6 +43,8 @@ import {
   extractDiscordUserId
 } from './services/discordInteractions.js';
 import { createPurchaseService } from './services/purchaseService.js';
+import { normalizeNvidiaConfig, ensureNvidiaConfig, DEFAULT_NVIDIA_CONFIG } from './services/nvidiaConfig.js';
+import { GPU_DISPLAY_ORDER, CARD_METADATA } from './sources/nvidia.js';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -235,7 +237,7 @@ function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
 
 // ── Route builder ──────────────────────────────────────────────
 
-export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler, hotlist, fetcher }) {
+export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler, hotlist, fetcher, notifier, nvidia }) {
   const app = Fastify({ logger: false });
   const sourceById = new Map((config.sources ?? []).map((source) => [source.id, source]));
   let preferencesSaveQueue = Promise.resolve();
@@ -1143,11 +1145,92 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
-  // ── NVIDIA Founders Edition (Notify-FE integration) ───────────────
+  // ── NVIDIA Founders Edition (Notify-FE integration & scheduler) ─
+  app.get('/api/nvidia/config', async () => {
+    const state = store.getState();
+    const cfg = normalizeNvidiaConfig(state.preferences?.nvidiaFe ?? {});
+    const pollerStatus = nvidia?.getStatus ? nvidia.getStatus() : { running: false };
+
+    const availableCards = GPU_DISPLAY_ORDER.map((key) => ({
+      key,
+      name: CARD_METADATA[key]?.shortName || `RTX ${key} FE`,
+      fullName: CARD_METADATA[key]?.name || `NVIDIA GeForce RTX ${key} Founders Edition`,
+      msrpSek: CARD_METADATA[key]?.msrpSek || 0,
+      imageUrl: CARD_METADATA[key]?.imageUrl || null
+    }));
+
+    return {
+      ok: true,
+      config: cfg,
+      poller: pollerStatus,
+      availableCards
+    };
+  });
+
+  app.post('/api/nvidia/config', async (request, reply) => {
+    try {
+      const body = request.body || {};
+      const state = store.getState();
+      const current = state.preferences?.nvidiaFe ?? {};
+      const updated = normalizeNvidiaConfig({ ...current, ...body });
+      state.preferences = { ...(state.preferences ?? {}), nvidiaFe: updated };
+      await (store.savePreferences ?? store.save).call(store);
+
+      if (nvidia?.updateConfig) {
+        await nvidia.updateConfig(updated);
+      } else if (nvidia?.poller) {
+        nvidia.poller.restart();
+      }
+
+      return { ok: true, config: updated };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  app.post('/api/nvidia/test-webhook', async (request, reply) => {
+    try {
+      const state = store.getState();
+      const webhookUrl = request.body?.webhookUrl || state.preferences?.nvidiaFe?.discordWebhookUrl || config.discordWebhookUrl;
+      if (!webhookUrl) {
+        reply.code(400);
+        return { ok: false, error: 'No Discord webhook URL provided or configured' };
+      }
+
+      if (notifier?.testNvidiaWebhook) {
+        await notifier.testNvidiaWebhook({ webhookUrl });
+      } else {
+        const { DiscordNotifier } = await import('./services/notifier.js');
+        const testNotifier = new DiscordNotifier({ webhookUrl });
+        await testNotifier.testNvidiaWebhook({ webhookUrl });
+      }
+
+      return { ok: true, message: 'Test notification sent successfully to Discord' };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
   app.get('/api/nvidia/status', async (request, reply) => {
     try {
+      const state = store.getState();
+      const cfg = normalizeNvidiaConfig(state.preferences?.nvidiaFe ?? {});
+      const locale = String(request.query?.locale || cfg.locale || 'sv-se').toLowerCase();
+
+      const pollerStatus = nvidia?.getStatus ? nvidia.getStatus() : null;
+      if (pollerStatus?.cards?.length && pollerStatus.locale === locale && request.query?.refresh !== 'true') {
+        return {
+          ok: true,
+          locale,
+          poller: pollerStatus,
+          checkedAt: pollerStatus.lastSuccessAt || new Date().toISOString(),
+          cards: pollerStatus.cards
+        };
+      }
+
       const { fetchDynamicSkus, resolveCardSku, queryNvidiaFeInventory, GPU_DISPLAY_ORDER, CARD_METADATA } = await import('./sources/nvidia.js');
-      const locale = String(request.query?.locale || 'sv-se').toLowerCase();
       const dynamicSkus = await fetchDynamicSkus();
 
       const cardSkus = GPU_DISPLAY_ORDER.map((cardKey) => ({
@@ -1157,7 +1240,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       }));
 
       const uniqueSkus = Array.from(new Set(cardSkus.map((c) => c.sku)));
-      const inventory = await queryNvidiaFeInventory(uniqueSkus, locale);
+      const inventory = await queryNvidiaFeInventory(uniqueSkus, locale, { timeoutMs: 10000 });
 
       const cards = cardSkus.map(({ cardKey, sku, meta }) => {
         const raw = inventory.results?.[sku];
@@ -1165,6 +1248,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         const isActive = item?.is_active === 'true' || item?.is_active === true;
         const parsedPrice = item?.price ? Number(item.price) : NaN;
         const isRealPrice = Number.isFinite(parsedPrice) && parsedPrice > 0 && parsedPrice < 900000;
+        const isMonitored = cfg.monitoredCards.includes(cardKey);
 
         return {
           cardKey,
@@ -1173,6 +1257,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           sku,
           available: isActive,
           api_reachable: Boolean(raw && !raw.error),
+          isMonitored,
           product_url: isActive && item?.product_url ? item.product_url : null,
           store_url: meta?.defaultUrl,
           priceSek: isActive && isRealPrice ? parsedPrice : meta?.msrpSek,
@@ -1185,6 +1270,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       return {
         ok: true,
         locale,
+        poller: pollerStatus,
         checkedAt: new Date().toISOString(),
         cards
       };
