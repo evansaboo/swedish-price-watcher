@@ -906,12 +906,16 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       
       let storeStatuses = [];
       let usersList = [];
+      let categorySchema = null;
+      let categoriesList = [];
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
       if (fs.existsSync(dbPath)) {
         const Database = (await import('better-sqlite3')).default;
         const db = new Database(dbPath);
         storeStatuses = db.prepare('SELECT DISTINCT status FROM stores').all();
         usersList = db.prepare('SELECT id, name, email FROM users').all();
+        categorySchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'categories'").get()?.sql;
+        categoriesList = db.prepare('SELECT * FROM categories').all();
         db.close();
       }
 
@@ -932,7 +936,87 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           }
         } catch {}
       }
-      return { ok: true, enumCode, storeStatuses, usersList, laravelLogs };
+      return { ok: true, enumCode, storeStatuses, usersList, categorySchema, categoriesList, laravelLogs };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  app.get('/api/bandit/categories', async (request, reply) => {
+    try {
+      const fs = await import('fs');
+      const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
+      if (!fs.existsSync(dbPath)) return { ok: false, message: 'DB not found' };
+      const Database = (await import('better-sqlite3')).default;
+      const db = new Database(dbPath);
+      const allCategories = db.prepare('SELECT * FROM categories').all();
+      db.close();
+      return { ok: true, categories: allCategories };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  app.post('/api/bandit/categories', async (request, reply) => {
+    try {
+      const fs = await import('fs');
+      const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
+      if (!fs.existsSync(dbPath)) return { ok: false, message: 'DB not found' };
+      const Database = (await import('better-sqlite3')).default;
+      const db = new Database(dbPath);
+      
+      const tableInfo = db.prepare('PRAGMA table_info(categories)').all();
+      const colNames = tableInfo.map(c => c.name);
+      
+      let userId = 1;
+      const user = db.prepare('SELECT id FROM users LIMIT 1').get();
+      if (user) userId = user.id;
+
+      const defaultCategories = [
+        { name: 'GPU (Graphics Cards)', slug: 'gpu' },
+        { name: 'CPU (Processors)', slug: 'cpu' },
+        { name: 'RAM (Memory)', slug: 'ram' },
+        { name: 'Motherboards (Moderkort)', slug: 'motherboards' },
+        { name: 'Storage & SSD (Lagring)', slug: 'storage-ssd' },
+        { name: 'Power Supplies (PSU)', slug: 'power-supplies' },
+        { name: 'PC Cases (Chassi)', slug: 'pc-cases' },
+        { name: 'Cooling & Fans (Kylning)', slug: 'cooling' },
+        { name: 'Monitors (Skärmar)', slug: 'monitors' },
+        { name: 'Laptops & Computers', slug: 'laptops' },
+        { name: 'Peripherals (Mus & Tangentbord)', slug: 'peripherals' },
+        { name: 'Audio & Headsets (Ljud)', slug: 'audio' },
+        { name: 'Price Drops & Big Deals', slug: 'price-drops' },
+        { name: 'Networking (Nätverk)', slug: 'networking' }
+      ];
+
+      const categoriesToAdd = Array.isArray(request.body?.categories) && request.body.categories.length > 0
+        ? request.body.categories
+        : defaultCategories;
+
+      const inserted = [];
+      for (const cat of categoriesToAdd) {
+        const existing = db.prepare('SELECT id FROM categories WHERE name = ? OR slug = ?').get(cat.name, cat.slug);
+        if (!existing) {
+          const insertObj = {
+            name: cat.name,
+            slug: cat.slug || cat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+          };
+          if (colNames.includes('user_id')) insertObj.user_id = userId;
+          if (colNames.includes('created_at')) insertObj.created_at = new Date().toISOString();
+          if (colNames.includes('updated_at')) insertObj.updated_at = new Date().toISOString();
+
+          const cols = Object.keys(insertObj).join(', ');
+          const placeholders = Object.keys(insertObj).map(k => '@' + k).join(', ');
+          db.prepare(`INSERT INTO categories (${cols}) VALUES (${placeholders})`).run(insertObj);
+          inserted.push(cat.name);
+        }
+      }
+
+      const allCategories = db.prepare('SELECT * FROM categories').all();
+      db.close();
+      return { ok: true, insertedCount: inserted.length, inserted, allCategories };
     } catch (err) {
       reply.code(500);
       return { ok: false, error: err.message };
