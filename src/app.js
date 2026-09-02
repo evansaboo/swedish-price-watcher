@@ -908,6 +908,9 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       let usersList = [];
       let categorySchema = null;
       let categoriesList = [];
+      let notificationSchema = null;
+      let notificationSettings = [];
+      let productSchema = null;
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
       if (fs.existsSync(dbPath)) {
         const Database = (await import('better-sqlite3')).default;
@@ -916,6 +919,9 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         usersList = db.prepare('SELECT id, name, email FROM users').all();
         categorySchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'categories'").get()?.sql;
         categoriesList = db.prepare('SELECT * FROM categories').all();
+        notificationSchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'notification_settings'").get()?.sql;
+        notificationSettings = db.prepare('SELECT * FROM notification_settings').all();
+        productSchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'products'").get()?.sql;
         db.close();
       }
 
@@ -936,7 +942,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           }
         } catch {}
       }
-      return { ok: true, enumCode, storeStatuses, usersList, categorySchema, categoriesList, laravelLogs };
+      return { ok: true, enumCode, storeStatuses, usersList, categorySchema, categoriesList, notificationSchema, notificationSettings, productSchema, laravelLogs };
     } catch (err) {
       reply.code(500);
       return { ok: false, error: err.message };
