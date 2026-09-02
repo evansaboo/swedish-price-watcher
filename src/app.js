@@ -1054,8 +1054,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   app.post('/api/bandit/discord-webhook', async (request, reply) => {
     try {
       const body = request.body || {};
-      const prefs = store?.getPreferences?.() || {};
-      const targetWebhook = request.query?.webhook || prefs.hotlistWebhookUrl || prefs.discordWebhookUrl || notifier?.webhookUrl || process.env.DISCORD_WEBHOOK_URL;
+      const prefs = store?.getState?.()?.preferences || {};
+      const targetWebhook = request.query?.webhook || prefs?.hotlist?.discordWebhookUrl || prefs?.discordWebhookUrl || config?.discordWebhookUrl || process.env.DISCORD_WEBHOOK_URL;
       
       if (!targetWebhook) {
         reply.code(400);
