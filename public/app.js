@@ -1021,12 +1021,16 @@ function switchNvidiaTab(tab) {
 
   if (tab === 'settings') {
     tabCards?.classList.remove('active');
+    tabCards?.setAttribute('aria-selected', 'false');
     tabSettings?.classList.add('active');
+    tabSettings?.setAttribute('aria-selected', 'true');
     paneCards?.classList.add('hidden');
     paneSettings?.classList.remove('hidden');
   } else {
     tabSettings?.classList.remove('active');
+    tabSettings?.setAttribute('aria-selected', 'false');
     tabCards?.classList.add('active');
+    tabCards?.setAttribute('aria-selected', 'true');
     paneSettings?.classList.add('hidden');
     paneCards?.classList.remove('hidden');
   }
@@ -1070,16 +1074,17 @@ function updateNvidiaPollerBadge() {
   const isRunning = Boolean(nvidiaState.config?.enabled);
   const interval = nvidiaState.config?.intervalSeconds || 15;
 
+  badge.className = 'section-badge';
   if (isRunning) {
-    badge.textContent = `🟢 Poller Active (${interval}s)`;
-    badge.style.background = 'rgba(16, 185, 129, 0.15)';
-    badge.style.color = '#10b981';
-    badge.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+    badge.textContent = `🟢 Active (${interval}s)`;
+    badge.style.background = 'var(--green-soft)';
+    badge.style.color = 'var(--green)';
+    badge.style.borderColor = 'var(--green)';
   } else {
-    badge.textContent = '⚪ Poller Disabled';
-    badge.style.background = 'rgba(255, 255, 255, 0.08)';
-    badge.style.color = 'var(--text-muted, #888)';
-    badge.style.border = '1px solid var(--border, rgba(255,255,255,0.1))';
+    badge.textContent = '⚪ Disabled';
+    badge.style.background = 'var(--bg-inset)';
+    badge.style.color = 'var(--text-tertiary)';
+    badge.style.borderColor = 'var(--border-light)';
   }
 }
 
@@ -1207,54 +1212,54 @@ async function refreshNvidiaCards() {
       const svgThumb = `/images/gpu/${card.cardKey.toLowerCase()}.svg`;
 
       return `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:var(--bg-surface, #1e1e24); border:1px solid ${isAvailable ? 'rgba(16, 185, 129, 0.7)' : isMonitored ? 'rgba(118, 185, 0, 0.35)' : 'var(--border, rgba(255,255,255,0.1))'}; border-radius:12px; gap:16px; transition:border-color 0.2s, box-shadow 0.2s; ${isAvailable ? 'box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);' : ''}">
-          <!-- Left: Listen Checkbox + GPU Thumbnail + Name & Info -->
-          <div style="display:flex; align-items:center; gap:14px; flex:1; min-width:0;">
-            <!-- Listen toggle -->
-            <label style="display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; flex-shrink:0; padding:6px 8px; border-radius:8px; background:${isMonitored ? 'rgba(118,185,0,0.12)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${isMonitored ? 'rgba(118,185,0,0.35)' : 'var(--border, rgba(255,255,255,0.08))'}; min-width:44px;" title="${isMonitored ? 'Monitored by background scheduler' : 'Click to monitor with background scheduler'}">
-              <input type="checkbox" class="nvidia-card-toggle" data-card="${escapeHtml(card.cardKey)}" ${isMonitored ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer; accent-color:#76b900;" />
-              <span style="font-size:0.62rem; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:${isMonitored ? '#76b900' : 'var(--text-muted, #777)'};">${isMonitored ? 'ON' : 'OFF'}</span>
+        <div class="source-card" style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--bg-page); border:1px solid ${isAvailable ? 'var(--green)' : 'var(--border-light)'}; border-radius:var(--radius-md); gap:12px; ${isAvailable ? 'box-shadow: 0 0 10px var(--green-soft);' : ''}">
+          <!-- Left: Listen Toggle + GPU Thumbnail + Name & Info -->
+          <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:0;">
+            <!-- Listen toggle switch -->
+            <label class="toggle-switch" title="${isMonitored ? 'Listening (monitored by scheduler)' : 'Muted (not monitored)'}">
+              <input type="checkbox" class="nvidia-card-toggle" data-card="${escapeHtml(card.cardKey)}" ${isMonitored ? 'checked' : ''} />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
             </label>
 
             <!-- Crisp GPU Thumbnail -->
-            <div style="width:54px; height:54px; border-radius:10px; background:#141518; border:1px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden; box-shadow:0 3px 8px rgba(0,0,0,0.4);">
+            <div style="width:48px; height:48px; border-radius:var(--radius-sm); background:var(--bg-surface); border:1px solid var(--border-light); display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden;">
               <img src="${escapeHtml(svgThumb)}" alt="${escapeHtml(card.name)}" style="width:100%; height:100%; object-fit:contain; display:block;" onerror="this.src='${escapeHtml(svgThumb)}'" />
             </div>
 
-            <!-- Title, SKU & API status -->
+            <!-- Details -->
             <div style="min-width:0; flex:1;">
-              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <span style="font-weight:700; font-size:0.98rem; color:var(--text-primary); letter-spacing:-0.01em;">${escapeHtml(card.fullName || card.name)}</span>
-                <span style="font-size:0.62rem; font-weight:700; padding:1px 6px; border-radius:4px; background:rgba(118,185,0,0.15); color:#76b900; border:1px solid rgba(118,185,0,0.3);">FE</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-weight:600; font-size:13.5px; color:var(--text-primary);">${escapeHtml(card.fullName || card.name)}</span>
+                <span class="section-badge" style="font-size:10px; padding:1px 5px;">FE</span>
               </div>
-              <div style="font-size:0.75rem; opacity:0.7; display:flex; align-items:center; gap:10px; margin-top:4px; flex-wrap:wrap;">
-                <span>SKU: <code style="font-family:monospace; font-size:0.72rem; background:rgba(255,255,255,0.06); padding:2px 5px; border-radius:4px;">${escapeHtml(card.sku)}</code></span>
-                <span>MSRP: <strong>${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</strong></span>
-                <span style="display:inline-flex; align-items:center; gap:4px; font-size:0.72rem; color:${card.api_reachable ? '#10b981' : '#ef4444'};">
-                  <span style="width:6px; height:6px; border-radius:50%; background:${card.api_reachable ? '#10b981' : '#ef4444'};"></span>
-                  ${card.api_reachable ? 'API Online' : 'API Error'}
+              <div style="font-size:11.5px; color:var(--text-tertiary); display:flex; align-items:center; gap:8px; margin-top:2px; flex-wrap:wrap;">
+                <span>SKU: <code style="font-family:monospace; font-size:11px; background:var(--bg-inset); padding:1px 4px; border-radius:3px;">${escapeHtml(card.sku)}</code></span>
+                <span>MSRP: ${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</span>
+                <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};">
+                  <span style="width:6px; height:6px; border-radius:50%; background:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};"></span>
+                  ${card.api_reachable ? 'API Live' : 'API Error'}
                 </span>
               </div>
             </div>
           </div>
 
-          <!-- Right: Price, Stock Status Badge & Buy Button -->
-          <div style="display:flex; align-items:center; gap:16px; flex-shrink:0;">
+          <!-- Right: Price, Stock Badge & Action -->
+          <div style="display:flex; align-items:center; gap:12px; flex-shrink:0;">
             <div style="text-align:right;">
-              <div style="font-weight:800; font-size:1.05rem; color:${isAvailable ? '#10b981' : 'var(--text-primary)'};">
+              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary); font-variant-numeric:tabular-nums;">
                 ${priceStr}
               </div>
               <div style="margin-top:2px;">
                 ${isAvailable
-                  ? `<span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; font-size:0.72rem; font-weight:800; border-radius:20px; background:#10b981; color:#fff; text-transform:uppercase; box-shadow:0 0 10px rgba(16,185,129,0.5);">🟢 IN STOCK</span>`
-                  : `<span style="display:inline-block; padding:2px 8px; font-size:0.72rem; font-weight:600; border-radius:12px; background:rgba(255,255,255,0.06); color:var(--text-tertiary, #888); border:1px solid var(--border, rgba(255,255,255,0.1));">Out of stock</span>`
+                  ? `<span class="badge badge-hot" style="font-size:10px; padding:2px 6px;">IN STOCK</span>`
+                  : `<span class="section-badge" style="font-size:10px; padding:2px 6px;">Out of stock</span>`
                 }
               </div>
             </div>
 
             ${buyUrl ? `
-              <a href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" class="action-btn" style="text-decoration:none; padding:8px 16px; font-size:0.82rem; font-weight:700; border-radius:8px; white-space:nowrap; ${isAvailable ? 'background:#10b981; border:1px solid #10b981; color:#fff; box-shadow:0 2px 8px rgba(16,185,129,0.4);' : 'background:transparent; border:1px solid var(--border, rgba(255,255,255,0.2)); color:var(--text-secondary, #ccc);'}">
-                ${isAvailable ? 'Buy Now 🛒' : 'Store Link ↗'}
+              <a href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" class="${isAvailable ? 'save-btn' : 'ghost-btn'}" style="text-decoration:none; padding:${isAvailable ? '6px 14px' : '5px 12px'}; font-size:12px; white-space:nowrap; display:inline-flex; align-items:center; gap:4px; ${isAvailable ? 'background:var(--green); border-radius:var(--radius-sm);' : ''}">
+                ${isAvailable ? 'Buy Now 🛒' : 'View Store ↗'}
               </a>
             ` : ''}
           </div>
@@ -2609,6 +2614,25 @@ function bindEvents() {
   document.getElementById('nvidia-tab-cards')?.addEventListener('click', () => switchNvidiaTab('cards'));
   document.getElementById('nvidia-tab-settings')?.addEventListener('click', () => switchNvidiaTab('settings'));
   document.getElementById('nvidia-settings-form')?.addEventListener('submit', saveNvidiaSettingsForm);
+
+  document.getElementById('nvidia-enabled-input')?.addEventListener('change', async (e) => {
+    const isEnabled = e.target.checked;
+    try {
+      const res = await fetchJson('/api/nvidia/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: isEnabled })
+      });
+      if (res?.ok) {
+        nvidiaState.config = res.config;
+        updateNvidiaPollerBadge();
+        showToast(isEnabled ? 'Scheduler enabled!' : 'Scheduler disabled', 'info');
+      }
+    } catch (err) {
+      showToast(`Failed to update scheduler: ${err.message}`, 'error');
+      e.target.checked = !isEnabled;
+    }
+  });
 
   document.getElementById('nvidia-test-webhook-btn')?.addEventListener('click', async () => {
     const btn = document.getElementById('nvidia-test-webhook-btn');
