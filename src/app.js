@@ -1051,6 +1051,98 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
+  app.post('/api/bandit/discord-webhook', async (request, reply) => {
+    try {
+      const body = request.body || {};
+      const prefs = store?.getPreferences?.() || {};
+      const targetWebhook = request.query?.webhook || prefs.hotlistWebhookUrl || prefs.discordWebhookUrl || notifier?.webhookUrl || process.env.DISCORD_WEBHOOK_URL;
+      
+      if (!targetWebhook) {
+        reply.code(400);
+        return { ok: false, error: 'No Discord webhook configured on server or in query' };
+      }
+
+      const title = body.title || 'Discount Bandit Price Drop';
+      let rawBody = body.body || '';
+      
+      let productUrl = null;
+      const urlMatch = rawBody.match(/Product URL:\s*\.?\s*(https?:\/\/[^\s<]+)/i);
+      if (urlMatch) {
+        productUrl = urlMatch[1].trim();
+      }
+
+      let cleanText = rawBody
+        .replace(/<br\s*[\/]?>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/Product URL:\s*\.?\s*https?:\/\/[^\s]+/gi, '')
+        .trim();
+
+      const image = Array.isArray(body.attach) && body.attach[0] ? body.attach[0] : null;
+
+      const embed = {
+        title: title,
+        url: productUrl || undefined,
+        description: cleanText,
+        color: 0x8b5cf6,
+        timestamp: new Date().toISOString(),
+        footer: { text: '🎯 Discount Bandit • Price Drop Alert' }
+      };
+
+      if (image && typeof image === 'string' && image.startsWith('http')) {
+        embed.thumbnail = { url: image };
+      }
+
+      const discordPayload = {
+        username: 'Discount Bandit',
+        avatar_url: 'https://raw.githubusercontent.com/Cybrarist/Discount-Bandit/refs/heads/master/storage/app/public/bandit.png',
+        embeds: [embed]
+      };
+
+      const discordRes = await fetch(targetWebhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(discordPayload)
+      });
+
+      return { ok: discordRes.ok, status: discordRes.status };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  app.post('/api/bandit/enable-discord', async (request, reply) => {
+    try {
+      const fs = await import('fs');
+      const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
+      if (!fs.existsSync(dbPath)) return { ok: false, message: 'DB not found' };
+      const Database = (await import('better-sqlite3')).default;
+      const db = new Database(dbPath);
+
+      const forwarderUrl = request.body?.appriseUrl || 'https://deals.evansaboo.com/api/bandit/discord-webhook';
+      
+      const user = db.prepare('SELECT id, notification_settings FROM users ORDER BY id ASC LIMIT 1').get();
+      if (!user) {
+        db.close();
+        return { ok: false, message: 'No user found' };
+      }
+
+      let settings = {};
+      try {
+        settings = JSON.parse(user.notification_settings || '{}');
+      } catch {}
+
+      settings.apprise_url = forwarderUrl;
+      db.prepare('UPDATE users SET notification_settings = ? WHERE id = ?').run(JSON.stringify(settings), user.id);
+      db.close();
+
+      return { ok: true, userId: user.id, appriseUrl: forwarderUrl };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
   // ── Sources ────────────────────────────────────────────────────
   // Standard scan sources only. Hotlist sources (Elgiganten, Amazon, etc.) are continuous pollers
   // configured exclusively via /api/hotlist and have their own lifecycles.
