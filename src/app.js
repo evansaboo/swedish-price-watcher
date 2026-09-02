@@ -898,10 +898,13 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       const { execSync } = await import('child_process');
       const fs = await import('fs');
       let enumCode = '';
+      let notificationClasses = '';
+      let envNotifs = '';
       try {
-        enumCode = execSync('docker exec discount-bandit cat app/Enums/StoreStatusEnum.php', { encoding: 'utf8', timeout: 5000 });
+        notificationClasses = execSync('docker exec discount-bandit find app/ -name "*Notification*"', { encoding: 'utf8', timeout: 5000 });
+        envNotifs = execSync('docker exec discount-bandit cat .env.example | grep -i -E "ntfy|discord|telegram|webhook|mail|notif|gotify|pushover"', { encoding: 'utf8', timeout: 5000 });
       } catch (e) {
-        enumCode = 'docker exec error: ' + (e.stdout || e.stderr || e.message);
+        notificationClasses = 'exec error: ' + (e.stdout || e.stderr || e.message);
       }
       
       let storeStatuses = [];
@@ -942,7 +945,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           }
         } catch {}
       }
-      return { ok: true, enumCode, storeStatuses, usersList, categorySchema, categoriesList, notificationSchema, notificationSettings, productSchema, laravelLogs };
+      return { ok: true, enumCode, notificationClasses, envNotifs, storeStatuses, usersList, categorySchema, categoriesList, notificationSchema, notificationSettings, productSchema, laravelLogs };
     } catch (err) {
       reply.code(500);
       return { ok: false, error: err.message };
