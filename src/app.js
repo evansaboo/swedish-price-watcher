@@ -901,8 +901,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       let notificationClasses = '';
       let envNotifs = '';
       try {
-        notificationClasses = execSync('docker exec discount-bandit find app/ -name "*Notification*"', { encoding: 'utf8', timeout: 5000 });
-        envNotifs = execSync('docker exec discount-bandit cat .env.example | grep -i -E "ntfy|discord|telegram|webhook|mail|notif|gotify|pushover"', { encoding: 'utf8', timeout: 5000 });
+        notificationClasses = execSync('docker exec discount-bandit ls -la app/NotificationsChannels app/Notifications', { encoding: 'utf8', timeout: 5000 });
+        envNotifs = execSync('docker exec discount-bandit cat app/Services/NotificationService.php', { encoding: 'utf8', timeout: 5000 });
       } catch (e) {
         notificationClasses = 'exec error: ' + (e.stdout || e.stderr || e.message);
       }
