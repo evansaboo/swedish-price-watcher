@@ -1177,6 +1177,37 @@ async function refreshNvidiaCards() {
     nvidiaState.cards = res.cards;
     if (res.poller) nvidiaState.poller = res.poller;
 
+    // Direct browser verification fallback:
+    // If the server IP is challenged by Akamai (http_403), the browser verifies directly from NVIDIA Store API
+    const unverifiedCards = res.cards.filter(c => !c.api_reachable && c.sku);
+    if (unverifiedCards.length > 0) {
+      await Promise.all(unverifiedCards.map(async (card) => {
+        try {
+          const directRes = await fetch(`https://api.store.nvidia.com/partner/v1/feinventory?skus=${encodeURIComponent(card.sku)}&locale=${encodeURIComponent(locale)}`, {
+            headers: { 'Accept': 'application/json, text/plain, */*' }
+          });
+          if (directRes.ok) {
+            const data = await directRes.json();
+            const item = data?.listMap?.[0];
+            if (item) {
+              const isActive = item.is_active === 'true' || item.is_active === true;
+              const parsedPrice = item.price ? Number(item.price) : NaN;
+              card.available = isActive;
+              card.api_reachable = true;
+              card.api_error = null;
+              card.direct_verified = true;
+              if (isActive && item.product_url) card.product_url = item.product_url;
+              if (Number.isFinite(parsedPrice) && parsedPrice > 0 && parsedPrice < 900000) {
+                card.priceSek = parsedPrice;
+              }
+            }
+          }
+        } catch {
+          // Direct check fallback handled gracefully
+        }
+      }));
+    }
+
     if (lastCheckEl) {
       lastCheckEl.textContent = `Updated: ${new Date().toLocaleTimeString('sv-SE')}`;
     }
