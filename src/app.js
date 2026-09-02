@@ -901,8 +901,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       let notificationClasses = '';
       let envNotifs = '';
       try {
-        notificationClasses = execSync('docker exec discount-bandit ls -la app/NotificationsChannels app/Notifications', { encoding: 'utf8', timeout: 5000 });
-        envNotifs = execSync('docker exec discount-bandit cat app/Services/NotificationService.php', { encoding: 'utf8', timeout: 5000 });
+        notificationClasses = execSync('docker exec discount-bandit cat app/NotificationsChannels/Apprise.php && echo "--- AppriseChannel ---" && docker exec discount-bandit cat app/NotificationsChannels/AppriseChannel.php', { encoding: 'utf8', timeout: 5000 });
+        envNotifs = execSync('docker exec discount-bandit find app/Filament/ -type f', { encoding: 'utf8', timeout: 5000 });
       } catch (e) {
         notificationClasses = 'exec error: ' + (e.stdout || e.stderr || e.message);
       }
@@ -919,7 +919,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         const Database = (await import('better-sqlite3')).default;
         const db = new Database(dbPath);
         storeStatuses = db.prepare('SELECT DISTINCT status FROM stores').all();
-        usersList = db.prepare('SELECT id, name, email FROM users').all();
+        usersList = db.prepare('SELECT * FROM users').all();
         categorySchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'categories'").get()?.sql;
         categoriesList = db.prepare('SELECT * FROM categories').all();
         notificationSchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'notification_settings'").get()?.sql;
