@@ -902,9 +902,13 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       let enumCode = '';
       let notificationClasses = '';
       let envNotifs = '';
+      let linkPricesBlade = '';
+      let productResourceFiles = '';
       try {
         notificationClasses = execSync('docker exec discount-bandit cat app/Filament/Resources/Users/Schemas/UserForm.php', { encoding: 'utf8', timeout: 5000 });
         envNotifs = execSync('docker exec discount-bandit cat app/Filament/Resources/Users/Pages/EditUser.php', { encoding: 'utf8', timeout: 5000 });
+        linkPricesBlade = execSync('docker exec discount-bandit cat resources/views/filament/tables/columns/link-prices.blade.php', { encoding: 'utf8', timeout: 5000 });
+        productResourceFiles = execSync('docker exec discount-bandit find app/Filament -name "*Product*"', { encoding: 'utf8', timeout: 5000 });
       } catch (e) {
         notificationClasses = 'exec error: ' + (e.stdout || e.stderr || e.message);
       }
@@ -916,10 +920,14 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       let notificationSchema = null;
       let notificationSettings = [];
       let productSchema = null;
+      let tableSchemas = [];
+      let productsList = [];
+      let linksList = [];
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
       if (fs.existsSync(dbPath)) {
         const Database = (await import('better-sqlite3')).default;
         const db = new Database(dbPath);
+        tableSchemas = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
         storeStatuses = db.prepare('SELECT DISTINCT status FROM stores').all();
         usersList = db.prepare('SELECT * FROM users').all();
         categorySchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'categories'").get()?.sql;
@@ -927,6 +935,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         notificationSchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'notification_settings'").get()?.sql;
         notificationSettings = db.prepare('SELECT * FROM notification_settings').all();
         productSchema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'products'").get()?.sql;
+        try { productsList = db.prepare('SELECT * FROM products').all(); } catch {}
+        try { linksList = db.prepare('SELECT * FROM links').all(); } catch {}
         db.close();
       }
 
@@ -947,7 +957,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           }
         } catch {}
       }
-      return { ok: true, enumCode, notificationClasses, envNotifs, storeStatuses, usersList, categorySchema, categoriesList, notificationSchema, notificationSettings, productSchema, laravelLogs };
+      return { ok: true, enumCode, notificationClasses, envNotifs, linkPricesBlade, productResourceFiles, storeStatuses, usersList, categorySchema, categoriesList, notificationSchema, notificationSettings, productSchema, tableSchemas, productsList, linksList, laravelLogs };
     } catch (err) {
       reply.code(500);
       return { ok: false, error: err.message };
@@ -999,6 +1009,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
         { name: 'Peripherals (Mus & Tangentbord)', color: '#ec4899' },
         { name: 'Audio & Headsets (Ljud & Headset)', color: '#f43f5e' },
         { name: 'Price Drops & Big Deals (Prissänkningar)', color: '#ef4444' },
+        { name: 'Full Set (Kompletta Datorer / Prebuilts)', color: '#10b981' },
         { name: 'Networking (Nätverk & Routers)', color: '#84cc16' }
       ];
 
@@ -1047,6 +1058,45 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       const res = db.prepare(`UPDATE stores SET status = ? WHERE status = 'enabled'`).run(activeValue);
       db.close();
       return { ok: true, changes: res.changes, updatedTo: activeValue };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  app.post('/api/bandit/patch-product-blade', async (request, reply) => {
+    try {
+      const { execSync } = await import('child_process');
+      const bladePath = 'resources/views/filament/tables/columns/link-prices.blade.php';
+      let content = '';
+      try {
+        content = execSync(`docker exec discount-bandit cat ${bladePath}`, { encoding: 'utf8', timeout: 5000 });
+      } catch (e) {
+        return { ok: false, error: 'Failed to read blade file: ' + (e.stderr || e.message) };
+      }
+
+      let patched = content;
+      if (request.body?.content) {
+        patched = request.body.content;
+      } else {
+        // Auto-fix: Ensure all foreach loops in link-prices.blade.php check that their argument is iterable and not null
+        // Match @foreach($var as ...) and wrap with @if(!empty($var) && (is_array($var) || is_object($var)))
+        patched = content.replace(/@foreach\s*\(\s*([^)]+?)\s+as\s+([^)]+?)\)/g, (match, expr, rest) => {
+          const cleanExpr = expr.trim();
+          return `@if(!empty(${cleanExpr}) && (is_array(${cleanExpr}) || is_object(${cleanExpr})))\n@foreach(${cleanExpr} as ${rest})\n`;
+        });
+        if (patched !== content) {
+          patched = patched.replace(/@endforeach/g, '@endforeach\n@endif');
+        }
+      }
+
+      const b64 = Buffer.from(patched, 'utf8').toString('base64');
+      execSync(`docker exec discount-bandit sh -c "echo '${b64}' | base64 -d > ${bladePath}"`, { timeout: 5000 });
+      try {
+        execSync('docker exec discount-bandit php artisan view:clear', { timeout: 5000 });
+      } catch {}
+
+      return { ok: true, original: content, patched };
     } catch (err) {
       reply.code(500);
       return { ok: false, error: err.message };
