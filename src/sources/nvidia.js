@@ -1,5 +1,8 @@
+import http from 'node:http';
+import tls from 'node:tls';
 import http2 from 'node:http2';
 import { slugify } from '../lib/utils.js';
+import { needsSocksBridge, startSocksHttpBridge } from '../services/socksBridge.js';
 
 export const SKUS_URL = 'https://r2.jlplen.io/skus.json';
 export const NVIDIA_STORE_API_HOST = 'https://api.store.nvidia.com';
@@ -172,24 +175,102 @@ export function resolveCardSku(cardKey, locale = 'sv-se', dynamicSkus = null) {
   return DEFAULT_SKUS[cardKey] || `NVGFT${cardKey}`;
 }
 
+let nvidiaBridgePromise = null;
+let nvidiaBridgeUrl = null;
+
+async function getSharedNvidiaBridge(rawUrl) {
+  if (nvidiaBridgePromise && nvidiaBridgeUrl === rawUrl) {
+    return nvidiaBridgePromise;
+  }
+  nvidiaBridgeUrl = rawUrl;
+  nvidiaBridgePromise = startSocksHttpBridge(rawUrl).catch((err) => {
+    console.warn(`[nvidia] could not start SOCKS bridge: ${err.message}`);
+    nvidiaBridgePromise = null;
+    return null;
+  });
+  return nvidiaBridgePromise;
+}
+
+export async function createNvidiaHttp2Client(targetHost = 'api.store.nvidia.com', targetPort = 443) {
+  const rawProxy = process.env.NVIDIA_PROXY_URL || process.env.ELGIGANTEN_PROXY_URL || null;
+  if (!rawProxy || !String(rawProxy).trim()) {
+    return http2.connect(`https://${targetHost}`);
+  }
+
+  let httpProxyUrl = rawProxy;
+  if (needsSocksBridge(rawProxy)) {
+    const bridge = await getSharedNvidiaBridge(rawProxy);
+    if (bridge) {
+      httpProxyUrl = bridge.url;
+    }
+  }
+
+  let proxyParsed;
+  try {
+    proxyParsed = new URL(httpProxyUrl);
+  } catch {
+    return http2.connect(`https://${targetHost}`);
+  }
+
+  return new Promise((resolve, reject) => {
+    const connectReq = http.request({
+      host: proxyParsed.hostname,
+      port: Number(proxyParsed.port) || 80,
+      method: 'CONNECT',
+      path: `${targetHost}:${targetPort}`,
+      headers: proxyParsed.username ? {
+        'Proxy-Authorization': `Basic ${Buffer.from(`${decodeURIComponent(proxyParsed.username)}:${decodeURIComponent(proxyParsed.password)}`).toString('base64')}`
+      } : {}
+    });
+
+    connectReq.on('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        return reject(new Error(`Proxy CONNECT failed: HTTP ${res.statusCode}`));
+      }
+
+      const tlsSocket = tls.connect({
+        socket,
+        servername: targetHost,
+        ALPNProtocols: ['h2']
+      }, () => {
+        const client = http2.connect(`https://${targetHost}`, {
+          createConnection: () => tlsSocket
+        });
+        resolve(client);
+      });
+
+      tlsSocket.on('error', reject);
+    });
+
+    connectReq.on('error', reject);
+    connectReq.setTimeout(10000, () => {
+      connectReq.destroy(new Error('Proxy CONNECT timed out'));
+    });
+    connectReq.end();
+  });
+}
+
 /**
  * Queries the NVIDIA Store API for inventory status using HTTP/2.
  * Akamai requires HTTP/2 with browser headers and handles bot-manager cookies.
+ * Routes through NVIDIA_PROXY_URL / ELGIGANTEN_PROXY_URL when configured.
  */
 export async function queryNvidiaFeInventory(skus, locale = 'sv-se', { timeoutMs = 15000 } = {}) {
   const normLocale = String(locale).toLowerCase();
   const skuList = Array.isArray(skus) ? skus : [skus];
 
+  let client;
+  try {
+    client = await createNvidiaHttp2Client();
+    client.on('error', () => {
+      // Handled: catch session-level errors without throwing unhandled exceptions
+    });
+  } catch (err) {
+    return { ok: false, error: err.message, results: {} };
+  }
+
   return new Promise((resolve) => {
-    let client;
-    try {
-      client = http2.connect(NVIDIA_STORE_API_HOST);
-      client.on('error', () => {
-        // Handled: catch session-level errors without throwing unhandled exceptions
-      });
-    } catch (err) {
-      return resolve({ ok: false, error: err.message, results: {} });
-    }
 
     let cookieJar = new Map();
     const results = {};
