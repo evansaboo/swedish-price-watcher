@@ -942,6 +942,89 @@ function closePriceHistoryModal() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
+// ── NVIDIA Founders Edition Modal ─────────────────────────────────
+async function openNvidiaModal() {
+  const modal = document.getElementById('nvidia-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+  await refreshNvidiaCards();
+}
+
+function closeNvidiaModal() {
+  const modal = document.getElementById('nvidia-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+async function refreshNvidiaCards() {
+  const container = document.getElementById('nvidia-cards-container');
+  const localeSelect = document.getElementById('nvidia-locale-select');
+  const lastCheckEl = document.getElementById('nvidia-last-check');
+  const refreshBtn = document.getElementById('nvidia-refresh-btn');
+  if (!container) return;
+
+  const locale = localeSelect?.value || 'sv-se';
+  if (refreshBtn) refreshBtn.disabled = true;
+  container.innerHTML = '<div style="text-align:center; padding:2rem; opacity:0.6;">Checking NVIDIA Store inventory...</div>';
+
+  try {
+    const res = await fetchJson(`/api/nvidia/status?locale=${encodeURIComponent(locale)}`);
+    if (!res?.ok || !Array.isArray(res.cards)) {
+      throw new Error(res?.error || 'Failed to fetch inventory');
+    }
+
+    if (lastCheckEl) {
+      lastCheckEl.textContent = `Updated: ${new Date().toLocaleTimeString('sv-SE')}`;
+    }
+
+    container.innerHTML = res.cards.map(card => {
+      const isAvailable = card.available;
+      const statusBg = isAvailable ? '#10b981' : '#64748b';
+      const statusText = isAvailable ? 'IN STOCK 🚀' : 'Out of stock';
+      const priceStr = card.priceSek ? `${Number(card.priceSek).toLocaleString('sv-SE')} SEK` : '';
+      const buyUrl = isAvailable && card.product_url ? card.product_url : card.store_url;
+
+      return `
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--bg-secondary, rgba(255,255,255,0.05)); border:1px solid ${isAvailable ? '#10b981' : 'var(--border, rgba(255,255,255,0.1))'}; border-radius:8px; gap:12px;">
+          <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:0;">
+            ${card.imageUrl ? `<img src="${card.imageUrl}" alt="${escapeHtml(card.name)}" style="width:48px; height:48px; object-fit:contain; border-radius:4px; flex-shrink:0;" />` : ''}
+            <div style="min-width:0;">
+              <div style="font-weight:600; font-size:0.95rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                ${escapeHtml(card.fullName || card.name)}
+              </div>
+              <div style="font-size:0.75rem; opacity:0.6; display:flex; gap:8px; margin-top:2px;">
+                <span>SKU: <code>${escapeHtml(card.sku)}</code></span>
+                <span>MSRP: ${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; flex-shrink:0;">
+            <div style="text-align:right;">
+              <div style="font-weight:700; font-size:1rem; color:${isAvailable ? '#10b981' : 'inherit'};">
+                ${priceStr}
+              </div>
+              <span style="display:inline-block; padding:2px 8px; font-size:0.7rem; font-weight:700; border-radius:12px; background:${statusBg}; color:#fff; text-transform:uppercase;">
+                ${statusText}
+              </span>
+            </div>
+            ${buyUrl ? `
+              <a href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" class="action-btn" style="text-decoration:none; padding:6px 12px; font-size:0.8rem; background:${isAvailable ? '#10b981' : 'transparent'}; border:1px solid ${isAvailable ? '#10b981' : 'var(--border, rgba(255,255,255,0.2))'}; color:#fff; font-weight:600; white-space:nowrap;">
+                ${isAvailable ? 'Buy Now 🛒' : 'View'}
+              </a>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    container.innerHTML = `<div style="text-align:center; padding:1.5rem; color:#ef4444;">Error checking inventory: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
+}
+
 // ── RENDER: FILTERS ─────────────────────────────────────────────
 function renderCategoryFilter(categories) {
   if (state.category && !categories.some(c => c.key === state.category)) {
@@ -2216,7 +2299,9 @@ function bindEvents() {
     }
     if (e.key === 'Escape') {
       const phModal = document.getElementById('price-history-modal');
-      if (!phModal.classList.contains('hidden')) { closePriceHistoryModal(); return; }
+      if (phModal && !phModal.classList.contains('hidden')) { closePriceHistoryModal(); return; }
+      const nvModal = document.getElementById('nvidia-modal');
+      if (nvModal && !nvModal.classList.contains('hidden')) { closeNvidiaModal(); return; }
       if (!el.settingsDrawer.classList.contains('hidden')) closeDrawer();
       else if (state.filterPanelOpen) { state.filterPanelOpen = false; el.filterPanel.classList.add('hidden'); el.filterExpandBtn.classList.remove('active'); document.getElementById('filter-bar').classList.remove('panel-open'); }
     }
@@ -2226,6 +2311,15 @@ function bindEvents() {
   document.getElementById('ph-modal-close')?.addEventListener('click', closePriceHistoryModal);
   document.getElementById('price-history-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'price-history-modal') closePriceHistoryModal();
+  });
+
+  // NVIDIA FE modal
+  document.getElementById('nvidia-open-btn')?.addEventListener('click', openNvidiaModal);
+  document.getElementById('nvidia-modal-close')?.addEventListener('click', closeNvidiaModal);
+  document.getElementById('nvidia-refresh-btn')?.addEventListener('click', refreshNvidiaCards);
+  document.getElementById('nvidia-locale-select')?.addEventListener('change', refreshNvidiaCards);
+  document.getElementById('nvidia-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'nvidia-modal') closeNvidiaModal();
   });
 }
 

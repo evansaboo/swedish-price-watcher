@@ -15,6 +15,7 @@ import { collectFromProshop } from './proshop.js';
 import { collectFromRss } from './rss.js';
 import { collectFromSweclockers } from './sweclockers.js';
 import { collectFromWebhallen } from './webhallen.js';
+import { collectFromNvidia } from './nvidia.js';
 
 const handlers = {
   'amazon-hotlist': collectFromAmazonHotlist,
@@ -29,6 +30,7 @@ const handlers = {
   'kjell-outlet': collectFromKjell,
   'komplett-category': collectFromKomplettCategory,
   'netonnet-outlet': collectFromNetonnet,
+  nvidia: collectFromNvidia,
   'power-deals': collectFromPower,
   'proshop-outlet': collectFromProshop,
   rss: collectFromRss,

@@ -1143,6 +1143,57 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
+  // ── NVIDIA Founders Edition (Notify-FE integration) ───────────────
+  app.get('/api/nvidia/status', async (request, reply) => {
+    try {
+      const { fetchDynamicSkus, resolveCardSku, queryNvidiaFeInventory, GPU_DISPLAY_ORDER, CARD_METADATA } = await import('./sources/nvidia.js');
+      const locale = String(request.query?.locale || 'sv-se').toLowerCase();
+      const dynamicSkus = await fetchDynamicSkus();
+
+      const cardSkus = GPU_DISPLAY_ORDER.map((cardKey) => ({
+        cardKey,
+        sku: resolveCardSku(cardKey, locale, dynamicSkus),
+        meta: CARD_METADATA[cardKey]
+      }));
+
+      const uniqueSkus = Array.from(new Set(cardSkus.map((c) => c.sku)));
+      const inventory = await queryNvidiaFeInventory(uniqueSkus, locale);
+
+      const cards = cardSkus.map(({ cardKey, sku, meta }) => {
+        const raw = inventory.results?.[sku];
+        const item = raw?.listMap?.[0] || null;
+        const isActive = item?.is_active === 'true' || item?.is_active === true;
+        const parsedPrice = item?.price ? Number(item.price) : NaN;
+        const isRealPrice = Number.isFinite(parsedPrice) && parsedPrice > 0 && parsedPrice < 900000;
+
+        return {
+          cardKey,
+          name: meta?.shortName || `RTX ${cardKey} FE`,
+          fullName: meta?.name || `NVIDIA GeForce RTX ${cardKey} Founders Edition`,
+          sku,
+          available: isActive,
+          api_reachable: Boolean(raw && !raw.error),
+          product_url: isActive && item?.product_url ? item.product_url : null,
+          store_url: meta?.defaultUrl,
+          priceSek: isActive && isRealPrice ? parsedPrice : meta?.msrpSek,
+          msrpSek: meta?.msrpSek,
+          imageUrl: meta?.imageUrl,
+          last_checked: new Date().toISOString()
+        };
+      });
+
+      return {
+        ok: true,
+        locale,
+        checkedAt: new Date().toISOString(),
+        cards
+      };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
   // ── Sources ────────────────────────────────────────────────────
   // Standard scan sources only. Hotlist sources (Elgiganten, Amazon, etc.) are continuous pollers
   // configured exclusively via /api/hotlist and have their own lifecycles.

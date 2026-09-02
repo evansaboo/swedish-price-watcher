@@ -349,6 +349,17 @@
       "maxProducts": 3000,
       "scanIntervalMinutes": 120,
       "notes": "Same Power REST API as Power Outlet but with o=false — regular campaign markdowns instead of outlet/returned items. Only keeps products with previousPrice above current price and discount ≥ minDiscountPct."
+    },
+    {
+      "id": "nvidia-fe",
+      "type": "nvidia",
+      "enabled": true,
+      "label": "NVIDIA Founders Edition",
+      "category": "electronics",
+      "condition": "new",
+      "locale": "sv-se",
+      "scanIntervalMinutes": 60,
+      "notes": "Monitors official NVIDIA Founders Edition GPU availability (RTX 5090, 5080, 5070, 4090, 4080S, 4070S) via NVIDIA Store partner API using Notify-FE dynamic SKUs. When in stock, links directly to the store purchase page."
     }
   ]
 }

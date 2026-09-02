@@ -75,6 +75,7 @@
         <div class="filter-bar-right">
           <button id="purchase-open-btn" type="button" class="filter-expand-btn" title="Buy controls">⚡ Buy</button>
           <a id="bandit-btn" href="https://bandit.evansaboo.com" target="_blank" rel="noopener" class="filter-expand-btn" title="Open Discount Bandit (Self-Hosted Multi-Store Tracker)" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px;">🎯 Bandit</a>
+          <button id="nvidia-open-btn" type="button" class="filter-expand-btn" title="NVIDIA Founders Edition Live Stock Tracker (Notify-FE)" style="display:inline-flex; align-items:center; gap:4px; color:#76b900; font-weight:600;"><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#76b900;"></span>NVIDIA FE</button>
           <button id="filter-expand-btn" type="button" class="filter-expand-btn" title="More filters">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
             Filters
@@ -479,6 +480,45 @@
         <div class="modal-body">
           <div id="ph-chart-container" class="ph-chart-container"></div>
           <div id="ph-stats" class="ph-stats"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="nvidia-modal" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal-dialog" style="max-width: 650px;">
+        <div class="modal-header">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:1.2rem;">🟢</span>
+            <div>
+              <h3 style="margin:0;">NVIDIA Founders Edition Tracker</h3>
+              <span style="font-size:0.75rem; opacity:0.7;">Powered by Notify-FE • Direct NVIDIA Store Inventory</span>
+            </div>
+          </div>
+          <button id="nvidia-modal-close" type="button" class="modal-close" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:8px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label for="nvidia-locale-select" style="font-size:0.85rem; font-weight:500;">Region:</label>
+              <select id="nvidia-locale-select" class="field-input" style="padding:4px 8px; font-size:0.85rem; width:auto;">
+                <option value="sv-se" selected>Sverige (sv-se)</option>
+                <option value="de-de">Deutschland (de-de)</option>
+                <option value="en-gb">United Kingdom (en-gb)</option>
+                <option value="fr-fr">France (fr-fr)</option>
+                <option value="en-us">United States (en-us)</option>
+                <option value="nb-no">Norge (nb-no)</option>
+                <option value="da-dk">Danmark (da-dk)</option>
+                <option value="fi-fi">Suomi (fi-fi)</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span id="nvidia-last-check" style="font-size:0.75rem; opacity:0.6;"></span>
+              <button id="nvidia-refresh-btn" type="button" class="action-btn" style="padding:4px 12px; font-size:0.8rem;">⟳ Refresh</button>
+            </div>
+          </div>
+          <div id="nvidia-cards-container" class="nvidia-cards-list" style="display:flex; flex-direction:column; gap:10px;">
+            <!-- Rendered by app.js -->
+          </div>
         </div>
       </div>
     </div>
