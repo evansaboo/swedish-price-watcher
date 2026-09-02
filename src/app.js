@@ -1103,6 +1103,62 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
+  app.post('/api/bandit/seed-products', async (request, reply) => {
+    try {
+      const fs = await import('fs');
+      const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
+      if (!fs.existsSync(dbPath)) return { ok: false, message: 'DB not found' };
+      const Database = (await import('better-sqlite3')).default;
+      const db = new Database(dbPath);
+
+      const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const user = db.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get();
+      const userId = user ? user.id : 2;
+
+      const catGpu = db.prepare("SELECT id FROM categories WHERE name LIKE '%GPU%'").get();
+      const catRam = db.prepare("SELECT id FROM categories WHERE name LIKE '%RAM%'").get();
+      const catFull = db.prepare("SELECT id FROM categories WHERE name LIKE '%Full Set%'").get();
+
+      const items = [
+        { name: 'NVIDIA GeForce RTX 5080 FE', catId: catGpu?.id },
+        { name: 'Corsair Vengeance DDR5 32GB (2x16GB) 6000MHz', catId: catRam?.id },
+        { name: 'Gaming PC Full Build (Ryzen 7 7800X3D / RTX 4070 / 32GB)', catId: catFull?.id }
+      ];
+
+      const created = [];
+      for (const item of items) {
+        let existing = db.prepare('SELECT id FROM products WHERE name = ?').get(item.name);
+        let productId;
+        if (!existing) {
+          const res = db.prepare(`
+            INSERT INTO products (name, status, user_id, is_favourite, notifications_sent, created_at, updated_at)
+            VALUES (?, 'active', ?, 0, 0, ?, ?)
+          `).run(item.name, userId, now, now);
+          productId = res.lastInsertRowid;
+          created.push({ id: productId, name: item.name });
+        } else {
+          productId = existing.id;
+        }
+
+        if (item.catId && productId) {
+          const hasPivot = db.prepare('SELECT * FROM category_product WHERE product_id = ? AND category_id = ?').get(productId, item.catId);
+          if (!hasPivot) {
+            try {
+              db.prepare('INSERT INTO category_product (product_id, category_id) VALUES (?, ?)').run(productId, item.catId);
+            } catch {}
+          }
+        }
+      }
+
+      const allProducts = db.prepare('SELECT * FROM products').all();
+      db.close();
+      return { ok: true, created, allProducts };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: err.message };
+    }
+  });
+
   app.post('/api/bandit/discord-webhook', async (request, reply) => {
     try {
       const body = request.body || {};
