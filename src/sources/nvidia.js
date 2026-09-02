@@ -176,7 +176,7 @@ export function resolveCardSku(cardKey, locale = 'sv-se', dynamicSkus = null) {
  * Queries the NVIDIA Store API for inventory status using HTTP/2.
  * Akamai requires HTTP/2 with browser headers and handles bot-manager cookies.
  */
-export async function queryNvidiaFeInventory(skus, locale = 'sv-se', { timeoutMs = 12000 } = {}) {
+export async function queryNvidiaFeInventory(skus, locale = 'sv-se', { timeoutMs = 15000 } = {}) {
   const normLocale = String(locale).toLowerCase();
   const skuList = Array.isArray(skus) ? skus : [skus];
 
@@ -184,6 +184,9 @@ export async function queryNvidiaFeInventory(skus, locale = 'sv-se', { timeoutMs
     let client;
     try {
       client = http2.connect(NVIDIA_STORE_API_HOST);
+      client.on('error', () => {
+        // Handled: catch session-level errors without throwing unhandled exceptions
+      });
     } catch (err) {
       return resolve({ ok: false, error: err.message, results: {} });
     }
@@ -233,7 +236,9 @@ export async function queryNvidiaFeInventory(skus, locale = 'sv-se', { timeoutMs
           return resReq({ error: streamErr.message });
         }
 
+        let statusCode = 200;
         stream.on('response', (resHeaders) => {
+          statusCode = Number(resHeaders[':status']) || 200;
           const sc = resHeaders['set-cookie'];
           if (sc) {
             const arr = Array.isArray(sc) ? sc : [sc];
@@ -249,9 +254,14 @@ export async function queryNvidiaFeInventory(skus, locale = 'sv-se', { timeoutMs
         stream.on('data', (chunk) => { data += chunk; });
         stream.on('end', () => {
           try {
-            resReq(JSON.parse(data));
+            const json = JSON.parse(data);
+            if (statusCode >= 400) {
+              resReq({ error: `http_${statusCode}`, raw: data.slice(0, 100), success: false });
+            } else {
+              resReq(json);
+            }
           } catch {
-            resReq({ error: 'parse_failed', raw: data.slice(0, 100) });
+            resReq({ error: statusCode >= 400 ? `http_${statusCode}` : 'parse_failed', raw: data.slice(0, 100) });
           }
         });
         stream.on('error', (err) => resReq({ error: err.message }));
@@ -259,18 +269,23 @@ export async function queryNvidiaFeInventory(skus, locale = 'sv-se', { timeoutMs
       });
     }
 
+    async function fetchSkuWithRetry(sku) {
+      if (isDone) return;
+      let resp = await requestPath(`/partner/v1/feinventory?skus=${sku}&locale=${normLocale}`);
+      if (resp?.error && !isDone) {
+        await new Promise((r) => setTimeout(r, 200));
+        resp = await requestPath(`/partner/v1/feinventory?skus=${sku}&locale=${normLocale}`);
+      }
+      results[sku] = resp;
+    }
+
     async function execute() {
       try {
-        // Initial warmup request to seed Akamai cookies (bm_sz, bm_s)
+        // Step 1: Warmup request to harvest Akamai bot-manager cookies
         await requestPath(`/partner/v1/feinventory?skus=NVGFT590&locale=${normLocale}`);
-        await new Promise((r) => setTimeout(r, 100));
 
-        for (const sku of skuList) {
-          if (isDone) break;
-          const resp = await requestPath(`/partner/v1/feinventory?skus=${sku}&locale=${normLocale}`);
-          results[sku] = resp;
-          await new Promise((r) => setTimeout(r, 100));
-        }
+        // Step 2: Query all requested SKUs concurrently using HTTP/2 multiplexing
+        await Promise.all(skuList.map((sku) => fetchSkuWithRetry(sku)));
 
         if (!isDone) {
           isDone = true;
@@ -292,6 +307,7 @@ export async function queryNvidiaFeInventory(skus, locale = 'sv-se', { timeoutMs
       if (!isDone) {
         isDone = true;
         clearTimeout(timer);
+        try { client.destroy(); } catch {}
         resolve({ ok: false, error: err.message, results });
       }
     });

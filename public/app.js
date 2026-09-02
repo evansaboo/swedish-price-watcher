@@ -1235,7 +1235,7 @@ async function refreshNvidiaCards() {
               <div style="font-size:11.5px; color:var(--text-tertiary); display:flex; align-items:center; gap:8px; margin-top:2px; flex-wrap:wrap;">
                 <span>SKU: <code style="font-family:monospace; font-size:11px; background:var(--bg-inset); padding:1px 4px; border-radius:3px;">${escapeHtml(card.sku)}</code></span>
                 <span>MSRP: ${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</span>
-                <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};">
+                <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};" title="${card.api_reachable ? 'NVIDIA Store API online' : escapeHtml(card.api_error || 'API unreachable')}">
                   <span style="width:6px; height:6px; border-radius:50%; background:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};"></span>
                   ${card.api_reachable ? 'API Live' : 'API Error'}
                 </span>

@@ -72,7 +72,7 @@ export function createNvidiaPoller({
       }));
 
       const uniqueSkus = Array.from(new Set(cardSkus.map((c) => c.sku)));
-      const inventory = await queryNvidiaFeInventory(uniqueSkus, locale, { timeoutMs: 10000 });
+      const inventory = await queryNvidiaFeInventory(uniqueSkus, locale, { timeoutMs: 15000 });
 
       const cardsSummary = [];
       const stockDrops = [];
@@ -81,7 +81,7 @@ export function createNvidiaPoller({
         const raw = inventory.results?.[sku];
         const item = raw?.listMap?.[0] || null;
         const isAvailable = Boolean(item?.is_active === 'true' || item?.is_active === true);
-        const apiReachable = Boolean(raw && !raw.error);
+        const apiReachable = Boolean(raw && !raw.error && raw.success !== false);
         const parsedPrice = item?.price ? Number(item.price) : NaN;
         const isRealPrice = Number.isFinite(parsedPrice) && parsedPrice > 0 && parsedPrice < 900000;
         const productUrl = isAvailable && item?.product_url ? item.product_url : null;
@@ -94,6 +94,7 @@ export function createNvidiaPoller({
           sku,
           available: isAvailable,
           api_reachable: apiReachable,
+          api_error: raw?.error || (raw ? null : (inventory.error || 'timeout')),
           isMonitored,
           product_url: productUrl,
           store_url: meta?.defaultUrl,

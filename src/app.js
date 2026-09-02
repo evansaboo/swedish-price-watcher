@@ -1240,7 +1240,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       }));
 
       const uniqueSkus = Array.from(new Set(cardSkus.map((c) => c.sku)));
-      const inventory = await queryNvidiaFeInventory(uniqueSkus, locale, { timeoutMs: 10000 });
+      const inventory = await queryNvidiaFeInventory(uniqueSkus, locale, { timeoutMs: 15000 });
 
       const cards = cardSkus.map(({ cardKey, sku, meta }) => {
         const raw = inventory.results?.[sku];
@@ -1256,7 +1256,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
           fullName: meta?.name || `NVIDIA GeForce RTX ${cardKey} Founders Edition`,
           sku,
           available: isActive,
-          api_reachable: Boolean(raw && !raw.error),
+          api_reachable: Boolean(raw && !raw.error && raw.success !== false),
+          api_error: raw?.error || (raw ? null : (inventory.error || 'timeout')),
           isMonitored,
           product_url: isActive && item?.product_url ? item.product_url : null,
           store_url: meta?.defaultUrl,
