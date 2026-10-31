@@ -123,6 +123,19 @@ const el = {
   hotlistCountLabel: $('#hotlist-count-label'),
   hotlistPollNow: $('#hotlist-poll-now'),
   hotlistAddGroup: $('#hotlist-add-group'),
+  kdStatus: $('#kd-status'),
+  kdEnabled: $('#kd-enabled'),
+  kdInterval: $('#kd-interval'),
+  kdJitter: $('#kd-jitter'),
+  kdMaxUsd: $('#kd-max-usd'),
+  kdDropPct: $('#kd-drop-pct'),
+  kdBackInStock: $('#kd-back-in-stock'),
+  kdWebhook: $('#kd-webhook'),
+  kdCountLabel: $('#kd-count-label'),
+  kdPollNow: $('#kd-poll-now'),
+  kdCategories: $('#kd-categories'),
+  kdAlerts: $('#kd-alerts'),
+  kdFinds: $('#kd-finds'),
   favoriteChips: $('#favorite-chips'),
   favoritesSearchInput: $('#favorites-search-input'),
   favoritesEditor: $('#favorites-editor'),
@@ -1738,6 +1751,7 @@ function closeDrawer() {
 async function loadDrawerData() {
   // Load hotlist config, status and the Elgiganten category catalogue.
   loadHotlist();
+  loadKomplettDemo();
 
   // Load notification settings
   try {
@@ -2337,7 +2351,10 @@ async function refreshHotlistStatus() {
 
 function startHotlistStatusPolling() {
   stopHotlistStatusPolling();
-  hotlistStatusTimer = setInterval(refreshHotlistStatus, 10_000);
+  hotlistStatusTimer = setInterval(() => {
+    refreshHotlistStatus();
+    refreshKomplettDemoStatus();
+  }, 10_000);
 }
 
 function stopHotlistStatusPolling() {
@@ -2362,6 +2379,234 @@ function collectHotlistConfig() {
       'amazon-hotlist': el.hotlistSourceAmazon ? el.hotlistSourceAmazon.checked : (hotlistConfig.sources?.['amazon-hotlist'] !== false)
     },
     groups: hotlistConfig.groups
+  };
+}
+
+// ── KOMPLETT DEMO (B-grade demovaror watcher) ───────────────────
+// Its own randomised loop like the hotlist; each check is one Apify run, so
+// the status line shows this month's Apify spend against the cap.
+
+let komplettDemo = null; // { config, catalog, limits, lastStatus }
+
+const KD_REASON_LABELS = { 'new': 'New', 'price-drop': 'Price drop', 'back-in-stock': 'Back in stock' };
+
+function formatUsd(value, digits = 3) {
+  return Number.isFinite(value) ? `$${value.toFixed(digits)}` : '—';
+}
+
+function renderKomplettDemoStatus(status) {
+  if (!el.kdStatus) return;
+  if (!status) { el.kdStatus.innerHTML = ''; return; }
+  if (komplettDemo) komplettDemo.lastStatus = status;
+
+  const guard = status.costGuard ?? {};
+  const stateClass = status.lastError ? 'error' : status.enabled ? 'ok' : 'idle';
+  const stateLabel = status.lastError
+    ? 'Failing'
+    : !status.enabled ? 'Paused'
+      : status.running ? 'Checking…'
+        : guard.exhausted ? 'Monthly cap reached' : 'Watching';
+
+  const stats = [
+    ['Last check', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
+    ['Next check', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
+    ['Apify this month', `${formatUsd(guard.spentUsd)} / ${formatUsd(guard.maxMonthlyUsd, 2)}`],
+    ['Projected', `${formatUsd(guard.projectedMonthUsd, 2)}`]
+  ];
+
+  const notes = [];
+  if (guard.stretched && !guard.exhausted) {
+    notes.push(`Cost guard: checking every ~${Math.round(status.effectiveIntervalMinutes)} min to stay under ${formatUsd(guard.maxMonthlyUsd, 2)} this month.`);
+  }
+  if (guard.exhausted) notes.push('This month\'s Apify cap is used up; automatic checks resume next month.');
+  if (status.lastWarning) notes.push(status.lastWarning);
+  if (status.lastAlertCount) notes.push(`${status.lastAlertCount} alert(s) on the last check.`);
+  if (status.pendingAlerts) notes.push(`${status.pendingAlerts} Discord alert(s) waiting to be retried.`);
+
+  el.kdStatus.innerHTML = `
+    <div class="hotlist-status-head">
+      <span class="hotlist-dot ${stateClass}"></span>
+      <strong>${escapeHtml(stateLabel)}</strong>
+      <span class="hotlist-status-meta">${escapeHtml(`${status.categories?.length ?? 0} categories · ${status.trackedProducts ?? 0} tracked · ${status.pollCount ?? 0} checks`)}</span>
+    </div>
+    <div class="hotlist-status-grid">
+      ${stats.map(([k, v]) => `<div><span>${escapeHtml(k)}</span><strong>${escapeHtml(String(v))}</strong></div>`).join('')}
+    </div>
+    ${status.lastError ? `<p class="hotlist-status-error">${escapeHtml(status.lastError)}</p>` : ''}
+    ${notes.map((note) => `<p class="hotlist-status-note">${escapeHtml(note)}</p>`).join('')}`;
+
+  renderKomplettDemoFinds(status);
+  renderKomplettDemoCategoryMeta(status);
+}
+
+function kdFindItem(entry, { reason = null } = {}) {
+  const when = reason ? timeAgo(entry.at) : timeAgo(entry.firstSeenAt);
+  const priceLine = reason === 'price-drop' && Number.isFinite(entry.previousPriceSek)
+    ? `${formatSek(entry.priceSek)} <s>${formatSek(entry.previousPriceSek)}</s>`
+    : formatSek(entry.priceSek);
+  const tags = [
+    reason ? `<span class="kd-tag kd-tag-${escapeHtml(reason)}">${escapeHtml(KD_REASON_LABELS[reason] ?? reason)}</span>` : '',
+    reason && entry.delivered === false ? `<span class="kd-tag kd-tag-muted" title="${escapeHtml(entry.note ?? '')}">not sent</span>` : ''
+  ].join('');
+  return `
+    <li class="kd-find">
+      ${entry.imageUrl ? `<img src="${escapeHtml(entry.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="kd-find-noimg"></span>'}
+      <div class="kd-find-body">
+        <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.title)}</a>
+        <div class="kd-find-meta">
+          <strong>${priceLine}</strong>
+          <span>${escapeHtml(entry.categoryLabel ?? '')}</span>
+          ${when ? `<span>${escapeHtml(when)}</span>` : ''}
+          ${tags}
+        </div>
+      </div>
+    </li>`;
+}
+
+function renderKomplettDemoFinds(status) {
+  if (!el.kdAlerts || !el.kdFinds) return;
+  const alerts = (status?.recentAlerts ?? []).slice(0, 10);
+  const finds = status?.latestFinds ?? [];
+  el.kdAlerts.innerHTML = alerts.map((entry) => kdFindItem(entry, { reason: entry.reason })).join('');
+  el.kdAlerts.classList.toggle('hidden', alerts.length === 0);
+  el.kdFinds.innerHTML = finds.length
+    ? finds.map((entry) => kdFindItem(entry)).join('')
+    : `<li class="kd-empty">${status?.categories?.length ? 'Nothing recorded yet. The first check records what is listed now, without alerts.' : 'Pick at least one category above.'}</li>`;
+}
+
+function renderKomplettDemoCount() {
+  if (!el.kdCountLabel || !komplettDemo) return;
+  const count = komplettDemo.config.categories.length;
+  el.kdCountLabel.textContent = count
+    ? `${count} categor${count === 1 ? 'y' : 'ies'} selected · 1 Apify run per check`
+    : 'No categories selected';
+}
+
+function renderKomplettDemoCategoryMeta(status) {
+  if (!el.kdCategories) return;
+  const byId = new Map((status?.categories ?? []).map((c) => [c.id, c]));
+  for (const meta of el.kdCategories.querySelectorAll('[data-kd-meta]')) {
+    const info = byId.get(meta.dataset.kdMeta);
+    if (!info) { meta.textContent = ''; meta.title = ''; continue; }
+    meta.textContent = info.lastError ? '⚠' : Number.isFinite(info.total) ? `${info.total}` : (info.seeded ? '' : 'new');
+    meta.title = info.lastError
+      ? info.lastError
+      : Number.isFinite(info.total) ? `${info.total} demo products listed` : (info.seeded ? '' : 'Recorded silently on the next check');
+  }
+}
+
+function syncKomplettDemoGroupBoxes() {
+  if (!el.kdCategories || !komplettDemo) return;
+  const selected = new Set(komplettDemo.config.categories);
+  for (const groupBox of el.kdCategories.querySelectorAll('input[data-kd-group]')) {
+    const group = komplettDemo.catalog.find((g) => g.group === groupBox.dataset.kdGroup);
+    const picked = group ? group.categories.filter((c) => selected.has(c.id)).length : 0;
+    groupBox.checked = group ? picked === group.categories.length : false;
+    groupBox.indeterminate = picked > 0 && group && picked < group.categories.length;
+  }
+  renderKomplettDemoCount();
+}
+
+function renderKomplettDemoCategories() {
+  if (!el.kdCategories || !komplettDemo) return;
+  const selected = new Set(komplettDemo.config.categories);
+  el.kdCategories.innerHTML = komplettDemo.catalog.map((group) => `
+    <fieldset class="kd-group">
+      <legend class="kd-group-head">
+        <label><input type="checkbox" data-kd-group="${escapeHtml(group.group)}" /> ${escapeHtml(group.label)}</label>
+      </legend>
+      <div class="kd-cat-grid">
+        ${group.categories.map((category) => `
+          <label class="kd-cat">
+            <input type="checkbox" data-kd-cat="${escapeHtml(category.id)}" ${selected.has(category.id) ? 'checked' : ''} />
+            <span>${escapeHtml(category.label)}</span>
+            <a class="kd-cat-link" href="${escapeHtml(category.url)}" target="_blank" rel="noopener noreferrer" title="Open on Komplett">↗</a>
+            <span class="kd-cat-meta" data-kd-meta="${escapeHtml(category.id)}"></span>
+          </label>`).join('')}
+      </div>
+    </fieldset>`).join('');
+  syncKomplettDemoGroupBoxes();
+  renderKomplettDemoCategoryMeta(komplettDemo.lastStatus);
+}
+
+function setKomplettDemoCategories(ids) {
+  // Keep catalog order so the saved list is stable.
+  const wanted = new Set(ids);
+  komplettDemo.config.categories = komplettDemo.catalog
+    .flatMap((g) => g.categories.map((c) => c.id))
+    .filter((id) => wanted.has(id));
+}
+
+function onKomplettDemoCategoryChange(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || !komplettDemo) return;
+  const selected = new Set(komplettDemo.config.categories);
+  if (target.dataset.kdGroup) {
+    const group = komplettDemo.catalog.find((g) => g.group === target.dataset.kdGroup);
+    for (const category of group?.categories ?? []) {
+      if (target.checked) selected.add(category.id); else selected.delete(category.id);
+    }
+    for (const box of el.kdCategories.querySelectorAll('input[data-kd-cat]')) {
+      if (group?.categories.some((c) => c.id === box.dataset.kdCat)) box.checked = target.checked;
+    }
+  } else if (target.dataset.kdCat) {
+    if (target.checked) selected.add(target.dataset.kdCat); else selected.delete(target.dataset.kdCat);
+  } else {
+    return;
+  }
+  setKomplettDemoCategories([...selected]);
+  syncKomplettDemoGroupBoxes();
+}
+
+function renderKomplettDemoForm() {
+  if (!komplettDemo) return;
+  const cfg = komplettDemo.config;
+  el.kdEnabled.checked = cfg.enabled === true;
+  el.kdInterval.value = cfg.intervalMinutes;
+  el.kdJitter.value = cfg.jitterPct;
+  el.kdMaxUsd.value = cfg.maxMonthlyUsd;
+  el.kdDropPct.value = cfg.notifyPriceDropPercent;
+  el.kdBackInStock.checked = cfg.notifyBackInStock !== false;
+  el.kdWebhook.value = cfg.discordWebhookUrl ?? '';
+  renderKomplettDemoCategories();
+}
+
+async function loadKomplettDemo() {
+  const tab = document.querySelector('[data-tab="komplett-demo"]');
+  try {
+    const payload = await fetchJson('/api/komplett-demo');
+    komplettDemo = { config: payload.config, catalog: payload.catalog ?? [], limits: payload.limits ?? {}, lastStatus: payload.status };
+    renderKomplettDemoForm();
+    renderKomplettDemoStatus(payload.status);
+  } catch {
+    tab?.classList.add('hidden');
+    document.getElementById('tab-komplett-demo')?.classList.add('hidden');
+  }
+}
+
+async function refreshKomplettDemoStatus() {
+  if (!komplettDemo) return;
+  try {
+    renderKomplettDemoStatus(await fetchJson('/api/komplett-demo/status'));
+  } catch { /* the next tick retries */ }
+}
+
+function collectKomplettDemoConfig() {
+  const cfg = komplettDemo.config;
+  const toNumber = (input, fallback) => {
+    const raw = String(input?.value ?? '').trim();
+    const parsed = Number(raw);
+    return raw !== '' && Number.isFinite(parsed) ? parsed : fallback;
+  };
+  return {
+    enabled: el.kdEnabled.checked,
+    categories: cfg.categories,
+    intervalMinutes: toNumber(el.kdInterval, cfg.intervalMinutes),
+    jitterPct: toNumber(el.kdJitter, cfg.jitterPct),
+    maxMonthlyUsd: toNumber(el.kdMaxUsd, cfg.maxMonthlyUsd),
+    notifyPriceDropPercent: toNumber(el.kdDropPct, cfg.notifyPriceDropPercent),
+    notifyBackInStock: el.kdBackInStock.checked,
+    discordWebhookUrl: el.kdWebhook.value.trim()
   };
 }
 
@@ -2419,6 +2664,18 @@ async function saveAllSettings() {
       hotlistConfig = payload.config;
       renderHotlistStatus(payload.status);
       renderHotlistForm();
+    }
+
+    // Save the Komplett demo watcher
+    if (komplettDemo) {
+      const payload = await fetchJson('/api/komplett-demo/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(collectKomplettDemoConfig())
+      });
+      komplettDemo.config = payload.config;
+      renderKomplettDemoForm();
+      renderKomplettDemoStatus(payload.status);
     }
 
     el.drawerSaveStatus.textContent = '✓ Saved';
@@ -2578,6 +2835,30 @@ function bindEvents() {
     } finally {
       el.hotlistPollNow.disabled = false;
       el.hotlistPollNow.textContent = 'Poll now';
+    }
+  });
+
+  // Komplett demo watcher
+  el.kdCategories?.addEventListener('change', onKomplettDemoCategoryChange);
+  el.kdPollNow?.addEventListener('click', async () => {
+    if (!komplettDemo) return;
+    if (!komplettDemo.config.categories.length) {
+      showToast('Pick at least one Komplett demo category and save first.', 'error');
+      return;
+    }
+    el.kdPollNow.disabled = true;
+    el.kdPollNow.textContent = 'Checking…';
+    try {
+      const res = await fetchJson('/api/komplett-demo/poll', { method: 'POST' });
+      renderKomplettDemoStatus(res.status);
+      const r = res.result ?? {};
+      showToast(`Komplett demo: ${r.count ?? 0} product(s), ${r.alertCount ?? 0} alert(s).`, 'success');
+    } catch (err) {
+      showToast(`Komplett demo check failed: ${err.message}`, 'error');
+      refreshKomplettDemoStatus();
+    } finally {
+      el.kdPollNow.disabled = false;
+      el.kdPollNow.textContent = 'Check now';
     }
   });
 

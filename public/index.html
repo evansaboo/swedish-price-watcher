@@ -193,6 +193,7 @@
           <button type="button" class="drawer-tab active" data-tab="sources" role="tab" aria-selected="true">Sources</button>
           <button type="button" class="drawer-tab" data-tab="alerts" role="tab" aria-selected="false">Normal Alerts</button>
           <button type="button" class="drawer-tab" data-tab="hotlist" role="tab" aria-selected="false">Hotlist</button>
+          <button type="button" class="drawer-tab" data-tab="komplett-demo" role="tab" aria-selected="false">Komplett demo</button>
           <button type="button" class="drawer-tab" data-tab="favorites" role="tab" aria-selected="false">Favorites</button>
         </div>
 
@@ -392,6 +393,72 @@
             </span>
           </div>
           <ul id="hotlist-groups" class="rules-list hotlist-groups"></ul>
+        </div>
+
+        <!-- Komplett demo — B-grade demovaror watcher -->
+        <div id="tab-komplett-demo" class="drawer-tab-content hidden">
+          <div class="section-title-row" style="margin-bottom: 6px">
+            <div class="section-title-wrap">
+              <span class="section-title-icon">🏷️</span>
+              <h3>Komplett demo</h3>
+            </div>
+            <span class="section-badge hotlist-badge">B-grade</span>
+          </div>
+          <p class="section-hint" style="margin-bottom: 12px">Watches the Komplett demovaror (B-grade) categories you pick, newest first, and posts new demo products to Discord. Each check is one small Apify run on a randomised loop, with a monthly spend cap. A newly picked category is recorded silently on its first check.</p>
+          <div id="kd-status" class="hotlist-status" aria-live="polite"></div>
+
+          <div class="hotlist-controls">
+            <label class="toggle-switch">
+              <input id="kd-enabled" type="checkbox" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">Watch demo products</span>
+            </label>
+            <div class="form-row" style="margin-top:0.5rem">
+              <div class="form-field">
+                <label for="kd-interval">Every (minutes)</label>
+                <input id="kd-interval" type="number" class="field-input" min="5" max="240" step="1" />
+              </div>
+              <div class="form-field">
+                <label for="kd-jitter">Jitter (%)</label>
+                <input id="kd-jitter" type="number" class="field-input" min="0" max="50" step="5" />
+              </div>
+              <div class="form-field">
+                <label for="kd-max-usd">Apify cap ($/month)</label>
+                <input id="kd-max-usd" type="number" class="field-input" min="0.1" max="50" step="0.5" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-field">
+                <label for="kd-drop-pct">Price-drop alert (%)</label>
+                <input id="kd-drop-pct" type="number" class="field-input" min="0" max="90" step="1" />
+                <p class="field-hint">0 = off.</p>
+              </div>
+              <div class="form-field kd-toggle-field">
+                <label class="toggle-switch">
+                  <input id="kd-back-in-stock" type="checkbox" />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  <span class="toggle-label">Notify when back in stock</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-field">
+              <label for="kd-webhook">Komplett demo Discord webhook</label>
+              <input id="kd-webhook" type="text" class="field-input" autocomplete="off" spellcheck="false" placeholder="Blank = the app's default webhook" />
+              <p class="field-hint">Optional. The saved webhook is shown masked; leave it as is to keep it, or clear it to use the default.</p>
+            </div>
+          </div>
+
+          <div class="rules-toolbar">
+            <span id="kd-count-label" class="rules-count"></span>
+            <span class="hotlist-toolbar-actions">
+              <button id="kd-poll-now" type="button" class="ghost-btn">Check now</button>
+            </span>
+          </div>
+          <div id="kd-categories" class="kd-categories"></div>
+
+          <h4 class="kd-subhead">Latest demo finds</h4>
+          <ul id="kd-alerts" class="kd-finds"></ul>
+          <ul id="kd-finds" class="kd-finds"></ul>
         </div>
 
         <!-- Favorites -->

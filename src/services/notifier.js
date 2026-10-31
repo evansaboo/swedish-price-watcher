@@ -1,5 +1,6 @@
 import { firstFinite, formatSek } from '../lib/utils.js';
 import { normalizeWebhookUrl } from './hotlistConfig.js';
+import { getKomplettDemoCategory } from './komplettDemoConfig.js';
 
 function getInitialPrice(item) {
   return firstFinite(item.referencePriceSek, item.marketValueSek);
@@ -457,6 +458,85 @@ export class DiscordNotifier {
     }
 
     return { sent, skipped, failed, errors };
+  }
+
+  /**
+   * Komplett demo-products watcher alerts (see services/komplettDemoPoller.js).
+   *
+   * `alerts` are `{ reason: 'new'|'price-drop'|'back-in-stock', product,
+   * categoryId, previousPriceSek?, dropPercent? }`. Embeds go out in batches
+   * of up to 10 (Discord's per-message limit) so a burst of new demo items
+   * costs a few requests, not dozens. Mentions are disabled outright.
+   *
+   * @returns {{ sent, failed, skipped, errors, delivered: boolean[], reason? }}
+   */
+  async notifyKomplettDemo({ alerts = [], webhookUrl } = {}) {
+    const delivered = alerts.map(() => false);
+    const webhook = normalizeWebhookUrl(webhookUrl) || this.webhookUrl;
+    if (!webhook) {
+      return { sent: 0, failed: 0, skipped: alerts.length, errors: [], delivered, reason: 'no-webhook' };
+    }
+
+    const reasonMeta = {
+      'new': { emoji: '🆕', text: 'new demo product', color: 0x22c55e },
+      'price-drop': { emoji: '📉', text: 'price drop', color: 0xf59e0b },
+      'back-in-stock': { emoji: '🔁', text: 'back in stock', color: 0x3b82f6 }
+    };
+
+    const buildEmbed = (alert) => {
+      const meta = reasonMeta[alert.reason] ?? reasonMeta.new;
+      const product = alert.product ?? {};
+      const category = getKomplettDemoCategory(alert.categoryId);
+      const reasonLine = alert.reason === 'price-drop'
+        ? `📉 Price drop ${formatPercent(alert.dropPercent)} (was ${formatSek(alert.previousPriceSek)})`
+        : alert.reason === 'back-in-stock' ? '🔁 Back in stock' : null;
+      const fields = [
+        { name: 'Price', value: formatSek(product.priceSek), inline: true }
+      ];
+      if (alert.reason === 'price-drop') {
+        fields.push({ name: 'Was', value: formatSek(alert.previousPriceSek), inline: true });
+      }
+      fields.push(
+        { name: 'Stock', value: String(product.availabilityText || (product.inStock ? 'In stock' : 'Out of stock')).slice(0, 1024), inline: true },
+        { name: 'Category', value: category ? `${category.groupLabel} › ${category.label}` : String(alert.categoryId ?? '—'), inline: true },
+        { name: 'Condition', value: 'B-grade / demo', inline: true }
+      );
+      return {
+        title: String(product.title ?? 'Komplett demo product').slice(0, 256),
+        url: product.url,
+        description: ['Komplett demovaror', reasonLine].filter(Boolean).join('\n'),
+        color: meta.color,
+        fields,
+        image: product.imageUrl ? { url: product.imageUrl } : undefined,
+        footer: { text: `Komplett demo · B-grade${product.id ? ` · ${product.id}` : ''}` },
+        timestamp: new Date().toISOString()
+      };
+    };
+
+    let sent = 0, failed = 0;
+    const errors = [];
+    for (let start = 0; start < alerts.length; start += 10) {
+      const batch = alerts.slice(start, start + 10);
+      const first = reasonMeta[batch[0].reason] ?? reasonMeta.new;
+      const content = batch.length === 1
+        ? `${first.emoji} **Komplett demo** — ${batch[0].reason === 'price-drop' ? `${first.text} ${formatPercent(batch[0].dropPercent)}` : first.text}`
+        : `${first.emoji} **Komplett demo** — ${batch.length} updates`;
+      try {
+        await this.#postWebhook({
+          username: 'Price Watcher',
+          content,
+          allowed_mentions: { parse: [] },
+          embeds: batch.map(buildEmbed)
+        }, webhook);
+        batch.forEach((_, offset) => { delivered[start + offset] = true; });
+        sent += batch.length;
+      } catch (error) {
+        failed += batch.length;
+        this.#recordError(errors, error);
+      }
+    }
+
+    return { sent, failed, skipped: 0, errors, delivered };
   }
 
   /** Post an arbitrary payload (e.g. the daily digest) to a webhook with retry. */

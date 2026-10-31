@@ -12,6 +12,8 @@ import { createHotlistPoller } from './services/hotlistPoller.js';
 import { ensureHotlistConfig, normalizeHotlistConfig } from './services/hotlistConfig.js';
 import { ensureNvidiaConfig, normalizeNvidiaConfig } from './services/nvidiaConfig.js';
 import { createNvidiaPoller } from './services/nvidiaPoller.js';
+import { ensureKomplettDemoConfig, normalizeKomplettDemoConfig } from './services/komplettDemoConfig.js';
+import { createKomplettDemoPoller } from './services/komplettDemoPoller.js';
 import { setNvidiaLiveStatusProvider } from './sources/nvidia.js';
 import { buildDigestDeals, buildDigestPayload, shouldSendDigest } from './services/digest.js';
 import { ProductCache } from './services/productCache.js';
@@ -89,6 +91,7 @@ state.preferences = {
 // let the dashboard own it from SQLite preferences.
 if (hotlistSource) ensureHotlistConfig(state.preferences, hotlistSource);
 ensureNvidiaConfig(state.preferences);
+ensureKomplettDemoConfig(state.preferences);
 
 await store.save();
 console.log(`[startup] store saved at ${process.uptime().toFixed(1)}s`);
@@ -663,6 +666,37 @@ async function updateNvidiaConfig(nextConfig) {
   return updated;
 }
 
+// ── Komplett demo-products watcher ─────────────────────────────
+// Its own randomised loop (like the hotlist). Every poll is one Apify actor
+// run; state lives in its own SQLite record so restarts never re-alert.
+const KOMPLETT_DEMO_RECORD = 'komplett-demo';
+const komplettDemoPersistence = typeof store.loadRecord === 'function'
+  ? {
+      load: () => store.loadRecord(KOMPLETT_DEMO_RECORD),
+      save: (value) => store.saveRecord(KOMPLETT_DEMO_RECORD, value)
+    }
+  : {
+      load: () => state.stats.komplettDemo ?? null,
+      save: async (value) => {
+        state.stats.komplettDemo = value;
+        await commitExclusive(() => store.save({ skipItems: true }));
+      }
+    };
+
+const komplettDemoPoller = createKomplettDemoPoller({
+  getConfig: () => state.preferences?.komplettDemo ?? {},
+  notifier,
+  persistence: komplettDemoPersistence
+});
+
+async function updateKomplettDemoConfig(nextConfig) {
+  const updated = normalizeKomplettDemoConfig(nextConfig, state.preferences?.komplettDemo ?? {});
+  state.preferences = { ...(state.preferences ?? {}), komplettDemo: updated };
+  await (store.savePreferences ?? store.save).call(store);
+  komplettDemoPoller.reschedule();
+  return updated;
+}
+
 if (runOnce) {
   const summary = await triggerScan('cli');
   console.log(JSON.stringify(summary, null, 2));
@@ -743,6 +777,12 @@ const app = await buildApp({
     getConfig: () => state.preferences?.nvidiaFe ?? {},
     updateConfig: updateNvidiaConfig,
     getStatus: () => nvidiaPoller.getStatus()
+  },
+  komplettDemo: {
+    getConfig: () => state.preferences?.komplettDemo ?? {},
+    update: updateKomplettDemoConfig,
+    getStatus: () => komplettDemoPoller.getStatus(),
+    pollNow: () => komplettDemoPoller.pollNow()
   }
 });
 
@@ -757,6 +797,15 @@ if (hotlistSource) {
     `[hotlist] Continuous poller ${hotlistPreference.enabled === false ? 'configured (disabled)' : 'started'} — ` +
     `every ~${hotlistPreference.intervalSeconds}s ±${hotlistPreference.jitterPct}% ` +
     `across ${(hotlistPreference.groups ?? []).filter((g) => g.enabled).length} watch group(s).`
+  );
+}
+
+komplettDemoPoller.start();
+{
+  const pref = normalizeKomplettDemoConfig(state.preferences?.komplettDemo ?? {});
+  console.log(
+    `[komplett-demo] Watcher ${pref.enabled ? 'started' : 'configured (disabled)'} — ` +
+    `every ~${pref.intervalMinutes} min ±${pref.jitterPct}% across ${pref.categories.length} categor${pref.categories.length === 1 ? 'y' : 'ies'}.`
   );
 }
 
@@ -778,6 +827,7 @@ if (config.runOnStart) {
 async function shutdown(signal) {
   scheduler.stop();
   hotlistPoller.stop();
+  komplettDemoPoller.stop();
   nvidiaPoller.stop();
   await app.close();
   console.log(`${signal} received, shutting down.`);

@@ -37,6 +37,20 @@ import {
 import { createPurchaseService } from './services/purchaseService.js';
 import { normalizeNvidiaConfig, ensureNvidiaConfig, DEFAULT_NVIDIA_CONFIG } from './services/nvidiaConfig.js';
 import { GPU_DISPLAY_ORDER, CARD_METADATA } from './sources/nvidia.js';
+import {
+  DEFAULT_KOMPLETT_DEMO_CONFIG,
+  KOMPLETT_DEMO_CATALOG,
+  MAX_INTERVAL_MINUTES as KOMPLETT_DEMO_MAX_INTERVAL_MINUTES,
+  MAX_JITTER_PCT as KOMPLETT_DEMO_MAX_JITTER_PCT,
+  MAX_MONTHLY_USD_LIMIT as KOMPLETT_DEMO_MAX_MONTHLY_USD,
+  MIN_INTERVAL_MINUTES as KOMPLETT_DEMO_MIN_INTERVAL_MINUTES,
+  MIN_MONTHLY_USD as KOMPLETT_DEMO_MIN_MONTHLY_USD,
+  findUnknownCategoryIds,
+  isMaskedWebhookUrl,
+  normalizeKomplettDemoConfig,
+  publicKomplettDemoConfig
+} from './services/komplettDemoConfig.js';
+import { buildKomplettDemoUrl } from './sources/komplett.js';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -239,7 +253,7 @@ function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
 
 // ── Route builder ──────────────────────────────────────────────
 
-export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler, hotlist, fetcher, notifier, nvidia }) {
+export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler, hotlist, fetcher, notifier, nvidia, komplettDemo }) {
   const app = Fastify({ logger: false });
   const sourceById = new Map((config.sources ?? []).map((source) => [source.id, source]));
   let preferencesSaveQueue = Promise.resolve();
@@ -804,6 +818,121 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       return suggestions;
     } catch {
       return [];
+    }
+  });
+
+  // ── Komplett demo-products watcher ─────────────────────────────
+  // Same auth level as /api/hotlist (dashboard, behind Cloudflare Access).
+  // The webhook token is never echoed back; see publicKomplettDemoConfig.
+  function requireKomplettDemo(reply) {
+    if (!komplettDemo) {
+      reply.code(404);
+      return { message: 'The Komplett demo watcher is not configured.' };
+    }
+    return null;
+  }
+
+  const komplettDemoCatalog = KOMPLETT_DEMO_CATALOG.map((group) => ({
+    group: group.group,
+    groupId: group.groupId,
+    label: group.label,
+    categories: group.categories.map((category) => ({
+      id: category.id,
+      slug: category.slug,
+      label: category.label,
+      url: buildKomplettDemoUrl({ ...category, group: group.group })
+    }))
+  }));
+
+  const komplettDemoLimits = {
+    minIntervalMinutes: KOMPLETT_DEMO_MIN_INTERVAL_MINUTES,
+    maxIntervalMinutes: KOMPLETT_DEMO_MAX_INTERVAL_MINUTES,
+    maxJitterPct: KOMPLETT_DEMO_MAX_JITTER_PCT,
+    minMonthlyUsd: KOMPLETT_DEMO_MIN_MONTHLY_USD,
+    maxMonthlyUsd: KOMPLETT_DEMO_MAX_MONTHLY_USD,
+    defaults: DEFAULT_KOMPLETT_DEMO_CONFIG
+  };
+
+  app.get('/api/komplett-demo', async (_, reply) => {
+    const missing = requireKomplettDemo(reply);
+    if (missing) return missing;
+    return {
+      config: publicKomplettDemoConfig(komplettDemo.getConfig()),
+      status: komplettDemo.getStatus(),
+      catalog: komplettDemoCatalog,
+      limits: komplettDemoLimits
+    };
+  });
+
+  app.get('/api/komplett-demo/config', async (_, reply) => {
+    const missing = requireKomplettDemo(reply);
+    if (missing) return missing;
+    return { config: publicKomplettDemoConfig(komplettDemo.getConfig()), limits: komplettDemoLimits };
+  });
+
+  async function updateKomplettDemo(request, reply) {
+    const missing = requireKomplettDemo(reply);
+    if (missing) return missing;
+    const body = request.body ?? {};
+    if (typeof body !== 'object' || Array.isArray(body)) {
+      reply.code(400);
+      return { message: 'Expected a Komplett demo configuration object.' };
+    }
+    const patch = { ...body };
+
+    if (Object.hasOwn(patch, 'categories')) {
+      if (!Array.isArray(patch.categories)) {
+        reply.code(400);
+        return { message: 'categories must be an array of Komplett demo category ids.' };
+      }
+      const unknown = findUnknownCategoryIds(patch.categories);
+      if (unknown.length) {
+        reply.code(400);
+        return { message: `Unknown Komplett demo categor${unknown.length === 1 ? 'y' : 'ies'}: ${unknown.join(', ')}` };
+      }
+    }
+
+    if (Object.hasOwn(patch, 'discordWebhookUrl')) {
+      const raw = String(patch.discordWebhookUrl ?? '').trim();
+      if (isMaskedWebhookUrl(raw)) {
+        // The dashboard posted back the masked value: keep the stored webhook.
+        delete patch.discordWebhookUrl;
+      } else if (raw && !normalizeWebhookUrl(raw)) {
+        // A typo must be an error, not a silent switch to the global webhook.
+        reply.code(400);
+        return { message: 'Expected a Discord webhook URL (https://discord.com/api/webhooks/…).' };
+      }
+    }
+
+    const current = normalizeKomplettDemoConfig(komplettDemo.getConfig());
+    const updated = await komplettDemo.update(normalizeKomplettDemoConfig(patch, current));
+    return { config: publicKomplettDemoConfig(updated), status: komplettDemo.getStatus() };
+  }
+
+  app.post('/api/komplett-demo/config', updateKomplettDemo);
+  app.put('/api/komplett-demo', updateKomplettDemo);
+
+  app.get('/api/komplett-demo/status', async (_, reply) => {
+    const missing = requireKomplettDemo(reply);
+    if (missing) return missing;
+    return komplettDemo.getStatus();
+  });
+
+  app.get('/api/komplett-demo/catalog', async (_, reply) => {
+    const missing = requireKomplettDemo(reply);
+    if (missing) return missing;
+    return komplettDemoCatalog;
+  });
+
+  app.post('/api/komplett-demo/poll', async (_, reply) => {
+    const missing = requireKomplettDemo(reply);
+    if (missing) return missing;
+    try {
+      const result = await komplettDemo.pollNow();
+      return { ok: true, result, status: komplettDemo.getStatus() };
+    } catch (error) {
+      reply.code(502);
+      return { ok: false, message: error.message, status: komplettDemo.getStatus() };
     }
   });
 

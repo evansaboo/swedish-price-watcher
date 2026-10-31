@@ -678,6 +678,25 @@ export class SqliteStore {
     this._onInvalidate?.();
   }
 
+  /**
+   * A standalone JSON record in the scan_stats table, outside `state`, for
+   * services that own their state (e.g. the Komplett demo watcher). Saving
+   * one is a single-row write, not a full save(). 'stats' is reserved.
+   */
+  loadRecord(key) {
+    if (key === 'stats') throw new Error('"stats" is reserved');
+    this.#open();
+    const row = this._stmts.getStats.get(key);
+    if (!row) return null;
+    try { return JSON.parse(row.value_json); } catch { return null; }
+  }
+
+  saveRecord(key, value) {
+    if (key === 'stats') throw new Error('"stats" is reserved');
+    this.#open();
+    this._stmts.upsertStats.run(key, JSON.stringify(value ?? null));
+  }
+
   debouncedSave(delayMs = 500) {
     if (this._saveTimer) clearTimeout(this._saveTimer);
     this._savePromise = new Promise((resolve, reject) => {
