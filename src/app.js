@@ -872,6 +872,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.post('/api/bandit/reset-users', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
     try {
       const fs = await import('fs');
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
@@ -896,6 +898,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.get('/api/bandit/diagnostics', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
     try {
       const { execSync } = await import('child_process');
       const fs = await import('fs');
@@ -965,6 +969,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.get('/api/bandit/categories', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
     try {
       const fs = await import('fs');
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
@@ -981,6 +987,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.post('/api/bandit/categories', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
     try {
       const fs = await import('fs');
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
@@ -1046,6 +1054,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.post('/api/bandit/fix-stores', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
     try {
       const fs = await import('fs');
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
@@ -1065,6 +1075,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.post('/api/bandit/patch-product-blade', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
     try {
       const { execSync } = await import('child_process');
       const bladePath = 'resources/views/filament/tables/columns/link-prices.blade.php';
@@ -1104,6 +1116,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.post('/api/bandit/seed-products', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
     try {
       const fs = await import('fs');
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';
@@ -1159,23 +1173,14 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
-  app.post('/api/bandit/exec', async (request, reply) => {
-    try {
-      const { execSync } = await import('child_process');
-      const cmd = request.body?.command;
-      if (!cmd) return { ok: false, error: 'No command provided' };
-      const output = execSync(cmd, { encoding: 'utf8', timeout: 15000 });
-      return { ok: true, output };
-    } catch (err) {
-      return { ok: false, error: err.message, stderr: err.stderr, stdout: err.stdout };
-    }
-  });
-
+  // Called by the Discount Bandit container (its apprise_url), which can't send
+  // an admin token, so this stays open. It only ever posts to the configured
+  // webhook — never to a caller-supplied URL.
   app.post('/api/bandit/discord-webhook', async (request, reply) => {
     try {
       const body = request.body || {};
       const prefs = store?.getState?.()?.preferences || {};
-      const targetWebhook = request.query?.webhook || prefs?.hotlist?.discordWebhookUrl || prefs?.discordWebhookUrl || config?.discordWebhookUrl || process.env.DISCORD_WEBHOOK_URL;
+      const targetWebhook = prefs?.hotlist?.discordWebhookUrl || prefs?.discordWebhookUrl || config?.discordWebhookUrl || process.env.DISCORD_WEBHOOK_URL;
       
       if (!targetWebhook) {
         reply.code(400);
@@ -1232,6 +1237,8 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   app.post('/api/bandit/enable-discord', async (request, reply) => {
+    if (!config.access?.adminToken) { reply.code(501); return { message: 'ADMIN_API_TOKEN is not configured.' }; }
+    if (!isAdmin(request)) { reply.code(401); return { message: 'Unauthorized.' }; }
     try {
       const fs = await import('fs');
       const dbPath = process.env.BANDIT_DB_PATH || '/home/zpeedx/discount-bandit/database/database.sqlite';

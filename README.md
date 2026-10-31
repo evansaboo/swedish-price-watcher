@@ -307,6 +307,23 @@ docker stats --no-stream
 docker compose down
 ```
 
+### Disk housekeeping
+
+`scripts/pi-maintenance.sh` keeps the SD card from filling up. A full disk makes
+SQLite fail with `SQLITE_IOERR_SHMSIZE` and the app crash-loops, which is what took
+the site down on 2026-10-31. Every hour it:
+
+- deletes Discount Bandit Laravel logs older than 3 days and truncates any over 500 MB
+- clears stale Chromium temp dirs and PHP core dumps inside the Bandit container
+- posts to `DISCORD_WEBHOOK_URL` when `/` is 85% full or more (at most every 6 h)
+
+```bash
+bash scripts/pi-maintenance.sh --install   # hourly cron entry for the current user
+journalctl -t pi-maintenance --since today  # what it did
+```
+
+Thresholds can be overridden with environment variables; see the top of the script.
+
 ### Memory usage (8GB Pi)
 
 | Container | Limit | Typical |
