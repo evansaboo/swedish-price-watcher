@@ -14,7 +14,6 @@ const state = {
   category: '',
   store: '',
   campaign: '',
-  favoritesOnly: false,
   discountedOnly: false,
   newOnly: false,
   referenceOnly: false,
@@ -23,7 +22,6 @@ const state = {
   minDiscountPercent: '',
   minPriceSek: '',
   maxPriceSek: '',
-  favoriteCategories: [],
   categories: [],
   sortBy: 'score',
   sortDirection: 'desc',
@@ -32,24 +30,13 @@ const state = {
   viewMode: 'grid', // 'grid' or 'list'
   filterPanelOpen: false,
   activePreset: 'all',
-  // Wishlist
-  wishlist: new Set(),
-  wishlistTargets: {},
-  // Scheduler
-  schedulerEnabled: true,
-  schedulerIntervalMinutes: 180,
-  schedulerWindowEnabled: false,
-  schedulerWindowStart: '07:00',
-  schedulerWindowEnd: '00:00',
-  schedulerTimeZone: 'Europe/Stockholm',
-  schedulerIsInActiveWindow: true,
-  schedulerNextRunAt: null,
-  schedulerFormDirty: false,
-  latestRunStartedAt: null
+  // Wishlist: a per-item bookmark with its own filter (no alerts).
+  wishlist: new Set()
 };
 
 const STORAGE_KEY = 'pricewatch-ui-v2';
-const NEW_PRODUCT_FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Matches the server's newOnly filter: first seen within the last 24 h.
+const NEW_PRODUCT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // ── DOM REFERENCES ──────────────────────────────────────────────
 const $ = (sel) => document.querySelector(sel);
@@ -66,7 +53,6 @@ const el = {
   maxPriceFilter: $('#max-price-filter'),
   newOnly: $('#new-only'),
   discountedOnly: $('#discounted-only'),
-  favoritesOnly: $('#favorites-only'),
   referenceOnly: $('#reference-only'),
   filterPills: $$('[data-filter-preset]'),
   filterExpandBtn: $('#filter-expand-btn'),
@@ -82,31 +68,11 @@ const el = {
   sortSelect: $('#sort-select'),
   viewGrid: $('#view-grid'),
   viewList: $('#view-list'),
-  scanBtn: $('#scan-btn'),
-  cancelBtn: $('#cancel-btn'),
-  scanProgress: $('#scan-progress'),
-  scanProgressBar: $('#scan-progress-bar'),
-  scanProgressText: $('#scan-progress-text'),
-  schedulerStatus: $('#scheduler-status'),
-  schedulerText: $('#scheduler-text'),
   settingsBtn: $('#settings-btn'),
   settingsDrawer: $('#settings-drawer'),
   settingsOverlay: $('#settings-overlay'),
   drawerClose: $('#drawer-close'),
-  drawerTabs: $$('.drawer-tab'),
-  sourcesList: $('#sources-list'),
-  sourcesAllOn: $('#sources-all-on'),
-  sourcesAllOff: $('#sources-all-off'),
-  notificationsEnabledToggle: $('#notifications-enabled-toggle'),
-  addRuleBtn: $('#add-rule-btn'),
-  rulesList: $('#rules-list'),
-  rulesCountLabel: $('#rules-count-label'),
-  schedulerEnabled: $('#scheduler-enabled'),
-  schedulerInterval: $('#scheduler-interval'),
-  schedulerWindowEnabled: $('#scheduler-window-enabled'),
-  schedulerWindowStart: $('#scheduler-window-start'),
-  schedulerWindowEnd: $('#scheduler-window-end'),
-  modalSchedulerStatus: $('#modal-scheduler-status'),
+  drawerTabs: $$('#settings-drawer .drawer-tab'),
   hotlistStatus: $('#hotlist-status'),
   elgigantenBlock: $('#elgiganten-block'),
   elgigantenBlockText: $('#elgiganten-block-text'),
@@ -117,8 +83,6 @@ const el = {
   hotlistMinDiscount: $('#hotlist-min-discount'),
   hotlistWebhook: $('#hotlist-webhook'),
   hotlistNotifyDrops: $('#hotlist-notify-drops'),
-  hotlistSourceElgiganten: $('#hotlist-source-elgiganten'),
-  hotlistSourceAmazon: $('#hotlist-source-amazon'),
   hotlistGroups: $('#hotlist-groups'),
   hotlistCountLabel: $('#hotlist-count-label'),
   hotlistPollNow: $('#hotlist-poll-now'),
@@ -136,27 +100,15 @@ const el = {
   kdCategories: $('#kd-categories'),
   kdAlerts: $('#kd-alerts'),
   kdFinds: $('#kd-finds'),
-  favoriteChips: $('#favorite-chips'),
-  favoritesSearchInput: $('#favorites-search-input'),
-  favoritesEditor: $('#favorites-editor'),
   saveSettingsBtn: $('#save-settings-btn'),
   drawerSaveStatus: $('#drawer-save-status'),
   toastContainer: $('#toast-container'),
-  runSummary: $('#run-summary'),
-  themeToggle: $('#theme-toggle'),
-  scanLine: $('#scan-line')
+  themeToggle: $('#theme-toggle')
 };
 
-let scanPollTimer = null;
 let filterApplyTimer = null;
 let latestProducts = {};
-let lastCompletedSources = 0;
 let lastStatus = null; // cached /api/status for product-only refreshes
-
-// Notification settings
-let notifSettings = { notificationsEnabled: true, alertRules: [] };
-let allCategories = [];
-let allSources = [];
 
 // ── UTILITIES ───────────────────────────────────────────────────
 function formatSek(value) {
@@ -183,19 +135,6 @@ function timeAgo(isoStr) {
   return `${Math.floor(d / 30)}mo ago`;
 }
 
-function formatCountdown(value) {
-  if (!value) return null;
-  const ms = new Date(value).getTime() - Date.now();
-  if (ms <= 0) return 'now';
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return '< 1 min';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ${minutes % 60}m`;
-  return `${Math.floor(hours / 24)}d`;
-}
-
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -214,11 +153,6 @@ function parsePositiveInteger(input) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function parseTimeOfDay(input) {
-  const value = String(input ?? '').trim();
-  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value) ? value : null;
-}
-
 function toTimestamp(value) {
   const parsed = Date.parse(value ?? '');
   return Number.isNaN(parsed) ? null : parsed;
@@ -227,13 +161,7 @@ function toTimestamp(value) {
 function isNewProduct(product) {
   const firstSeenTimestamp = toTimestamp(product.firstSeenAt);
   if (firstSeenTimestamp == null) return false;
-  const latestRunTimestamp = toTimestamp(state.latestRunStartedAt);
-  if (latestRunTimestamp != null) return firstSeenTimestamp >= latestRunTimestamp;
-  return Date.now() - firstSeenTimestamp <= NEW_PRODUCT_FALLBACK_WINDOW_MS;
-}
-
-function getFavoriteCategorySet() {
-  return new Set(state.favoriteCategories.map(c => normalizeCategoryKey(c)));
+  return Date.now() - firstSeenTimestamp <= NEW_PRODUCT_WINDOW_MS;
 }
 
 // ── PERSISTENCE ─────────────────────────────────────────────────
@@ -253,7 +181,6 @@ function savePrefs() {
       category: state.category,
       store: state.store,
       campaign: state.campaign,
-      favoritesOnly: state.favoritesOnly,
       discountedOnly: state.discountedOnly,
       newOnly: state.newOnly,
       referenceOnly: state.referenceOnly,
@@ -275,7 +202,6 @@ function hydratePrefs() {
   if (typeof s.category === 'string') state.category = s.category;
   if (typeof s.store === 'string') state.store = s.store;
   if (typeof s.campaign === 'string') state.campaign = s.campaign;
-  if (typeof s.favoritesOnly === 'boolean') state.favoritesOnly = s.favoritesOnly;
   if (typeof s.discountedOnly === 'boolean') state.discountedOnly = s.discountedOnly;
   if (typeof s.newOnly === 'boolean') state.newOnly = s.newOnly;
   if (typeof s.referenceOnly === 'boolean') state.referenceOnly = s.referenceOnly;
@@ -287,12 +213,13 @@ function hydratePrefs() {
   if (s.sortDirection === 'asc' || s.sortDirection === 'desc') state.sortDirection = s.sortDirection;
   if (s.viewMode === 'grid' || s.viewMode === 'list') state.viewMode = s.viewMode;
   if (typeof s.activePreset === 'string') state.activePreset = s.activePreset;
+  // The "★ Favorites" preset was removed; an old saved choice falls back to All.
+  if (state.activePreset === 'favorites') state.activePreset = 'all';
 
   // Sync UI
   el.searchInput.value = state.search;
   el.newOnly.checked = state.newOnly;
   el.discountedOnly.checked = state.discountedOnly;
-  el.favoritesOnly.checked = state.favoritesOnly;
   el.referenceOnly.checked = state.referenceOnly;
   el.minDiscountFilter.value = state.minDiscountPercent;
   el.minPriceFilter.value = state.minPriceSek;
@@ -336,7 +263,6 @@ function buildProductsQuery() {
   if (state.category) params.set('category', state.category);
   if (state.store) params.set('store', state.store);
   if (state.campaign) params.set('campaign', state.campaign);
-  if (state.favoritesOnly) params.set('favoritesOnly', 'true');
   if (state.hotOnly) params.set('hotOnly', 'true');
   if (state.discountedOnly) params.set('discountedOnly', 'true');
   if (state.newOnly) params.set('newOnly', 'true');
@@ -395,20 +321,17 @@ function applyPreset(preset) {
   state.hotOnly = false;
   state.discountedOnly = false;
   state.referenceOnly = false;
-  state.favoritesOnly = false;
   state.wishlistOnly = false;
 
   if (preset === 'new') state.newOnly = true;
   else if (preset === 'hot') state.hotOnly = true;
   else if (preset === 'discounted') state.discountedOnly = true;
   else if (preset === 'matched') state.referenceOnly = true;
-  else if (preset === 'favorites') state.favoritesOnly = true;
   else if (preset === 'wishlist') state.wishlistOnly = true;
 
   state.activePreset = preset;
   el.newOnly.checked = state.newOnly;
   el.discountedOnly.checked = state.discountedOnly;
-  el.favoritesOnly.checked = state.favoritesOnly;
   el.referenceOnly.checked = state.referenceOnly;
   syncFilterPresets();
   savePrefs();
@@ -421,7 +344,6 @@ function getActiveFilterCount() {
   if (state.category) count++;
   if (state.store) count++;
   if (state.campaign) count++;
-  if (state.favoritesOnly) count++;
   if (state.hotOnly) count++;
   if (state.discountedOnly) count++;
   if (state.newOnly) count++;
@@ -476,7 +398,7 @@ function renderStats(status, response) {
   const agg = response?.aggregates ?? {};
   const total = response?.total ?? 0;
   const pills = [
-    [status.counts?.outletItems ?? 0, 'tracked'],
+    [status.counts?.listedProducts ?? 0, 'listed'],
     [total, 'filtered'],
     [agg.matched ?? 0, 'matched'],
     [agg.discounted ?? 0, 'discounted'],
@@ -487,73 +409,6 @@ function renderStats(status, response) {
     .map(([val, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(val))}</strong> ${escapeHtml(label)}</span>`)
     .join('');
   el.productsCount.textContent = `${total} products`;
-}
-
-// ── RENDER: SOURCES ─────────────────────────────────────────────
-function renderSources(sources, isScanning, sourceProgress) {
-  if (!el.sourcesList || !sources?.length) return;
-
-  el.sourcesList.innerHTML = sources
-    .filter(s => s.enabled)
-    .map(source => {
-      const sp = isScanning ? (sourceProgress?.[source.id] ?? { status: 'queued' }) : null;
-      let statusLabel;
-      if (sp) {
-        statusLabel = sp.status === 'running' ? 'scanning' : sp.status === 'done' ? 'done' : sp.status === 'error' ? 'error' : 'queued';
-      } else {
-        statusLabel = source.status || 'idle';
-      }
-      const relTime = timeAgo(source.lastSuccessAt);
-      const lastScan = relTime ? relTime : 'Never';
-      const count = !sp && source.lastCount != null ? `${source.lastCount} items` : '';
-      const autoChecked = source.schedulerEnabled ? 'checked' : '';
-
-      return `
-        <div class="source-card${source.schedulerEnabled ? '' : ' auto-off'}">
-          <div class="source-info">
-            <span class="source-name">${escapeHtml(source.label)}</span>
-            <div class="source-meta">
-              <span class="source-status-dot ${escapeHtml(statusLabel)}"></span>
-              <span>${escapeHtml(statusLabel)}</span>
-              <span>${escapeHtml(lastScan)}</span>
-              ${count ? `<span>${escapeHtml(count)}</span>` : ''}
-            </div>
-          </div>
-          <div class="source-controls">
-            <label class="toggle-switch" title="${source.schedulerEnabled ? 'Auto-scan on' : 'Auto-scan off'}">
-              <input type="checkbox" class="source-auto-cb" data-source-id="${escapeHtml(source.id)}" ${autoChecked} />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            </label>
-            <button class="source-scan-btn" data-source-id="${escapeHtml(source.id)}" type="button"${isScanning ? ' disabled' : ''}>Scan</button>
-          </div>
-        </div>
-      `;
-    }).join('');
-
-  // Wire source scan buttons
-  for (const btn of el.sourcesList.querySelectorAll('.source-scan-btn')) {
-    btn.addEventListener('click', () => triggerScan([btn.getAttribute('data-source-id')]));
-  }
-  // Wire auto-scan toggles
-  for (const cb of el.sourcesList.querySelectorAll('.source-auto-cb')) {
-    cb.addEventListener('change', async () => {
-      const sourceId = cb.getAttribute('data-source-id');
-      const enabled = cb.checked;
-      cb.disabled = true;
-      try {
-        await fetch(`/api/sources/${encodeURIComponent(sourceId)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled })
-        });
-        const sources = await fetchJson('/api/sources');
-        renderSources(sources, false);
-      } catch (err) {
-        cb.checked = !enabled;
-        showToast('Failed to toggle source', 'error');
-      } finally { cb.disabled = false; }
-    });
-  }
 }
 
 // ── RENDER: PRODUCTS ────────────────────────────────────────────
@@ -569,7 +424,6 @@ function renderProducts(response) {
   }
 
   el.emptyState.classList.add('hidden');
-  const favoriteSet = getFavoriteCategorySet();
 
   const armedKeys = armedSet();
   const cards = products.map((product, idx) => {
@@ -593,14 +447,7 @@ function renderProducts(response) {
     if (condition) badgesLeft += `<span class="badge badge-condition">${escapeHtml(condition)}</span>`;
 
     // Image
-    let imgSrc = product.imageUrl;
-    if (product.sourceId === 'nvidia-fe' || (imgSrc && imgSrc.includes('images.nvidia.com'))) {
-      const match = product.title?.match(/(\b5090\b|\b5080\b|\b5070\b|\b4090\b|\b4080\b|\b4070\b)/i);
-      if (match) {
-        const isSuper = /super/i.test(product.title || '');
-        imgSrc = `/images/gpu/${match[1].toLowerCase()}${isSuper ? 's' : ''}.svg`;
-      }
-    }
+    const imgSrc = product.imageUrl;
     const imageHtml = imgSrc
       ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder-img\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'" />`
       : `<div class="card-placeholder-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
@@ -633,15 +480,6 @@ function renderProducts(response) {
         </div>`;
     }
 
-    // Cross-store comparison (same product matched at other stores)
-    let crossStoreHtml = '';
-    if (product.crossStore) {
-      const cs = product.crossStore;
-      crossStoreHtml = cs.isCheapest
-        ? `<div class="card-cross-store is-best" title="Matched at ${cs.stores} stores via GTIN/part number/title">✓ Best price of ${cs.stores} stores</div>`
-        : `<div class="card-cross-store" title="Matched at ${cs.stores} stores via GTIN/part number/title">Cheaper at ${escapeHtml(cs.bestSourceLabel)}: ${formatSek(cs.bestPriceSek)}</div>`;
-    }
-
     // Availability
     const seenText = timeAgo(product.lastSeenAt) ?? '';
     let availDot = 'out';
@@ -650,6 +488,8 @@ function renderProducts(response) {
       availDot = 'in-stock'; availLabel = 'In stock';
     } else if (product.availability === 'few_left' || product.availability === 'limited') {
       availDot = 'limited'; availLabel = 'Few left';
+    } else if (product.availability === 'out_of_stock') {
+      availLabel = 'Out of stock';
     } else if (seenText) {
       availLabel = seenText;
     }
@@ -687,18 +527,16 @@ function renderProducts(response) {
         <div class="card-body">
           <span class="card-store">${escapeHtml(product.sourceLabel ?? '')}</span>
           <h3 class="card-title">${titleLink}</h3>
-          <span class="card-category" data-filter-category="${escapeHtml(product.category)}">${favoriteSet.has(normalizeCategoryKey(product.category)) ? '★ ' : ''}${escapeHtml(product.category || 'Uncategorized')}</span>
+          <span class="card-category" data-filter-category="${escapeHtml(product.category)}">${escapeHtml(product.category || 'Uncategorized')}</span>
           <div class="card-pricing">
             <span class="card-price-main">${formatSek(product.currentPriceSek)}</span>
             ${refHtml}
           </div>
-          ${crossStoreHtml}
           ${sparklineHtml ? `<div class="card-sparkline" data-listing-key="${escapeHtml(product.listingKey)}" title="Click for price history">${sparklineHtml}</div>` : ''}
         </div>
         <div class="card-footer">
           <span class="card-availability"><span class="avail-dot ${availDot}"></span>${escapeHtml(availLabel)}</span>
           ${seenText && availDot !== 'out' ? `<span>${escapeHtml(seenText)}</span>` : ''}
-          ${product.wishlisted ? `<div class="wishlist-target"><span class="wt-icon" title="Target price for Discord alert">🎯</span><input type="number" class="wt-input" min="0" step="50" placeholder="Target SEK" value="${state.wishlistTargets[product.listingKey] ?? ''}" data-listing-key="${escapeHtml(product.listingKey)}" /></div>` : ''}
         </div>
       </article>
     `;
@@ -716,7 +554,7 @@ function renderProducts(response) {
     });
   }
 
-  // Wire wishlist buttons
+  // Wire checkout-arm buttons
   for (const btn of el.productGrid.querySelectorAll('.arm-btn')) {
     btn.addEventListener('click', (event) => {
       event.preventDefault();
@@ -730,12 +568,6 @@ function renderProducts(response) {
       e.stopPropagation();
       toggleWishlist(btn.getAttribute('data-listing-key'), btn);
     });
-  }
-
-  // Wire wishlist target-price inputs (Feature 3)
-  for (const input of el.productGrid.querySelectorAll('.wt-input')) {
-    input.addEventListener('click', (e) => e.stopPropagation());
-    input.addEventListener('change', () => saveWishlistTarget(input.getAttribute('data-listing-key'), input.value));
   }
 
   // Wire sparkline click → open price history modal
@@ -796,13 +628,11 @@ async function toggleWishlist(listingKey, btnEl) {
     await fetch(`/api/wishlist/${encodeURIComponent(listingKey)}`, { method });
     if (isWishlisted) {
       state.wishlist.delete(listingKey);
-      delete state.wishlistTargets[listingKey];
       btnEl.classList.remove('active');
       btnEl.textContent = '♡';
       btnEl.title = 'Add to wishlist';
       const card = btnEl.closest('.product-card');
       card?.classList.remove('is-wishlisted');
-      card?.querySelector('.wishlist-target')?.remove();
     } else {
       state.wishlist.add(listingKey);
       btnEl.classList.add('active');
@@ -810,60 +640,17 @@ async function toggleWishlist(listingKey, btnEl) {
       btnEl.title = 'Remove from wishlist';
       const card = btnEl.closest('.product-card');
       card?.classList.add('is-wishlisted');
-      injectWishlistTarget(card, listingKey);
     }
   } catch (err) {
     showToast('Failed to update wishlist', 'error');
   }
 }
 
-// Renders/refreshes the target-price control inside a wishlisted card's footer.
-function injectWishlistTarget(card, listingKey) {
-  if (!card) return;
-  card.querySelector('.wishlist-target')?.remove();
-  const footer = card.querySelector('.card-footer');
-  if (!footer) return;
-  const target = state.wishlistTargets[listingKey];
-  const wrap = document.createElement('div');
-  wrap.className = 'wishlist-target';
-  wrap.innerHTML = `
-    <span class="wt-icon" title="Target price for Discord alert">🎯</span>
-    <input type="number" class="wt-input" min="0" step="50" placeholder="Target SEK" value="${target ?? ''}" data-listing-key="${escapeHtml(listingKey)}" />
-  `;
-  footer.appendChild(wrap);
-  const input = wrap.querySelector('.wt-input');
-  input.addEventListener('click', (e) => e.stopPropagation());
-  input.addEventListener('change', () => saveWishlistTarget(listingKey, input.value));
-}
-
-async function saveWishlistTarget(listingKey, rawValue) {
-  const targetPriceSek = Number(rawValue);
-  try {
-    const res = await fetch(`/api/wishlist/${encodeURIComponent(listingKey)}/target`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ targetPriceSek: Number.isFinite(targetPriceSek) && targetPriceSek > 0 ? targetPriceSek : null })
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.targetPriceSek) {
-      state.wishlistTargets[listingKey] = data.targetPriceSek;
-      showToast(`Target set: ${formatSek(data.targetPriceSek)}`, 'success');
-    } else {
-      delete state.wishlistTargets[listingKey];
-      showToast('Target cleared', 'info');
-    }
-  } catch {
-    showToast('Failed to save target price', 'error');
-  }
-}
-
 async function loadWishlist() {
   try {
-    const { items, targets } = await fetchJson('/api/wishlist');
+    const { items } = await fetchJson('/api/wishlist');
     state.wishlist = new Set(items ?? []);
-    state.wishlistTargets = targets && typeof targets === 'object' ? { ...targets } : {};
-  } catch { state.wishlist = new Set(); state.wishlistTargets = {}; }
+  } catch { state.wishlist = new Set(); }
 }
 
 // ── PRICE HISTORY MODAL ─────────────────────────────────────────
@@ -1368,14 +1155,15 @@ function renderStoreFilter(sources) {
   const options = ['<option value="">All stores</option>']
     .concat(sources.map(s => {
       const selected = s.id === state.store ? ' selected' : '';
-      return `<option value="${escapeHtml(s.id)}"${selected}>${escapeHtml(s.label)}</option>`;
+      const count = Number.isFinite(s.count) ? ` (${s.count})` : '';
+      return `<option value="${escapeHtml(s.id)}"${selected}>${escapeHtml(s.label)}${count}</option>`;
     })).join('');
   el.storeFilter.innerHTML = options;
 }
 
 function renderCampaignFilter(campaigns) {
   if (!el.campaignFilter || !Array.isArray(campaigns)) return;
-  const options = ['<option value="">All campaigns</option>']
+  const options = ['<option value="">All conditions</option>']
     .concat(campaigns.map(({ label, value }) => {
       const selected = value === state.campaign ? ' selected' : '';
       return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
@@ -1391,7 +1179,10 @@ function renderActiveFilterTags() {
     const cat = state.categories.find(c => c.key === state.category);
     tags.push(`Category: ${cat?.name ?? state.category}`);
   }
-  if (state.store) tags.push(`Store: ${state.store}`);
+  if (state.store) {
+    const store = (state.sources ?? []).find(s => s.id === state.store);
+    tags.push(`Store: ${store?.label ?? state.store}`);
+  }
   if (state.minDiscountPercent) tags.push(`Min discount: ${state.minDiscountPercent}%`);
   if (state.minPriceSek) tags.push(`Min: ${formatSek(Number(state.minPriceSek))}`);
   if (state.maxPriceSek) tags.push(`Max: ${formatSek(Number(state.maxPriceSek))}`);
@@ -1400,220 +1191,12 @@ function renderActiveFilterTags() {
   syncFilterBadge();
 }
 
-// ── RENDER: SCHEDULER STATUS ────────────────────────────────────
-function renderSchedulerPill() {
-  if (!state.schedulerEnabled) {
-    el.schedulerStatus.classList.remove('hidden');
-    el.schedulerStatus.classList.add('paused');
-    el.schedulerText.textContent = 'Paused';
-    return;
-  }
-  if (state.schedulerNextRunAt) {
-    el.schedulerStatus.classList.remove('hidden', 'paused');
-    el.schedulerText.textContent = `Next: ${formatCountdown(state.schedulerNextRunAt)}`;
-  } else {
-    el.schedulerStatus.classList.add('hidden');
-  }
-}
-
-function renderSchedulerForm(scheduler) {
-  if (!scheduler) {
-    el.schedulerEnabled.disabled = true;
-    el.schedulerInterval.disabled = true;
-    return;
-  }
-
-  const aw = scheduler.activeWindow ?? {};
-  state.schedulerEnabled = Boolean(scheduler.enabled);
-  state.schedulerIntervalMinutes = Number.isFinite(scheduler.intervalMinutes) ? scheduler.intervalMinutes : 180;
-  state.schedulerWindowEnabled = Boolean(aw.enabled);
-  state.schedulerWindowStart = parseTimeOfDay(aw.startTime) ?? '07:00';
-  state.schedulerWindowEnd = parseTimeOfDay(aw.endTime) ?? '00:00';
-  state.schedulerIsInActiveWindow = scheduler.isInActiveWindow !== false;
-  state.schedulerNextRunAt = scheduler.nextRunAt ?? null;
-
-  el.schedulerEnabled.checked = state.schedulerEnabled;
-  el.schedulerInterval.value = String(state.schedulerIntervalMinutes);
-  el.schedulerWindowEnabled.checked = state.schedulerWindowEnabled;
-  el.schedulerWindowStart.value = state.schedulerWindowStart;
-  el.schedulerWindowEnd.value = state.schedulerWindowEnd;
-  el.schedulerEnabled.disabled = false;
-  el.schedulerInterval.disabled = false;
-
-  // Status in drawer
-  const nextText = state.schedulerNextRunAt ? formatCountdown(state.schedulerNextRunAt) : 'Not scheduled';
-  const windowText = state.schedulerWindowEnabled
-    ? `${state.schedulerWindowStart}–${state.schedulerWindowEnd} (${state.schedulerIsInActiveWindow ? '✅ in window' : '⏳ outside'})`
-    : 'All day';
-  el.modalSchedulerStatus.innerHTML = `
-    <div><strong>Next scan:</strong> ${escapeHtml(nextText)}</div>
-    <div><strong>Active window:</strong> ${escapeHtml(windowText)}</div>
-  `;
-
-  renderSchedulerPill();
-}
-
-// ── RENDER: FAVORITES ───────────────────────────────────────────
-function renderFavoriteChips() {
-  if (!state.favoriteCategories.length) {
-    el.favoriteChips.innerHTML = '<p style="font-size:0.8rem;color:var(--text-tertiary)">No favorites yet. Add categories below.</p>';
-    return;
-  }
-  el.favoriteChips.innerHTML = state.favoriteCategories.map(cat => `
-    <span class="fav-chip">
-      <span>★ ${escapeHtml(cat)}</span>
-      <button type="button" class="fav-chip-remove" data-remove-fav="${escapeHtml(cat)}" aria-label="Remove">×</button>
-    </span>
-  `).join('');
-
-  for (const btn of el.favoriteChips.querySelectorAll('[data-remove-fav]')) {
-    btn.addEventListener('click', async () => {
-      const cat = btn.getAttribute('data-remove-fav');
-      const next = state.favoriteCategories.filter(c => c !== cat);
-      try {
-        await saveFavoriteCategories(next);
-        renderFavoriteChips();
-        renderFavoritesEditor();
-      } catch (err) { showToast(err.message, 'error'); }
-    });
-  }
-}
-
-function renderFavoritesEditor() {
-  if (!state.categories.length) {
-    el.favoritesEditor.innerHTML = '<p style="font-size:0.8rem;color:var(--text-tertiary)">Run a scan first to see categories.</p>';
-    return;
-  }
-
-  const favSet = getFavoriteCategorySet();
-  const query = (el.favoritesSearchInput?.value ?? '').trim().toLowerCase();
-  const visible = state.categories.filter(c => !query || c.name.toLowerCase().includes(query));
-
-  el.favoritesEditor.innerHTML = visible.map(c => {
-    const isFav = favSet.has(c.key);
-    return `
-      <button type="button" class="fav-grid-item${isFav ? ' active' : ''}" data-fav-cat="${escapeHtml(c.name)}">
-        <span class="fav-star">${isFav ? '★' : '☆'}</span>
-        <span>${escapeHtml(c.name)}</span>
-        <span class="fav-count">${c.count}</span>
-      </button>
-    `;
-  }).join('');
-
-  for (const btn of el.favoritesEditor.querySelectorAll('[data-fav-cat]')) {
-    btn.addEventListener('click', async () => {
-      const cat = btn.getAttribute('data-fav-cat');
-      const next = new Set(state.favoriteCategories);
-      if (next.has(cat)) next.delete(cat); else next.add(cat);
-      try {
-        await saveFavoriteCategories([...next]);
-        renderFavoriteChips();
-        renderFavoritesEditor();
-      } catch (err) { showToast(err.message, 'error'); }
-    });
-  }
-}
-
-async function saveFavoriteCategories(categories) {
-  const payload = await fetchJson('/api/preferences/favorite-categories', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ categories })
-  });
-  state.favoriteCategories = payload.favoriteCategories ?? [];
-}
-
-// ── SCAN CONTROL ────────────────────────────────────────────────
-async function triggerScan(sourceIds = null) {
-  try {
-    const body = sourceIds ? { sourceIds } : {};
-    const response = await fetch('/api/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const data = await response.json();
-    if (!response.ok) { showToast(data.message || 'Failed to start scan.', 'error'); return; }
-    showToast(data.message || 'Scan started', 'info');
-    scheduleScanPoll(1500);
-  } catch (err) { showToast(err.message, 'error'); }
-}
-
-function syncScanUI(status) {
-  if (!status.isRunning) {
-    el.scanBtn.disabled = false;
-    el.scanBtn.querySelector('.scan-btn-label').textContent = 'Scan';
-    el.cancelBtn.classList.add('hidden');
-    el.scanProgress.classList.add('hidden');
-    el.scanLine?.classList.add('hidden');
-    document.body.classList.remove('scanning');
-    return;
-  }
-
-  const progress = status.scanProgress ?? {};
-  const total = Number(progress.totalSources ?? 0);
-  const completed = Number(progress.completedSources ?? 0);
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-  el.scanBtn.disabled = true;
-  el.scanBtn.querySelector('.scan-btn-label').textContent = total ? `${completed}/${total}` : '...';
-  el.cancelBtn.classList.remove('hidden');
-  el.cancelBtn.disabled = Boolean(status.isCancelling);
-  el.cancelBtn.textContent = status.isCancelling ? 'Cancelling...' : 'Cancel';
-  el.scanProgress.classList.remove('hidden');
-  el.scanProgressBar.style.width = `${pct}%`;
-  el.scanProgressText.textContent = total ? `Scanning ${completed}/${total} sources` : 'Starting scan...';
-  el.scanLine?.classList.remove('hidden');
-  document.body.classList.add('scanning');
-}
-
-function clearScanPoll() {
-  if (scanPollTimer) { clearTimeout(scanPollTimer); scanPollTimer = null; }
-}
-
-function scheduleScanPoll(delay = 3000) {
-  clearScanPoll();
-  scanPollTimer = setTimeout(() => {
-    scanPollTimer = null;
-    pollScanStatus().catch(err => {
-      showToast(err.message, 'error');
-      scheduleScanPoll(5000);
-    });
-  }, delay);
-}
-
-async function pollScanStatus() {
-  const [status, sources] = await Promise.all([
-    fetchJson('/api/status'),
-    fetchJson('/api/sources')
-  ]);
-  syncScanUI(status);
-  renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
-  renderSchedulerForm(status.scheduler);
-  renderElgigantenBlock(status.elgigantenBlock);
-  el.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
-
-  if (status.isRunning) {
-    const currentCompleted = status.scanProgress?.completedSources ?? 0;
-    if (currentCompleted > lastCompletedSources) {
-      lastCompletedSources = currentCompleted;
-      loadDashboard().catch(() => {});
-    }
-    scheduleScanPoll();
-    return;
-  }
-
-  lastCompletedSources = 0;
-  await loadDashboard();
-}
-
 // ── FILTER LOGIC ────────────────────────────────────────────────
 function applyCurrentFilters() {
   state.search = el.searchInput.value.trim();
   state.category = el.categoryFilter.value;
   state.store = el.storeFilter?.value ?? '';
   state.campaign = el.campaignFilter?.value ?? '';
-  state.favoritesOnly = el.favoritesOnly.checked;
   state.discountedOnly = el.discountedOnly.checked;
   state.newOnly = el.newOnly.checked;
   state.referenceOnly = el.referenceOnly.checked;
@@ -1622,7 +1205,7 @@ function applyCurrentFilters() {
   state.maxPriceSek = el.maxPriceFilter.value.trim();
 
   // Determine active preset
-  const presetMap = { new: state.newOnly, hot: state.hotOnly, discounted: state.discountedOnly, matched: state.referenceOnly, favorites: state.favoritesOnly, wishlist: state.wishlistOnly };
+  const presetMap = { new: state.newOnly, hot: state.hotOnly, discounted: state.discountedOnly, matched: state.referenceOnly, wishlist: state.wishlistOnly };
   const activePresets = Object.entries(presetMap).filter(([, v]) => v);
   state.activePreset = activePresets.length === 1 ? activePresets[0][0] : (activePresets.length === 0 ? 'all' : '');
   syncFilterPresets();
@@ -1634,7 +1217,6 @@ function resetFilters() {
   state.category = '';
   state.store = '';
   state.campaign = '';
-  state.favoritesOnly = false;
   state.discountedOnly = false;
   state.newOnly = false;
   state.hotOnly = false;
@@ -1649,7 +1231,6 @@ function resetFilters() {
   el.categoryFilter.value = '';
   if (el.storeFilter) el.storeFilter.value = '';
   if (el.campaignFilter) el.campaignFilter.value = '';
-  el.favoritesOnly.checked = false;
   el.discountedOnly.checked = false;
   el.newOnly.checked = false;
   el.referenceOnly.checked = false;
@@ -1676,9 +1257,8 @@ function updateFilters({ debounce = false } = {}) {
 
 // ── MAIN LOAD ───────────────────────────────────────────────────
 // Lightweight refresh: only re-fetches the filtered product list.
-// Used by filter/sort/pagination changes — metadata (categories, sources,
-// scheduler) doesn't change between scans, so re-fetching it per keystroke
-// just adds latency.
+// Used by filter/sort/pagination changes — metadata (categories, stores)
+// rarely changes, so re-fetching it per keystroke just adds latency.
 async function loadProducts() {
   const query = buildProductsQuery();
   const response = await fetchJson(`/api/outlet-products${query}`);
@@ -1689,20 +1269,16 @@ async function loadProducts() {
 }
 
 async function loadDashboard() {
-  const [status, categories, preferences, sources, outletSources, outletCampaigns] = await Promise.all([
+  const [status, categories, outletSources, outletCampaigns] = await Promise.all([
     fetchJson('/api/status'),
     fetchJson('/api/outlet-categories'),
-    fetchJson('/api/preferences'),
-    fetchJson('/api/sources'),
     fetchJson('/api/outlet-sources'),
     fetchJson('/api/outlet-campaigns')
   ]);
 
   lastStatus = status;
-  state.latestRunStartedAt = status.lastRunSummary?.startedAt ?? status.lastRunStartedAt ?? null;
-  state.favoriteCategories = preferences.favoriteCategories ?? [];
   state.categories = categories ?? [];
-  allSources = sources ?? [];
+  state.sources = outletSources ?? [];
 
   if (state.category && !state.categories.some(c => c.key === state.category)) {
     state.category = '';
@@ -1714,20 +1290,14 @@ async function loadDashboard() {
   const response = await fetchJson(`/api/outlet-products${query}`);
   latestProducts = response;
 
-  syncScanUI(status);
-  renderSources(sources, status.isRunning, status.scanProgress?.sourceProgress);
   renderCategoryFilter(categories);
   renderStoreFilter(outletSources ?? []);
   renderCampaignFilter(outletCampaigns ?? []);
-  renderSchedulerForm(status.scheduler);
   renderElgigantenBlock(status.elgigantenBlock);
-  el.runSummary.textContent = JSON.stringify(status.lastRunSummary ?? {}, null, 2);
 
   renderStats(status, response);
   renderActiveFilterTags();
   renderProducts(response);
-
-  if (status.isRunning) { scheduleScanPoll(); } else { clearScanPoll(); }
 }
 
 // ── SETTINGS DRAWER ─────────────────────────────────────────────
@@ -1748,85 +1318,15 @@ function closeDrawer() {
   stopHotlistStatusPolling();
 }
 
-async function loadDrawerData() {
-  // Load hotlist config, status and the Elgiganten category catalogue.
+function loadDrawerData() {
+  // Hotlist config, status and the Elgiganten category catalogue, plus the
+  // Komplett demo watcher. Both load independently; a failure hides its tab.
   loadHotlist();
   loadKomplettDemo();
-
-  // Load notification settings
-  try {
-    const res = await fetch('/api/notification-settings');
-    if (res.ok) notifSettings = await res.json();
-    if (!Array.isArray(notifSettings.alertRules)) notifSettings.alertRules = [];
-  } catch {}
-
-  // Load categories
-  try {
-    const cats = await fetchJson('/api/outlet-categories');
-    if (Array.isArray(cats)) {
-      allCategories = cats.map(c => typeof c === 'string' ? c : c.name).filter(Boolean).sort((a, b) => a.localeCompare(b, 'sv-SE'));
-    }
-  } catch { allCategories = []; }
-
-  // Load sources
-  try {
-    const srcs = await fetchJson('/api/sources');
-    if (Array.isArray(srcs)) {
-      allSources = srcs.filter(s => s.enabled).map(s => ({ id: s.id, label: s.label }));
-    }
-  } catch { allSources = []; }
-
-  if (el.notificationsEnabledToggle) {
-    el.notificationsEnabledToggle.checked = notifSettings.notificationsEnabled !== false;
-  }
-
-  // Digest form
-  const digest = notifSettings.digest ?? {};
-  const digestEnabled = document.getElementById('digest-enabled');
-  const digestTime = document.getElementById('digest-time');
-  const digestWebhook = document.getElementById('digest-webhook');
-  const digestMaxItems = document.getElementById('digest-max-items');
-  if (digestEnabled) digestEnabled.checked = digest.enabled === true;
-  if (digestTime) digestTime.value = digest.time ?? '08:00';
-  if (digestWebhook) digestWebhook.value = digest.webhook ?? '';
-  if (digestMaxItems) digestMaxItems.value = digest.maxItems ?? '';
-
-  // Wishlist target alerts form (Feature 3)
-  const wishlistAlerts = notifSettings.wishlistAlerts ?? {};
-  const wishlistEnabled = document.getElementById('wishlist-alerts-enabled');
-  const wishlistWebhook = document.getElementById('wishlist-alerts-webhook');
-  if (wishlistEnabled) wishlistEnabled.checked = wishlistAlerts.enabled === true;
-  if (wishlistWebhook) wishlistWebhook.value = wishlistAlerts.webhook ?? '';
-
-  renderRuleList();
-  renderFavoriteChips();
-  renderFavoritesEditor();
-
-  // Load scheduler
-  try {
-    const sched = await fetchJson('/api/scheduler');
-    renderSchedulerForm(sched);
-  } catch {}
 }
 
-// ── ALERT RULES ─────────────────────────────────────────────────
-function createEmptyRule() {
-  return {
-    id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    label: '',
-    enabled: true,
-    keywords: [],
-    categories: [],
-    filteredSources: [],
-    sourceFilterMode: 'exclude',
-    webhooks: [''],
-    minDiscountPercent: null,
-    notifyPriceDrops: true,
-    minPriceDropPercent: null
-  };
-}
-
-function wireChipInput({ container, items, onAdd, onRemove, allOptions, fetchOptions, placeholder }) {
+// ── CHIP INPUT (hotlist categories, brands, keywords) ───────────
+function wireChipInput({ container, items, onAdd, onRemove, allOptions, placeholder }) {
   const chipList = container.querySelector('.chip-list');
   const textInput = container.querySelector('.chip-text-input');
   const dropdown = container.querySelector('.kw-cat-dropdown');
@@ -1878,199 +1378,21 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions, fetchOpt
     else if (e.key === 'Backspace' && !textInput.value && items.length) { const last = items[items.length - 1]; items.splice(items.length - 1, 1); onRemove(last); refreshChips(); }
   });
 
-  let fetchTimer = null;
   if (dropdown) {
     textInput.addEventListener('focus', () => {
       if (allOptions) { renderDropdown(); dropdown.classList.remove('hidden'); }
     });
     textInput.addEventListener('input', () => {
       if (allOptions) { renderDropdown(); dropdown.classList.remove('hidden'); }
-      if (typeof fetchOptions === 'function') {
-        clearTimeout(fetchTimer);
-        const q = textInput.value.trim();
-        if (q.length >= 2) {
-          fetchTimer = setTimeout(async () => {
-            const suggestions = await fetchOptions(q);
-            if (Array.isArray(suggestions) && suggestions.length) {
-              allOptions = suggestions;
-              renderDropdown();
-              dropdown.classList.remove('hidden');
-            }
-          }, 100);
-        }
-      }
     });
     textInput.addEventListener('blur', () => { setTimeout(() => dropdown.classList.add('hidden'), 150); });
   }
   refreshChips();
 }
 
-function createRuleElement(rule) {
-  const li = document.createElement('li');
-  li.className = 'rule-item';
-  if (!rule.enabled) li.classList.add('rule-disabled');
-  li.dataset.ruleId = rule.id;
-
-  const webhooksHtml = (rule.webhooks.length ? rule.webhooks : ['']).map(w => `
-    <div class="webhook-row">
-      <input type="url" class="modal-input rule-webhook-input" placeholder="https://discord.com/api/webhooks/…" value="${escapeHtml(w)}" />
-      <button type="button" class="btn-icon-sm remove-webhook-btn" style="visibility:hidden">×</button>
-    </div>`).join('');
-
-  li.innerHTML = `
-    <div class="rule-header">
-      <label class="toggle-switch" title="${rule.enabled ? 'Enabled' : 'Disabled'}">
-        <input type="checkbox" class="rule-enabled-cb" ${rule.enabled ? 'checked' : ''} />
-        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-      </label>
-      <input type="text" class="rule-label-input" placeholder="Alert name (e.g. GPU Deals)" value="${escapeHtml(rule.label)}" />
-      <button type="button" class="rule-delete-btn" title="Delete">✕</button>
-    </div>
-    <div class="rule-body">
-      <div class="rule-row rule-row-two-col">
-        <div class="rule-field">
-          <label class="rule-field-label">Keywords <span class="rule-hint">Enter/comma to add</span></label>
-          <div class="chip-input-wrap" id="kw-chips-${rule.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. RTX 5070" autocomplete="off" /></div>
-        </div>
-        <div class="rule-field">
-          <label class="rule-field-label">Categories <span class="rule-hint">Optional filter</span></label>
-          <div class="chip-input-wrap" id="cat-chips-${rule.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="Search…" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
-        </div>
-      </div>
-      <div class="rule-row rule-row-source-filter">
-        <div class="rule-field rule-field-source-filter">
-          <label class="rule-field-label">Source filter
-            <span class="rule-hint">Optional</span>
-          </label>
-          <div class="source-filter-wrap">
-            <div class="source-filter-mode-toggle">
-              <button type="button" class="source-mode-btn ${rule.sourceFilterMode !== 'include' ? 'active' : ''}" data-mode="exclude">Exclude</button>
-              <button type="button" class="source-mode-btn ${rule.sourceFilterMode === 'include' ? 'active' : ''}" data-mode="include">Include only</button>
-            </div>
-            <div class="chip-input-wrap" id="src-chips-${rule.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="Search sources…" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
-          </div>
-        </div>
-      </div>
-      <div class="rule-row">
-        <div class="rule-field">
-          <label class="rule-field-label">Discord webhook(s)</label>
-          <div class="webhooks-list">${webhooksHtml}</div>
-          <button type="button" class="ghost-btn add-webhook-btn" style="margin-top:0.375rem">+ Add webhook</button>
-        </div>
-        <div class="rule-field">
-          <label class="rule-field-label">Min discount %</label>
-          <input type="number" class="modal-input rule-mindiscount-input" placeholder="e.g. 20" min="0" max="100" step="1" value="${rule.minDiscountPercent != null ? rule.minDiscountPercent : ''}" />
-        </div>
-      </div>
-      <div class="rule-row">
-        <div class="rule-field">
-          <label class="toggle-switch" title="Also alert when a tracked match drops in price">
-            <input type="checkbox" class="rule-pricedrop-cb" ${rule.notifyPriceDrops !== false ? 'checked' : ''} />
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            <span class="toggle-label">Alert on price drops</span>
-          </label>
-        </div>
-        <div class="rule-field">
-          <label class="rule-field-label">Min drop % <span class="rule-hint">Default 5</span></label>
-          <input type="number" class="modal-input rule-mindrop-input" placeholder="5" min="0" max="100" step="1" value="${rule.minPriceDropPercent != null ? rule.minPriceDropPercent : ''}" />
-        </div>
-      </div>
-    </div>`;
-
-  // Wire events
-  li.querySelector('.rule-enabled-cb').addEventListener('change', e => { rule.enabled = e.target.checked; li.classList.toggle('rule-disabled', !rule.enabled); });
-  li.querySelector('.rule-label-input').addEventListener('input', e => { rule.label = e.target.value; });
-  li.querySelector('.rule-delete-btn').addEventListener('click', () => {
-    notifSettings.alertRules = notifSettings.alertRules.filter(r => r.id !== rule.id);
-    li.remove();
-    renderRuleList();
-  });
-
-  wireChipInput({ container: li.querySelector(`#kw-chips-${rule.id}`), items: rule.keywords, onAdd: () => {}, onRemove: () => {}, allOptions: null });
-  wireChipInput({ container: li.querySelector(`#cat-chips-${rule.id}`), items: rule.categories, onAdd: () => {}, onRemove: () => {}, allOptions: allCategories });
-
-  // Source filter — include/exclude mode toggle + chip input
-  // Migrate old excludedSources to new model
-  if (!Array.isArray(rule.filteredSources)) {
-    rule.filteredSources = Array.isArray(rule.excludedSources) ? rule.excludedSources : [];
-    delete rule.excludedSources;
-  }
-  if (!rule.sourceFilterMode) rule.sourceFilterMode = 'exclude';
-
-  const sourceLabels = allSources.map(s => s.label);
-  const labelToId = Object.fromEntries(allSources.map(s => [s.label, s.id]));
-  const idToLabel = Object.fromEntries(allSources.map(s => [s.id, s.label]));
-  const filteredLabels = rule.filteredSources.map(id => idToLabel[id] ?? id);
-
-  wireChipInput({
-    container: li.querySelector(`#src-chips-${rule.id}`),
-    items: filteredLabels,
-    onAdd: label => { const id = labelToId[label] ?? label; if (!rule.filteredSources.includes(id)) rule.filteredSources.push(id); },
-    onRemove: label => { const id = labelToId[label] ?? label; const idx = rule.filteredSources.indexOf(id); if (idx !== -1) rule.filteredSources.splice(idx, 1); },
-    allOptions: sourceLabels
-  });
-
-  // Mode toggle buttons
-  li.querySelectorAll('.source-mode-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      rule.sourceFilterMode = btn.dataset.mode;
-      li.querySelectorAll('.source-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === rule.sourceFilterMode));
-    });
-  });
-
-  // Webhooks
-  const webhooksList = li.querySelector('.webhooks-list');
-  const addWebhookBtn = li.querySelector('.add-webhook-btn');
-  function syncWebhooks() {
-    rule.webhooks = [...webhooksList.querySelectorAll('.rule-webhook-input')].map(i => i.value.trim());
-    const rows = webhooksList.querySelectorAll('.webhook-row');
-    rows.forEach(row => { const btn = row.querySelector('.remove-webhook-btn'); if (btn) btn.style.visibility = rows.length > 1 ? 'visible' : 'hidden'; });
-  }
-  webhooksList.addEventListener('input', () => { rule.webhooks = [...webhooksList.querySelectorAll('.rule-webhook-input')].map(i => i.value.trim()); });
-  webhooksList.addEventListener('click', e => { if (e.target.classList.contains('remove-webhook-btn')) { e.target.closest('.webhook-row').remove(); syncWebhooks(); } });
-  addWebhookBtn.addEventListener('click', () => {
-    const row = document.createElement('div');
-    row.className = 'webhook-row';
-    row.innerHTML = '<input type="url" class="modal-input rule-webhook-input" placeholder="https://discord.com/api/webhooks/…" /><button type="button" class="btn-icon-sm remove-webhook-btn">×</button>';
-    webhooksList.appendChild(row);
-    syncWebhooks();
-  });
-  syncWebhooks();
-
-  // Min discount %
-  li.querySelector('.rule-mindiscount-input').addEventListener('input', e => {
-    const v = Number(e.target.value);
-    rule.minDiscountPercent = e.target.value.trim() === '' ? null : (Number.isFinite(v) && v >= 0 ? v : null);
-  });
-
-  // Price drop alerts
-  li.querySelector('.rule-pricedrop-cb').addEventListener('change', e => { rule.notifyPriceDrops = e.target.checked; });
-  li.querySelector('.rule-mindrop-input').addEventListener('input', e => {
-    const v = Number(e.target.value);
-    rule.minPriceDropPercent = e.target.value.trim() === '' ? null : (Number.isFinite(v) && v >= 0 ? v : null);
-  });
-
-  return li;
-}
-
-function renderRuleList() {
-  el.rulesList.innerHTML = '';
-  el.rulesCountLabel.textContent = notifSettings.alertRules.length
-    ? `${notifSettings.alertRules.length} rule${notifSettings.alertRules.length !== 1 ? 's' : ''}`
-    : 'No rules';
-
-  if (!notifSettings.alertRules.length) {
-    el.rulesList.innerHTML = '<li class="rules-empty-state"><div class="rules-empty-icon">🔔</div><p class="rules-empty-title">No alert rules</p><p class="rules-empty-sub">Create a rule to get Discord notifications for matching products.</p></li>';
-    return;
-  }
-  for (const rule of notifSettings.alertRules) {
-    el.rulesList.appendChild(createRuleElement(rule));
-  }
-}
-
 // ── HOTLIST (continuous Elgiganten poller) ──────────────────────
-// The hotlist is not a scheduled source: it polls on its own fast loop, so it
-// gets its own settings tab covering cadence and what to watch.
+// The hotlist polls on its own fast loop, so it gets its own settings tab
+// covering cadence and what to watch.
 
 let hotlistConfig = null;
 let hotlistCatalog = { categories: [], brands: [] };
@@ -2125,7 +1447,7 @@ function createEmptyHotlistGroup() {
     id: `hg-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
     label: '',
     enabled: true,
-    stores: ['elgiganten-hotlist', 'amazon-hotlist'],
+    stores: ['elgiganten-hotlist'],
     taxonomyIds: [],
     taxonomyNames: [],
     brands: [],
@@ -2141,9 +1463,11 @@ function createHotlistGroupElement(group) {
   const li = document.createElement('li');
   li.className = `rule-card hotlist-card${group.enabled ? '' : ' rule-disabled'}`;
   const numeric = (value) => (value != null ? value : '');
-  if (!group.stores || !Array.isArray(group.stores) || !group.stores.length) {
-    group.stores = ['elgiganten-hotlist', 'amazon-hotlist'];
-  }
+  // Amazon.se was archived on 2026-10-31, so Elgiganten is the only store left.
+  // A watch saved as Amazon-only would silently never run; say so and offer
+  // to switch it over.
+  const storesKnown = Array.isArray(group.stores) && group.stores.length > 0;
+  const watchesElgiganten = !storesKnown || group.stores.includes('elgiganten-hotlist') || group.stores.includes('all');
 
   li.innerHTML = `
     <div class="rule-header">
@@ -2155,23 +1479,7 @@ function createHotlistGroupElement(group) {
       <button type="button" class="rule-delete-btn hl-delete-btn" title="Delete">✕</button>
     </div>
     <div class="rule-body">
-      <div class="rule-row" style="margin-bottom: 6px;">
-        <div class="rule-field">
-          <label class="rule-field-label">Target Stores</label>
-          <div class="hl-stores-row" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:3px;">
-            <label class="toggle-switch" title="Watch on Elgiganten">
-              <input type="checkbox" class="hl-store-elgiganten" ${group.stores.includes('elgiganten-hotlist') || group.stores.includes('all') ? 'checked' : ''} />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label" style="font-size:12px;">Elgiganten</span>
-            </label>
-            <label class="toggle-switch" title="Watch on Amazon.se">
-              <input type="checkbox" class="hl-store-amazon" ${group.stores.includes('amazon-hotlist') || group.stores.includes('all') ? 'checked' : ''} />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label" style="font-size:12px;">Amazon.se</span>
-            </label>
-          </div>
-        </div>
-      </div>
+      ${watchesElgiganten ? '' : '<p class="hl-legacy-note">This watch only targeted Amazon.se, which is no longer polled. <button type="button" class="ghost-btn hl-use-elgiganten">Watch on Elgiganten</button></p>'}
       <div class="rule-row rule-row-two-col">
         <div class="rule-field">
           <label class="rule-field-label">Categories <span class="rule-hint">e.g. GPU, Laptop, SSD</span></label>
@@ -2184,7 +1492,7 @@ function createHotlistGroupElement(group) {
       </div>
       <div class="rule-row">
         <div class="rule-field">
-          <label class="rule-field-label">Keywords <span class="rule-hint">Live search suggestions</span></label>
+          <label class="rule-field-label">Keywords <span class="rule-hint">Enter/comma to add</span></label>
           <div class="chip-input-wrap" id="hl-kw-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. RTX 5090, MacBook M3, 990 PRO" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
           <label class="toggle-switch hl-strict-toggle" title="Require the keyword to appear in the product title">
             <input type="checkbox" class="hl-strict-cb" ${group.strictKeywordMatch !== false ? 'checked' : ''} />
@@ -2210,14 +1518,10 @@ function createHotlistGroupElement(group) {
       ${group.taxonomyIds?.length ? `<p class="hl-legacy-note">Also matching legacy category ${group.taxonomyIds.map(escapeHtml).join(', ')}</p>` : ''}
     </div>`;
 
-  const updateStores = () => {
-    const s = [];
-    if (li.querySelector('.hl-store-elgiganten')?.checked) s.push('elgiganten-hotlist');
-    if (li.querySelector('.hl-store-amazon')?.checked) s.push('amazon-hotlist');
-    group.stores = s;
-  };
-  li.querySelector('.hl-store-elgiganten')?.addEventListener('change', updateStores);
-  li.querySelector('.hl-store-amazon')?.addEventListener('change', updateStores);
+  li.querySelector('.hl-use-elgiganten')?.addEventListener('click', () => {
+    group.stores = [...new Set([...(group.stores ?? []), 'elgiganten-hotlist'])];
+    renderHotlistGroups();
+  });
 
   li.querySelector('.hl-enabled-cb').addEventListener('change', (e) => {
     group.enabled = e.target.checked;
@@ -2258,15 +1562,7 @@ function createHotlistGroupElement(group) {
     container: li.querySelector(`#hl-kw-${group.id}`),
     items: group.keywords,
     onAdd: () => renderHotlistCount(), onRemove: () => renderHotlistCount(),
-    allOptions: null,
-    fetchOptions: async (query) => {
-      try {
-        const res = await fetchJson(`/api/hotlist/amazon-suggestions?q=${encodeURIComponent(query)}`);
-        return Array.isArray(res) ? res : [];
-      } catch {
-        return [];
-      }
-    }
+    allOptions: null
   });
 
   return li;
@@ -2304,12 +1600,6 @@ function renderHotlistForm() {
   el.hotlistMinDiscount.value = hotlistConfig.minDiscountPct;
   if (el.hotlistWebhook) el.hotlistWebhook.value = hotlistConfig.webhookUrl ?? '';
   if (el.hotlistNotifyDrops) el.hotlistNotifyDrops.checked = hotlistConfig.notifyPriceDrops !== false;
-  if (el.hotlistSourceElgiganten) {
-    el.hotlistSourceElgiganten.checked = hotlistConfig.sources?.['elgiganten-hotlist'] !== false;
-  }
-  if (el.hotlistSourceAmazon) {
-    el.hotlistSourceAmazon.checked = hotlistConfig.sources?.['amazon-hotlist'] !== false;
-  }
   renderHotlistGroups();
 }
 
@@ -2374,10 +1664,8 @@ function collectHotlistConfig() {
     minDiscountPct: toNumber(el.hotlistMinDiscount, hotlistConfig.minDiscountPct),
     webhookUrl: el.hotlistWebhook ? el.hotlistWebhook.value.trim() : (hotlistConfig.webhookUrl ?? ''),
     notifyPriceDrops: el.hotlistNotifyDrops ? el.hotlistNotifyDrops.checked : hotlistConfig.notifyPriceDrops !== false,
-    sources: {
-      'elgiganten-hotlist': el.hotlistSourceElgiganten ? el.hotlistSourceElgiganten.checked : (hotlistConfig.sources?.['elgiganten-hotlist'] !== false),
-      'amazon-hotlist': el.hotlistSourceAmazon ? el.hotlistSourceAmazon.checked : (hotlistConfig.sources?.['amazon-hotlist'] !== false)
-    },
+    // `sources` (the per-store switches) is left out: the server merges over the
+    // saved config, so the stored value is kept as is.
     groups: hotlistConfig.groups
   };
 }
@@ -2616,44 +1904,6 @@ async function saveAllSettings() {
   el.drawerSaveStatus.textContent = 'Saving…';
 
   try {
-    // Save notification settings
-    notifSettings.notificationsEnabled = el.notificationsEnabledToggle?.checked !== false;
-    notifSettings.digest = {
-      enabled: document.getElementById('digest-enabled')?.checked === true,
-      time: parseTimeOfDay(document.getElementById('digest-time')?.value) ?? '08:00',
-      webhook: (document.getElementById('digest-webhook')?.value ?? '').trim(),
-      maxItems: parsePositiveInteger(document.getElementById('digest-max-items')?.value) ?? undefined
-    };
-    notifSettings.wishlistAlerts = {
-      enabled: document.getElementById('wishlist-alerts-enabled')?.checked === true,
-      webhook: (document.getElementById('wishlist-alerts-webhook')?.value ?? '').trim()
-    };
-    const res = await fetch('/api/notification-settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(notifSettings)
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    notifSettings = await res.json();
-    if (!Array.isArray(notifSettings.alertRules)) notifSettings.alertRules = [];
-
-    // Save scheduler
-    const intervalMinutes = parsePositiveInteger(el.schedulerInterval.value);
-    const startTime = parseTimeOfDay(el.schedulerWindowStart.value);
-    const endTime = parseTimeOfDay(el.schedulerWindowEnd.value);
-    if (intervalMinutes && startTime && endTime) {
-      const sched = await fetchJson('/api/scheduler', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          enabled: el.schedulerEnabled.checked,
-          intervalMinutes,
-          activeWindow: { enabled: el.schedulerWindowEnabled.checked, startTime, endTime, timeZone: 'Europe/Stockholm' }
-        })
-      });
-      renderSchedulerForm(sched);
-    }
-
     // Save hotlist
     if (hotlistConfig) {
       const payload = await fetchJson('/api/hotlist', {
@@ -2680,28 +1930,14 @@ async function saveAllSettings() {
 
     el.drawerSaveStatus.textContent = '✓ Saved';
     setTimeout(() => { el.drawerSaveStatus.textContent = ''; }, 2500);
-    renderRuleList();
+    // A deselected Komplett category leaves the listing straight away.
+    loadDashboard().catch(() => {});
   } catch (err) {
     el.drawerSaveStatus.textContent = `Error: ${err.message}`;
     showToast(`Save failed: ${err.message}`, 'error');
   } finally {
     el.saveSettingsBtn.disabled = false;
   }
-}
-
-// ── BULK SOURCE TOGGLE ──────────────────────────────────────────
-async function bulkToggleSources(enabled) {
-  const sources = await fetchJson('/api/sources');
-  const targets = sources.filter(s => s.enabled && s.schedulerEnabled !== enabled);
-  await Promise.all(targets.map(s =>
-    fetch(`/api/sources/${encodeURIComponent(s.id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled })
-    })
-  ));
-  const updated = await fetchJson('/api/sources');
-  renderSources(updated, false);
 }
 
 // ── EVENT LISTENERS ─────────────────────────────────────────────
@@ -2719,7 +1955,6 @@ function bindEvents() {
   // Filter checkboxes
   el.newOnly.addEventListener('change', () => updateFilters());
   el.discountedOnly.addEventListener('change', () => updateFilters());
-  el.favoritesOnly.addEventListener('change', () => updateFilters());
   el.referenceOnly.addEventListener('change', () => updateFilters());
 
   // Filter inputs
@@ -2769,23 +2004,10 @@ function bindEvents() {
   el.viewGrid.addEventListener('click', () => { state.viewMode = 'grid'; syncViewMode(); savePrefs(); });
   el.viewList.addEventListener('click', () => { state.viewMode = 'list'; syncViewMode(); savePrefs(); });
 
-  // Scan
-  el.scanBtn.addEventListener('click', () => triggerScan(null));
-  el.cancelBtn.addEventListener('click', async () => {
-    el.cancelBtn.disabled = true;
-    el.cancelBtn.textContent = 'Cancelling...';
-    try { await fetch('/api/cancel', { method: 'POST' }); } catch {}
-  });
-
   // Settings drawer
   el.settingsBtn.addEventListener('click', openDrawer);
   el.drawerClose.addEventListener('click', closeDrawer);
   el.settingsOverlay.addEventListener('click', closeDrawer);
-  el.schedulerStatus?.addEventListener('click', () => {
-    openDrawer();
-    const alertsTab = document.querySelector('.drawer-tab[data-tab="alerts"]');
-    if (alertsTab) alertsTab.click();
-  });
 
   // Drawer tabs
   for (const tab of el.drawerTabs) {
@@ -2793,7 +2015,7 @@ function bindEvents() {
       el.drawerTabs.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
       tab.classList.add('active');
       tab.setAttribute('aria-selected', 'true');
-      $$('.drawer-tab-content').forEach(c => c.classList.add('hidden'));
+      $$('#settings-drawer .drawer-tab-content').forEach(c => c.classList.add('hidden'));
       const target = $(`#tab-${tab.dataset.tab}`);
       if (target) target.classList.remove('hidden');
     });
@@ -2801,18 +2023,6 @@ function bindEvents() {
 
   // Save settings
   el.saveSettingsBtn.addEventListener('click', saveAllSettings);
-
-  // Add rule
-  el.addRuleBtn.addEventListener('click', () => {
-    const rule = createEmptyRule();
-    notifSettings.alertRules.push(rule);
-    el.rulesList.innerHTML = '';
-    renderRuleList();
-  });
-
-  // Source bulk toggles
-  el.sourcesAllOn?.addEventListener('click', () => bulkToggleSources(true));
-  el.sourcesAllOff?.addEventListener('click', () => bulkToggleSources(false));
 
   // Hotlist
   el.hotlistAddGroup?.addEventListener('click', () => {
@@ -2828,7 +2038,7 @@ function bindEvents() {
       const res = await fetchJson('/api/hotlist/poll', { method: 'POST' });
       renderHotlistStatus(res.status);
       showToast(`Hotlist: ${res.result?.count ?? 0} deal(s), ${res.result?.newCount ?? 0} new.`, 'success');
-      refresh();
+      loadDashboard().catch(() => {});
     } catch (err) {
       showToast(`Hotlist poll failed: ${err.message}`, 'error');
       refreshHotlistStatus();
@@ -2853,6 +2063,7 @@ function bindEvents() {
       renderKomplettDemoStatus(res.status);
       const r = res.result ?? {};
       showToast(`Komplett demo: ${r.count ?? 0} product(s), ${r.alertCount ?? 0} alert(s).`, 'success');
+      loadDashboard().catch(() => {});
     } catch (err) {
       showToast(`Komplett demo check failed: ${err.message}`, 'error');
       refreshKomplettDemoStatus();
@@ -2871,7 +2082,7 @@ function bindEvents() {
       // Only hide the banner if the IP is actually unblocked now.
       showToast(res.message, res.stillBlocked ? 'error' : 'success');
       if (!res.stillBlocked) el.elgigantenBlock.classList.add('hidden');
-      refresh();
+      loadDashboard().catch(() => {});
     } catch (err) {
       showToast(`Retry failed: ${err.message}`, 'error');
     } finally {
@@ -2879,9 +2090,6 @@ function bindEvents() {
       el.elgigantenBlockRetry.textContent = 'Retry now';
     }
   });
-
-  // Favorites search
-  el.favoritesSearchInput?.addEventListener('input', () => renderFavoritesEditor());
 
   // Keyboard shortcuts
   document.addEventListener('keydown', e => {

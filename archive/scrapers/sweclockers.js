@@ -1,5 +1,5 @@
 import { load } from 'cheerio';
-import { normalizeProductIdentity, parseSekValue } from '../lib/utils.js';
+import { normalizeProductIdentity, parseSekValue } from '../../src/lib/utils.js';
 
 /**
  * SweClockers Dagens Fynd scraper.

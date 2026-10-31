@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { collectSource } from '../src/sources/index.js';
+import { collectFromApifyElgiganten as collectSource } from '../apifyElgiganten.js';
 
 test('collects Elgiganten outlet items from Apify actor output', async () => {
   const previousToken = process.env.APIFY_TOKEN;

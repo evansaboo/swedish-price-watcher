@@ -1,4 +1,4 @@
-import { absoluteUrl, firstFinite, parseSekValue, slugify, stripText } from '../lib/utils.js';
+import { absoluteUrl, firstFinite, parseSekValue, slugify, stripText } from '../../src/lib/utils.js';
 
 function asArray(value) {
   return Array.isArray(value) ? value : value == null ? [] : [value];

@@ -15,98 +15,10 @@ function buildTestCache(state) {
   return cache;
 }
 
-test('manual run explains when no sources are enabled', async () => {
+test('returns simplified outlet products, filters and category stats', async () => {
   const state = createDefaultState();
-  const app = await buildApp({
-    config: {
-      publicDir,
-      sources: []
-    },
-    store: {
-      getState() {
-        return state;
-      }
-    },
-    productCache: buildTestCache(state),
-    scanState: {
-      running: false,
-      lastError: null
-    },
-    triggerScan: async () => ({})
-  });
-
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/run'
-  });
-
-  assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    ok: false,
-    message: 'No sources are enabled. Add or enable a source in config/sources.json.'
-  });
-
-  await app.close();
-});
-
-test('manual run starts in the background when sources are enabled', async () => {
-  let triggerStarted = false;
-  let releaseTrigger = () => {};
-  const triggerGate = new Promise((resolve) => {
-    releaseTrigger = resolve;
-  });
-
-  const app = await buildApp({
-    config: {
-      publicDir,
-      sources: [
-        {
-          id: 'komplett-outlet-electronics',
-          label: 'Komplett outlet electronics',
-          enabled: true
-        }
-      ]
-    },
-    store: {
-      getState() {
-        return createDefaultState();
-      }
-    },
-    productCache: buildTestCache(createDefaultState()),
-    scanState: {
-      running: false,
-      lastError: null,
-      startedAt: null,
-      currentSourceId: null,
-      completedSources: 0,
-      totalSources: 0
-    },
-    triggerScan: async () => {
-      triggerStarted = true;
-      await triggerGate;
-      return {};
-    }
-  });
-
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/run'
-  });
-
-  assert.equal(triggerStarted, true);
-  assert.equal(response.statusCode, 202);
-  assert.deepEqual(response.json(), {
-    ok: true,
-    started: true,
-    message: 'Live scan started.'
-  });
-
-  releaseTrigger();
-  await app.close();
-});
-
-test('returns simplified outlet products and favorite category stats', async () => {
-  const state = createDefaultState();
+  const now = Date.now();
+  const hoursAgo = (h) => new Date(now - h * 3600_000).toISOString();
   state.items = {
     'elgiganten-outlet-latest:1000290': {
       listingKey: 'elgiganten-outlet-latest:1000290',
@@ -120,7 +32,7 @@ test('returns simplified outlet products and favorite category stats', async () 
       referencePriceSek: 3990,
       marketValueSek: 3990,
       highestPriceSek: 3990,
-      firstSeenAt: '2026-04-17T10:05:00.000Z',
+      firstSeenAt: hoursAgo(1),
       lastSeenAt: '2026-04-17T10:00:00.000Z'
     },
     'elgiganten-outlet-latest:1000291': {
@@ -135,7 +47,7 @@ test('returns simplified outlet products and favorite category stats', async () 
       referencePriceSek: 12990,
       marketValueSek: 12990,
       highestPriceSek: 12990,
-      firstSeenAt: '2026-04-17T09:00:00.000Z',
+      firstSeenAt: hoursAgo(48),
       lastSeenAt: '2026-04-17T10:00:00.000Z'
     },
     'elgiganten-outlet-latest:1000292': {
@@ -150,12 +62,12 @@ test('returns simplified outlet products and favorite category stats', async () 
       referencePriceSek: null,
       marketValueSek: null,
       highestPriceSek: 1490,
-      firstSeenAt: '2026-04-17T09:00:00.000Z',
+      firstSeenAt: hoursAgo(48),
       lastSeenAt: '2026-04-17T10:00:00.000Z'
     }
   };
+  // A stored favorite-category list from before 2026-10-31 is ignored.
   state.preferences.favoriteCategories = ['Horlurar'];
-  state.stats.lastRunStartedAt = '2026-04-17T10:00:00.000Z';
 
   const app = await buildApp({
     config: {
@@ -168,16 +80,7 @@ test('returns simplified outlet products and favorite category stats', async () 
       },
       async save() {}
     },
-    productCache: buildTestCache(state),
-    scanState: {
-      running: false,
-      lastError: null,
-      startedAt: null,
-      currentSourceId: null,
-      completedSources: 0,
-      totalSources: 0
-    },
-    triggerScan: async () => ({})
+    productCache: buildTestCache(state)
   });
 
   const productsResponse = await app.inject({
@@ -188,8 +91,7 @@ test('returns simplified outlet products and favorite category stats', async () 
   const products = productsData.items ?? productsData;
 
   assert.equal(productsResponse.statusCode, 200);
-  assert.equal(products.length, 2);
-  assert.equal(products.every((product) => product.category === 'Horlurar'), true);
+  assert.equal(products.length, 3, 'the retired favoritesOnly filter no longer narrows the list');
   assert.equal(products.some((product) => product.discountSek === 1200 && product.discountPercent === 30), true);
 
   const categoriesResponse = await app.inject({
@@ -209,8 +111,7 @@ test('returns simplified outlet products and favorite category stats', async () 
 
   assert.equal(categoriesResponse.statusCode, 200);
   assert.equal(categories.length, 2);
-  assert.equal(categories.find((category) => category.name === 'Horlurar').favorite, true);
-  assert.equal(categories.find((category) => category.name === 'TV').favorite, false);
+  assert.equal('favorite' in categories[0], false);
   assert.equal(filteredResponse.statusCode, 200);
   const filteredProducts = (filteredResponse.json().items ?? filteredResponse.json());
   assert.equal(filteredProducts.length, 1);
@@ -223,184 +124,64 @@ test('returns simplified outlet products and favorite category stats', async () 
   await app.close();
 });
 
-test('scheduler settings can be read and updated through API', async () => {
+test('the retired scan, scheduler, digest, source and favorites routes are gone', async () => {
   const state = createDefaultState();
-  const schedulerState = {
-    enabled: true,
-    intervalMinutes: 180,
-    nextRunAt: null,
-    activeWindow: {
-      enabled: true,
-      startTime: '07:00',
-      endTime: '00:00',
-      timeZone: 'Europe/Stockholm'
-    },
-    isInActiveWindow: true
+  state.items['elgiganten-hotlist:1'] = {
+    listingKey: 'elgiganten-hotlist:1', sourceId: 'elgiganten-hotlist', condition: 'outlet',
+    title: 'x', url: 'https://www.elgiganten.se/product/1', latestPriceSek: 100
   };
-
   const app = await buildApp({
-    config: {
-      publicDir,
-      sources: []
-    },
-    store: {
-      getState() {
-        return state;
-      },
-      async save() {}
-    },
-    productCache: buildTestCache(state),
-    scanState: {
-      running: false,
-      lastError: null,
-      startedAt: null,
-      currentSourceId: null,
-      completedSources: 0,
-      totalSources: 0
-    },
-    triggerScan: async () => ({}),
-    scheduler: {
-      getState() {
-        return { ...schedulerState };
-      },
-      async update(next) {
-        if (next.enabled !== undefined) {
-          schedulerState.enabled = Boolean(next.enabled);
-        }
-
-        if (next.intervalMinutes !== undefined) {
-          schedulerState.intervalMinutes = Number.parseInt(String(next.intervalMinutes), 10);
-        }
-
-        if (next.activeWindow && typeof next.activeWindow === 'object') {
-          schedulerState.activeWindow = {
-            ...schedulerState.activeWindow,
-            ...next.activeWindow
-          };
-        }
-
-        return { ...schedulerState };
-      }
-    }
+    config: { publicDir, sources: [] },
+    store: { getState: () => state, async save() {}, async savePreferences() {} },
+    productCache: buildTestCache(state)
   });
 
-  const getResponse = await app.inject({
-    method: 'GET',
-    url: '/api/scheduler'
-  });
+  const gone = [
+    ['POST', '/api/run'],
+    ['POST', '/api/cancel'],
+    ['GET', '/api/scheduler'],
+    ['PUT', '/api/scheduler'],
+    ['GET', '/api/sources'],
+    ['PATCH', '/api/sources/netonnet-outlet'],
+    ['GET', '/api/notification-settings'],
+    ['PUT', '/api/notification-settings'],
+    ['GET', '/api/preferences'],
+    ['PUT', '/api/preferences/favorite-categories'],
+    ['PUT', '/api/wishlist/elgiganten-hotlist:1/target'],
+    ['GET', '/api/hotlist/amazon-suggestions?q=rtx']
+  ];
+  for (const [method, url] of gone) {
+    const response = await app.inject({ method, url, payload: method === 'GET' ? undefined : {} });
+    assert.equal(response.statusCode, 404, `${method} ${url} should be gone`);
+  }
 
-  assert.equal(getResponse.statusCode, 200);
-  assert.equal(getResponse.json().intervalMinutes, 180);
-  assert.equal(getResponse.json().activeWindow.startTime, '07:00');
-
-  const updateResponse = await app.inject({
-    method: 'PUT',
-    url: '/api/scheduler',
-    payload: {
-      enabled: false,
-      intervalMinutes: 45,
-      activeWindow: {
-        enabled: true,
-        startTime: '08:00',
-        endTime: '23:00',
-        timeZone: 'Europe/Stockholm'
-      }
-    }
-  });
-
-  assert.equal(updateResponse.statusCode, 200);
-  assert.deepEqual(updateResponse.json(), {
-    enabled: false,
-    intervalMinutes: 45,
-    nextRunAt: null,
-    activeWindow: {
-      enabled: true,
-      startTime: '08:00',
-      endTime: '23:00',
-      timeZone: 'Europe/Stockholm'
-    },
-    isInActiveWindow: true
-  });
-
-  const invalidResponse = await app.inject({
-    method: 'PUT',
-    url: '/api/scheduler',
-    payload: {
-      intervalMinutes: 0
-    }
-  });
-
-  assert.equal(invalidResponse.statusCode, 400);
-  assert.equal(invalidResponse.json().message, 'intervalMinutes must be a positive integer.');
-
-  const invalidWindowResponse = await app.inject({
-    method: 'PUT',
-    url: '/api/scheduler',
-    payload: {
-      activeWindow: {
-        startTime: '25:00'
-      }
-    }
-  });
-
-  assert.equal(invalidWindowResponse.statusCode, 400);
-  assert.equal(invalidWindowResponse.json().message, 'activeWindow.startTime must use HH:MM format.');
+  // The wishlist bookmark itself stays (it never alerted on its own).
+  const added = await app.inject({ method: 'POST', url: '/api/wishlist/elgiganten-hotlist:1' });
+  assert.equal(added.statusCode, 200);
+  assert.deepEqual((await app.inject({ method: 'GET', url: '/api/wishlist' })).json(), { items: ['elgiganten-hotlist:1'] });
 
   await app.close();
 });
 
-test('PUT /api/notification-settings merges by default and never wipes omitted fields', async () => {
+test('/health, /api/version and /api/status still answer', async () => {
   const state = createDefaultState();
-  state.preferences = {
-    notificationSettings: {
-      notificationsEnabled: true,
-      alertRules: [
-        { id: 'default-deals', label: 'Best Deals (>=20% off)', enabled: true, keywords: [], categories: [], webhooks: ['https://discord.example/hook'], filteredSources: [], sourceFilterMode: 'exclude', notifyPriceDrops: true, minDiscountPercent: 20 }
-      ],
-      wishlistAlerts: { enabled: false, webhook: '' }
-    }
-  };
-
-  let saved = 0;
   const app = await buildApp({
     config: { publicDir, sources: [] },
-    store: {
-      getState() { return state; },
-      async save() { saved++; },
-      async savePreferences() { saved++; }
-    },
-    productCache: buildTestCache(state),
-    scanState: { running: false, lastError: null, startedAt: null, currentSourceId: null, completedSources: 0, totalSources: 0 },
-    triggerScan: async () => ({}),
-    scheduler: { getState() { return {}; }, async update() { return {}; } }
+    store: { getState: () => state },
+    productCache: buildTestCache(state)
   });
 
-  // A partial PUT that only toggles wishlistAlerts must NOT drop the alert rules.
-  const res = await app.inject({
-    method: 'PUT',
-    url: '/api/notification-settings',
-    payload: { wishlistAlerts: { enabled: true, webhook: 'https://discord.example/wish' } }
-  });
+  const health = await app.inject({ method: 'GET', url: '/health' });
+  assert.equal(health.statusCode, 200);
+  assert.equal(health.json().ok, true);
+  assert.ok('sha' in health.json());
 
-  assert.equal(res.statusCode, 200);
-  const body = res.json();
-  assert.equal(body.alertRules.length, 1, 'alert rules preserved');
-  assert.equal(body.alertRules[0].id, 'default-deals');
-  assert.equal(body.wishlistAlerts.enabled, true, 'wishlistAlerts updated');
-  assert.equal(body.wishlistAlerts.webhook, 'https://discord.example/wish');
-  // Persisted state matches
-  assert.equal(state.preferences.notificationSettings.alertRules.length, 1);
-  assert.equal(state.preferences.notificationSettings.wishlistAlerts.enabled, true);
-  assert.ok(saved > 0, 'preferences saved');
+  assert.equal((await app.inject({ method: 'GET', url: '/api/version' })).statusCode, 200);
 
-  // An explicit empty alertRules array still clears them (explicit intent honored).
-  const clearRes = await app.inject({
-    method: 'PUT',
-    url: '/api/notification-settings',
-    payload: { alertRules: [] }
-  });
-  assert.equal(clearRes.statusCode, 200);
-  assert.equal(clearRes.json().alertRules.length, 0, 'explicit empty array clears rules');
+  const status = await app.inject({ method: 'GET', url: '/api/status' });
+  assert.equal(status.statusCode, 200);
+  assert.deepEqual(Object.keys(status.json().counts).sort(), ['deals', 'listedProducts', 'trackedItems']);
+  assert.equal('scheduler' in status.json(), false);
 
   await app.close();
 });
@@ -421,8 +202,6 @@ test('a malformed hotlist webhook is rejected instead of silently clearing it', 
     config: { publicDir, sources: [] },
     store: { getState: () => state },
     productCache: buildTestCache(state),
-    scanState: { running: false, lastError: null },
-    triggerScan: async () => ({}),
     hotlist: {
       getConfig: () => config,
       getStatus: () => ({}),
@@ -448,54 +227,6 @@ test('a malformed hotlist webhook is rejected instead of silently clearing it', 
   });
   assert.equal(cleared.statusCode, 200);
   assert.equal(cleared.json().config.webhookUrl, '');
-
-  await app.close();
-});
-
-test('GET /api/sources excludes hotlist and PATCH refuses hotlist sourceId', async () => {
-  const state = createDefaultState();
-  const sources = [
-    { id: 'elgiganten-outlet', label: 'Elgiganten Outlet', type: 'elgiganten-algolia', enabled: true },
-    { id: 'elgiganten-hotlist', label: 'Elgiganten Hotlist', type: 'elgiganten-hotlist', enabled: true },
-    { id: 'netonnet-outlet', label: 'NetOnNet Outlet', type: 'netonnet-outlet', enabled: true }
-  ];
-
-  const app = await buildApp({
-    config: { publicDir, sources },
-    store: {
-      getState: () => state,
-      async save() {},
-      async savePreferences() {}
-    },
-    productCache: buildTestCache(state),
-    scanState: { running: false, lastError: null },
-    triggerScan: async () => ({})
-  });
-
-  const getRes = await app.inject({ method: 'GET', url: '/api/sources' });
-  assert.equal(getRes.statusCode, 200);
-  const returnedSources = getRes.json();
-  assert.equal(returnedSources.length, 2);
-  assert.equal(returnedSources.some(s => s.id === 'elgiganten-hotlist'), false, 'hotlist excluded from standard sources');
-  assert.equal(returnedSources.some(s => s.id === 'elgiganten-outlet'), true);
-  assert.equal(returnedSources.some(s => s.id === 'netonnet-outlet'), true);
-
-  // Patching standard source succeeds
-  const patchRes = await app.inject({
-    method: 'PATCH',
-    url: '/api/sources/elgiganten-outlet',
-    payload: { enabled: false }
-  });
-  assert.equal(patchRes.statusCode, 200);
-  assert.equal(state.preferences.sourceOverrides['elgiganten-outlet'], false);
-
-  // Patching hotlist through standard sources endpoint returns 404
-  const patchHotlistRes = await app.inject({
-    method: 'PATCH',
-    url: '/api/sources/elgiganten-hotlist',
-    payload: { enabled: false }
-  });
-  assert.equal(patchHotlistRes.statusCode, 404);
 
   await app.close();
 });

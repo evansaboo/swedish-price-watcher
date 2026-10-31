@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPaapiHeaders, normalizePaapiItem } from '../src/sources/amazonPaapi.js';
+import { buildPaapiHeaders, normalizePaapiItem } from '../amazonPaapi.js';
 
 test('buildPaapiHeaders generates valid AWS SigV4 authorization headers', () => {
   const headers = buildPaapiHeaders({

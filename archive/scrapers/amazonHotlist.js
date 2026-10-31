@@ -1,8 +1,8 @@
 import * as cheerio from 'cheerio';
-import { normalizeProductIdentity } from '../lib/utils.js';
-import { titleMatchesKeyword, normalizeWatchGroups } from './elgigantenHotlist.js';
-import { resolveBypassBackend } from '../lib/bypassFetch.js';
-import { buildFingerprint, buildStealthScript, buildLaunchArgs } from './browserFingerprint.js';
+import { normalizeProductIdentity } from '../../src/lib/utils.js';
+import { titleMatchesKeyword, normalizeWatchGroups } from '../../src/sources/elgigantenHotlist.js';
+import { resolveBypassBackend } from './lib/bypassFetch.js';
+import { buildFingerprint, buildStealthScript, buildLaunchArgs } from '../../src/sources/browserFingerprint.js';
 
 /**
  * Amazon.se Hotlist — a targeted, fast poller for hot product categories and

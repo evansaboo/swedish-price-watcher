@@ -12,9 +12,6 @@
     <script>try{const t=localStorage.getItem('spw-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
   </head>
   <body>
-    <!-- ===== SCAN LINE ===== -->
-    <div id="scan-line" class="scan-line hidden" aria-hidden="true"></div>
-
     <!-- ===== HEADER ===== -->
     <header class="header" id="header">
       <div class="header-inner">
@@ -32,10 +29,6 @@
         </div>
 
         <div class="header-actions">
-          <div id="scheduler-status" class="scheduler-pill hidden">
-            <span class="scheduler-dot"></span>
-            <span id="scheduler-text"></span>
-          </div>
           <button id="theme-toggle" type="button" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">
             <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
             <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -43,21 +36,10 @@
           <button id="settings-btn" type="button" class="icon-btn" title="Settings" aria-label="Settings">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
-          <button id="scan-btn" type="button" class="scan-btn">
-            <svg class="scan-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
-            <span class="scan-btn-label">Scan</span>
-          </button>
-          <button id="cancel-btn" type="button" class="cancel-btn hidden">Cancel</button>
         </div>
       </div>
 
     </header>
-
-    <!-- ===== SCAN PROGRESS BAR ===== -->
-    <div id="scan-progress" class="scan-progress hidden">
-      <div id="scan-progress-bar" class="scan-progress-bar"></div>
-      <span id="scan-progress-text" class="scan-progress-text"></span>
-    </div>
 
     <!-- ===== FILTER BAR ===== -->
     <nav class="filter-bar" id="filter-bar">
@@ -68,7 +50,6 @@
           <button type="button" class="filter-pill" data-filter-preset="hot">Hot deals</button>
           <button type="button" class="filter-pill" data-filter-preset="discounted">Discounted</button>
           <button type="button" class="filter-pill" data-filter-preset="matched">Matched</button>
-          <button type="button" class="filter-pill" data-filter-preset="favorites">★ Favorites</button>
           <button type="button" class="filter-pill" data-filter-preset="wishlist">♡ Wishlist</button>
         </div>
 
@@ -114,8 +95,8 @@
             <select id="store-filter" class="field-select"><option value="">All stores</option></select>
           </div>
           <div class="filter-field hidden" id="campaign-filter-group">
-            <label for="campaign-filter">Campaign</label>
-            <select id="campaign-filter" class="field-select"><option value="">All campaigns</option></select>
+            <label for="campaign-filter">Condition</label>
+            <select id="campaign-filter" class="field-select"><option value="">All conditions</option></select>
           </div>
           <div class="filter-field">
             <label for="min-discount-filter">Min discount %</label>
@@ -133,7 +114,6 @@
         <div class="filter-checks">
           <label class="check-label"><input id="new-only" type="checkbox" /><span>New only</span></label>
           <label class="check-label"><input id="discounted-only" type="checkbox" /><span>Discounted</span></label>
-          <label class="check-label"><input id="favorites-only" type="checkbox" /><span>Favorites</span></label>
           <label class="check-label"><input id="reference-only" type="checkbox" /><span>Matched price</span></label>
         </div>
         <div class="filter-panel-footer">
@@ -175,7 +155,7 @@
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
         </div>
         <h3>No products found</h3>
-        <p>Try adjusting your filters or run a new scan</p>
+        <p>Try adjusting your filters. Hotlist and Komplett demo finds show up here as their watchers report them.</p>
       </div>
     </main>
 
@@ -190,144 +170,12 @@
       </div>
       <div class="drawer-body">
         <div class="drawer-tabs" role="tablist">
-          <button type="button" class="drawer-tab active" data-tab="sources" role="tab" aria-selected="true">Sources</button>
-          <button type="button" class="drawer-tab" data-tab="alerts" role="tab" aria-selected="false">Normal Alerts</button>
-          <button type="button" class="drawer-tab" data-tab="hotlist" role="tab" aria-selected="false">Hotlist</button>
+          <button type="button" class="drawer-tab active" data-tab="hotlist" role="tab" aria-selected="true">Hotlist</button>
           <button type="button" class="drawer-tab" data-tab="komplett-demo" role="tab" aria-selected="false">Komplett demo</button>
-          <button type="button" class="drawer-tab" data-tab="favorites" role="tab" aria-selected="false">Favorites</button>
         </div>
 
-        <!-- Sources -->
-        <div id="tab-sources" class="drawer-tab-content">
-          <div class="sources-toolbar">
-            <button id="sources-all-on" type="button" class="ghost-btn">All on</button>
-            <button id="sources-all-off" type="button" class="ghost-btn">All off</button>
-          </div>
-          <div id="sources-list" class="sources-list"></div>
-        </div>
-
-        <!-- Normal Alerts (Scheduled Scans + Rules + Digest + Wishlist) -->
-        <div id="tab-alerts" class="drawer-tab-content hidden">
-          <!-- 1. Scan Schedule & Auto-Scan -->
-          <div class="drawer-section scheduler-section">
-            <div class="section-title-row">
-              <div class="section-title-wrap">
-                <span class="section-title-icon">⏱️</span>
-                <h3>Scan Scheduler</h3>
-              </div>
-              <span class="section-badge">Normal Scans</span>
-            </div>
-            <p class="section-hint">Scheduled full scans walk all enabled store sources to discover new deals and evaluate alert rules.</p>
-            <div id="modal-scheduler-status" class="scheduler-status-box" style="margin-top:0.625rem"></div>
-            <div class="scheduler-form">
-              <label class="toggle-switch">
-                <input id="scheduler-enabled" type="checkbox" />
-                <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                <span class="toggle-label">Auto-scan enabled</span>
-              </label>
-              <div class="form-field">
-                <label for="scheduler-interval">Interval (minutes)</label>
-                <input id="scheduler-interval" type="number" class="field-input" min="1" step="1" />
-              </div>
-              <label class="toggle-switch">
-                <input id="scheduler-window-enabled" type="checkbox" />
-                <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                <span class="toggle-label">Active hours only</span>
-              </label>
-              <div class="form-row">
-                <div class="form-field">
-                  <label for="scheduler-window-start">Start</label>
-                  <input id="scheduler-window-start" type="time" class="field-input" />
-                </div>
-                <div class="form-field">
-                  <label for="scheduler-window-end">End</label>
-                  <input id="scheduler-window-end" type="time" class="field-input" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="drawer-divider"></div>
-
-          <!-- 2. Discord Alerts Master Switch & Rules -->
-          <div class="drawer-section rules-section">
-            <div class="section-title-row">
-              <div class="section-title-wrap">
-                <span class="section-title-icon">🔔</span>
-                <h3>Discord Alert Rules</h3>
-              </div>
-              <span class="section-badge">Triggered on Scan</span>
-            </div>
-            <div class="alerts-header">
-              <label class="toggle-switch">
-                <input id="notifications-enabled-toggle" type="checkbox" checked />
-                <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                <span class="toggle-label">Discord alerts enabled</span>
-              </label>
-            </div>
-            <div class="rules-toolbar">
-              <span id="rules-count-label" class="rules-count"></span>
-              <button id="add-rule-btn" type="button" class="ghost-btn accent">+ Add alert</button>
-            </div>
-            <ul id="rules-list" class="rules-list"></ul>
-          </div>
-
-          <div class="drawer-divider"></div>
-
-          <!-- 3. Daily Digest -->
-          <div class="digest-section">
-            <div class="section-title-row" style="margin-bottom:8px">
-              <div class="section-title-wrap">
-                <span class="section-title-icon">📰</span>
-                <h4 style="font-size:13px;font-weight:600">Daily Digest</h4>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input id="digest-enabled" type="checkbox" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">Daily digest (top new deals)</span>
-            </label>
-            <div class="form-row" style="margin-top:0.5rem">
-              <div class="form-field">
-                <label for="digest-time">Send at (Stockholm)</label>
-                <input id="digest-time" type="time" class="field-input" value="08:00" />
-              </div>
-              <div class="form-field">
-                <label for="digest-max-items">Max deals</label>
-                <input id="digest-max-items" type="number" class="field-input" min="1" max="25" step="1" placeholder="10" />
-              </div>
-            </div>
-            <div class="form-field" style="margin-top:0.5rem">
-              <label for="digest-webhook">Digest webhook</label>
-              <input id="digest-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
-            </div>
-          </div>
-
-          <div class="drawer-divider"></div>
-
-          <!-- 4. Wishlist target alerts -->
-          <div class="digest-section wishlist-alert-section">
-            <div class="section-title-row" style="margin-bottom:8px">
-              <div class="section-title-wrap">
-                <span class="section-title-icon">🎯</span>
-                <h4 style="font-size:13px;font-weight:600">Wishlist Target Alerts</h4>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input id="wishlist-alerts-enabled" type="checkbox" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">Wishlist target alerts</span>
-            </label>
-            <p class="section-hint">Get pinged when a wishlisted item drops to or below your target price during scheduled scans.</p>
-            <div class="form-field" style="margin-top:0.5rem">
-              <label for="wishlist-alerts-webhook">Wishlist webhook</label>
-              <input id="wishlist-alerts-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
-            </div>
-          </div>
-        </div>
-
-        <!-- Hotlist — continuous Elgiganten & Amazon.se poller -->
-        <div id="tab-hotlist" class="drawer-tab-content hidden">
+        <!-- Hotlist — continuous Elgiganten poller -->
+        <div id="tab-hotlist" class="drawer-tab-content">
           <div class="section-title-row" style="margin-bottom: 6px">
             <div class="section-title-wrap">
               <span class="section-title-icon">⚡</span>
@@ -335,7 +183,7 @@
             </div>
             <span class="section-badge hotlist-badge">Fast Loop</span>
           </div>
-          <p class="section-hint" style="margin-bottom: 12px">Dedicated high-frequency continuous poller for Elgiganten and Amazon.se resale finds, warehouse deals, and flash discounts. Runs on its own dedicated loop, completely independent of scheduled scans and normal alert rules.</p>
+          <p class="section-hint" style="margin-bottom: 12px">Continuous poller for Elgiganten resale finds, outlet units and flash discounts, on its own randomised loop. Its finds appear in the main listing and post to the Discord webhook below.</p>
           <div id="hotlist-status" class="hotlist-status" aria-live="polite"></div>
 
           <div class="hotlist-controls">
@@ -361,28 +209,13 @@
             <div class="form-field" style="margin-top:0.5rem">
               <label for="hotlist-webhook">Hotlist Discord webhook</label>
               <input id="hotlist-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
-              <p class="field-hint">Hotlist finds post directly here. They do not use the scan scheduler or normal alert rules.</p>
+              <p class="field-hint">Hotlist finds post directly here. Blank = the app's default webhook.</p>
             </div>
             <label class="toggle-switch" style="margin-top:0.5rem">
               <input id="hotlist-notify-drops" type="checkbox" />
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
               <span class="toggle-label">Also notify on price drops</span>
             </label>
-            <div class="form-field" style="margin-top:0.75rem">
-              <label class="rule-field-label" style="margin-bottom:6px">Active Hotlist Scrapers</label>
-              <div style="display:flex; gap:16px; flex-wrap:wrap;">
-                <label class="toggle-switch" title="Toggle Elgiganten Hotlist">
-                  <input id="hotlist-source-elgiganten" type="checkbox" checked />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  <span class="toggle-label">Elgiganten</span>
-                </label>
-                <label class="toggle-switch" title="Toggle Amazon.se Hotlist">
-                  <input id="hotlist-source-amazon" type="checkbox" checked />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  <span class="toggle-label">Amazon.se</span>
-                </label>
-              </div>
-            </div>
           </div>
 
           <div class="rules-toolbar">
@@ -404,7 +237,7 @@
             </div>
             <span class="section-badge hotlist-badge">B-grade</span>
           </div>
-          <p class="section-hint" style="margin-bottom: 12px">Watches the Komplett demovaror (B-grade) categories you pick, newest first, and posts new demo products to Discord. Each check is one small Apify run on a randomised loop, with a monthly spend cap. A newly picked category is recorded silently on its first check.</p>
+          <p class="section-hint" style="margin-bottom: 12px">Watches the Komplett demovaror (B-grade) categories you pick, newest first, and posts new demo products to Discord. Each check is one small Apify run on a randomised loop, with a monthly spend cap. A newly picked category is recorded silently on its first check. Tracked demo products also appear in the main listing under the store "Komplett demo".</p>
           <div id="kd-status" class="hotlist-status" aria-live="polite"></div>
 
           <div class="hotlist-controls">
@@ -461,14 +294,6 @@
           <ul id="kd-finds" class="kd-finds"></ul>
         </div>
 
-        <!-- Favorites -->
-        <div id="tab-favorites" class="drawer-tab-content hidden">
-          <div id="favorite-chips" class="fav-chips"></div>
-          <div class="fav-search">
-            <input id="favorites-search-input" type="search" class="field-input" placeholder="Search categories to add..." />
-          </div>
-          <div id="favorites-editor" class="fav-grid"></div>
-        </div>
       </div>
       <div class="drawer-footer">
         <span id="drawer-save-status" class="save-status"></span>
@@ -677,7 +502,6 @@
 
     <!-- ===== TOASTS ===== -->
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
-    <pre id="run-summary" class="run-summary hidden"></pre>
 
     <!-- ===== FOOTER ===== -->
     <footer class="app-footer" id="app-footer">

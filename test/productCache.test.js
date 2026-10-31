@@ -32,11 +32,9 @@ function buildCache() {
   return cache;
 }
 
-const NO_FAVS = new Set();
-
 test('query returns defaults for unparseable page/pageSize (NaN guard)', () => {
   const cache = buildCache();
-  const result = cache.query({ page: NaN, pageSize: NaN }, NO_FAVS, null, new Set());
+  const result = cache.query({ page: NaN, pageSize: NaN });
   assert.equal(result.page, 1);
   assert.equal(result.pageSize, 50);
   assert.equal(result.items.length, 3);
@@ -45,14 +43,14 @@ test('query returns defaults for unparseable page/pageSize (NaN guard)', () => {
 
 test('query filters by store and computes aggregates', () => {
   const cache = buildCache();
-  const result = cache.query({ store: 'src-a' }, NO_FAVS, null, new Set());
+  const result = cache.query({ store: 'src-a' });
   assert.equal(result.total, 2);
   assert.equal(result.aggregates.matched, 1, 'one src-a item has a reference price');
 });
 
 test('query on unknown category returns empty result shape', () => {
   const cache = buildCache();
-  const result = cache.query({ category: 'does-not-exist' }, NO_FAVS, null, new Set());
+  const result = cache.query({ category: 'does-not-exist' });
   assert.equal(result.total, 0);
   assert.deepEqual(result.items, []);
   assert.equal(result.totalPages, 1);
@@ -60,7 +58,7 @@ test('query on unknown category returns empty result shape', () => {
 
 test('exportRows returns the full filtered set without pagination', () => {
   const cache = buildCache();
-  const rows = cache.exportRows({ sortBy: 'currentPriceSek', sortDir: 'asc' }, NO_FAVS, null, new Set());
+  const rows = cache.exportRows({ sortBy: 'currentPriceSek', sortDir: 'asc' });
   assert.equal(rows.length, 3);
   assert.equal(rows[0].title, 'Sony hörlurar', 'sorted by price ascending');
   assert.ok(Array.isArray(rows));
@@ -68,55 +66,24 @@ test('exportRows returns the full filtered set without pagination', () => {
 
 test('exportRows honours filters', () => {
   const cache = buildCache();
-  const rows = cache.exportRows({ search: 'macbook' }, NO_FAVS, null, new Set());
+  const rows = cache.exportRows({ search: 'macbook' });
   assert.equal(rows.length, 1);
   assert.equal(rows[0].listingKey, 'src-b:3');
 });
 
 test('discount fields are computed from reference price', () => {
   const cache = buildCache();
-  const rows = cache.exportRows({ search: 'rtx' }, NO_FAVS, null, new Set());
+  const rows = cache.exportRows({ search: 'rtx' });
   assert.equal(rows[0].discountSek, 3000);
   assert.equal(rows[0].discountPercent, 30);
 });
 
-test('cross-store annotation marks cheapest store across matched products', () => {
-  const state = createDefaultState();
-  state.items = {
-    'store-a:gpu': {
-      listingKey: 'store-a:gpu', sourceId: 'store-a', sourceLabel: 'Store A', title: 'ASUS RTX 4070 Dual',
-      category: 'Grafikkort', condition: 'outlet', latestPriceSek: 7000,
-      manufacturerArticleNumber: 'DUAL-RTX4070-O12G',
-      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
-    },
-    'store-b:gpu': {
-      listingKey: 'store-b:gpu', sourceId: 'store-b', sourceLabel: 'Store B', title: 'RTX 4070 Dual OC-utgåva',
-      category: 'Grafikkort', condition: 'outlet', latestPriceSek: 6500,
-      manufacturerArticleNumber: 'DUAL-RTX4070-O12G',
-      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
-    },
-    'store-a:solo': {
-      listingKey: 'store-a:solo', sourceId: 'store-a', sourceLabel: 'Store A', title: 'Unik produkt',
-      category: 'Ljud', condition: 'outlet', latestPriceSek: 999,
-      firstSeenAt: '2026-06-01T00:00:00.000Z', lastSeenAt: '2026-06-12T00:00:00.000Z', history: []
-    }
-  };
-
-  const cache = new ProductCache();
-  cache.rebuild(state, new Map());
-
-  const byKey = new Map(cache.products.map(p => [p.listingKey, p]));
-  const a = byKey.get('store-a:gpu');
-  const b = byKey.get('store-b:gpu');
-  const solo = byKey.get('store-a:solo');
-
-  assert.ok(a.crossStore, 'matched product gets crossStore info');
-  assert.equal(a.crossStore.isCheapest, false);
-  assert.equal(a.crossStore.bestPriceSek, 6500);
-  assert.equal(a.crossStore.bestSourceLabel, 'Store B');
-  assert.equal(b.crossStore.isCheapest, true);
-  assert.equal(b.crossStore.stores, 2);
-  assert.equal(solo.crossStore, undefined, 'unmatched product has no crossStore');
+test('the cross-store annotation is gone and stores carry product counts', () => {
+  const cache = buildCache();
+  assert.equal(cache.products.some((p) => 'crossStore' in p), false);
+  for (const source of cache.sources) {
+    assert.equal(source.count, cache.query({ store: source.id }).total, `count for ${source.id}`);
+  }
 });
 
 test('strips implausible reference prices and labels reference confidence', () => {
@@ -137,7 +104,7 @@ test('strips implausible reference prices and labels reference confidence', () =
   };
   const cache = new ProductCache();
   cache.rebuild(state, new Map());
-  const result = cache.query({}, NO_FAVS, null, new Set());
+  const result = cache.query({});
   const bad = result.items.find((p) => p.listingKey === 'src-a:bad');
   const ok = result.items.find((p) => p.listingKey === 'src-a:ok');
 

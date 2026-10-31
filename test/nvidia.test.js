@@ -16,13 +16,7 @@ import {
   NOTIFY_COOLDOWN_MS
 } from '../src/services/nvidiaPoller.js';
 import { normalizeNvidiaConfig, ensureNvidiaConfig } from '../src/services/nvidiaConfig.js';
-import {
-  GPU_DISPLAY_ORDER,
-  CARD_METADATA,
-  collectFromNvidia,
-  mapNvidiaCard,
-  setNvidiaLiveStatusProvider
-} from '../src/sources/nvidia.js';
+import { GPU_DISPLAY_ORDER, CARD_METADATA } from '../src/sources/nvidia.js';
 
 // ── Test doubles ──────────────────────────────────────────────────
 
@@ -718,60 +712,5 @@ describe('nvidiaPoller - notification rule', () => {
     await failing.push({ cards: { '5090': IN_STOCK } });
     assert.equal(failing.sent.length, 1);
     failing.poller.stop();
-  });
-});
-
-// ── Scan source ───────────────────────────────────────────────────
-
-describe('nvidia scan source - collectFromNvidia', () => {
-  const source = { id: 'nvidia-fe', label: 'NVIDIA Founders Edition', type: 'nvidia', locale: 'sv-se' };
-  const now = '2026-10-31T12:00:00.000Z';
-
-  afterEach(() => setNvidiaLiveStatusProvider(null));
-
-  it('maps live feed cards into observations without network calls', async () => {
-    const t = setupPoller();
-    t.poller.start();
-    t.socket().serverOpen();
-    await t.push({ cards: { '5080': { available: true, productUrl: 'https://store.example/5080' }, '5070': { status: 'timeout' } } });
-    setNvidiaLiveStatusProvider(() => t.poller.getStatus());
-
-    const sourceState = {};
-    const obs = await collectFromNvidia({ source, sourceState, now });
-    assert.deepEqual(obs.map((o) => o.externalId), ['nvidia-fe-5090-sv-se', 'nvidia-fe-5080-sv-se']);
-    assert.equal(obs[0].availability, 'out_of_stock');
-    assert.equal(obs[1].availability, 'in_stock');
-    assert.equal(obs[1].url, 'https://store.example/5080');
-    assert.equal(obs[1].priceSek, 13990);
-    assert.equal(sourceState.lastScanPartial, true, '5070 was unhealthy, so the snapshot is partial');
-    t.poller.stop();
-  });
-
-  it('throws when the tracker is disabled or the feed has no fresh data', async () => {
-    await assert.rejects(collectFromNvidia({ source, now }), /not initialised/);
-
-    setNvidiaLiveStatusProvider(() => ({ enabled: false, cards: [] }));
-    await assert.rejects(collectFromNvidia({ source, now }), /disabled/);
-
-    const t = setupPoller();
-    t.poller.start();
-    setNvidiaLiveStatusProvider(() => t.poller.getStatus());
-    await assert.rejects(collectFromNvidia({ source, now }), /no fresh data/);
-    t.poller.stop();
-  });
-
-  it('mapNvidiaCard falls back to the store URL when out of stock', () => {
-    const obs = mapNvidiaCard({
-      card: { cardKey: '5090', sku: 'PROFESHOP5090', available: false, product_url: null, locale: 'sv-se' },
-      source,
-      now
-    });
-    assert.equal(obs.title, 'NVIDIA GeForce RTX 5090 Founders Edition');
-    assert.equal(obs.category, 'GPU');
-    assert.equal(obs.condition, 'new');
-    assert.equal(obs.availability, 'out_of_stock');
-    assert.equal(obs.priceSek, 25990);
-    assert.match(obs.url, /marketplace\.nvidia\.com\/sv-se\/consumer\/graphics-cards\/nvidia-geforce-rtx-5090\//);
-    assert.ok(obs.notes.includes('PROFESHOP5090'));
   });
 });

@@ -63,171 +63,23 @@ function parseRetryDelayMs(response) {
   return null;
 }
 
-/**
- * Returns true if the item matches all constraints of an alert rule:
- * - Source filter: item sourceId must pass the include/exclude source list (if set)
- * - At least one keyword token sequence must appear in item title (if keywords are set)
- * - Item category must match at least one rule category (if categories are set)
- * - Item discount % must be ≥ minDiscountPercent (if set)
- */
-export function itemMatchesRule(item, { keywords, categories, minDiscountPercent, filteredSources, sourceFilterMode }) {
-  // Source filter — support both include and exclude modes
-  if (filteredSources && filteredSources.length) {
-    const inList = filteredSources.includes(item.sourceId);
-    if (sourceFilterMode === 'include' && !inList) return false;
-    if (sourceFilterMode !== 'include' && inList) return false;
-  }
-
-  if (typeof minDiscountPercent === 'number' && Number.isFinite(minDiscountPercent) && minDiscountPercent > 0) {
-    const price = item.latestPriceSek ?? item.priceSek;
-    const refPrice = item.referencePriceSek ?? item.marketValueSek;
-    const discountPct = refPrice && refPrice > price ? Math.round((1 - price / refPrice) * 100) : 0;
-    if (discountPct < minDiscountPercent) return false;
-  }
-
-  if (keywords.length) {
-    const titleLower = String(item.title ?? '').toLowerCase();
-    const anyKeywordMatches = keywords.some((kw) => {
-      const tokens = kw.split(/\s+/).filter(Boolean);
-      return tokens.every((t) => titleLower.includes(t));
-    });
-    if (!anyKeywordMatches) return false;
-  }
-
-  if (categories.length) {
-    const itemCat = String(item.category ?? '').toLowerCase();
-    // Empty itemCat must not match — `c.includes('')` is always true in JS, which would cause
-    // every product with no category to pass any category rule.
-    if (!itemCat || !categories.some((c) => itemCat.includes(c) || c.includes(itemCat))) return false;
-  }
-
-  return true;
-}
-
 export class DiscordNotifier {
-  constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000, hotlistSourceId = '' }) {
+  constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000 }) {
     this.webhookUrl = webhookUrl;
     this.cooldownMs = cooldownHours * 60 * 60 * 1000;
     this.webhookMaxRetries = Math.max(0, Number(webhookMaxRetries) || 0);
     this.webhookRetryBaseMs = Math.max(0, Number(webhookRetryBaseMs) || 0);
     this.webhookRetryCapMs = Math.max(this.webhookRetryBaseMs, Number(webhookRetryCapMs) || this.webhookRetryBaseMs);
-    // Used to keep hotlist finds out of the alert-rule pipeline.
-    this.hotlistSourceId = String(hotlistSourceId ?? '').trim();
   }
 
-  async notifyScan({ deals, newItems, priceDrops = [], sources, state, notificationSettings, wishlistTargets = {}, purchase = null, stageListing = null }) {
-    const settings = notificationSettings ?? {};
-
-    // Respect global notifications-enabled flag (default: true for backward compat)
-    if (settings.notificationsEnabled === false) {
-      return { sent: 0, skipped: newItems.length, failed: 0, errors: [], reason: 'notifications-disabled', alertRules: { sent: 0, skipped: newItems.length, failed: 0, errors: [] } };
-    }
-
-    const alertRules = Array.isArray(settings.alertRules) ? settings.alertRules.filter((r) => r.enabled !== false) : [];
-    const alertSummary = await this.notifyAlertRules({ newItems, priceDrops, state, alertRules, purchase, stageListing });
-
-    // Feature 3: wishlist target-price alerts — a tracked item dropped to/below the user's target.
-    const wishlistSummary = await this.notifyWishlistTargets({ newItems, priceDrops, state, wishlistTargets, config: settings.wishlistAlerts });
-
-    return {
-      sent: alertSummary.sent + wishlistSummary.sent,
-      skipped: alertSummary.skipped + wishlistSummary.skipped,
-      failed: alertSummary.failed + wishlistSummary.failed,
-      errors: [...alertSummary.errors, ...wishlistSummary.errors],
-      alertRules: alertSummary,
-      wishlistAlerts: wishlistSummary
-    };
-  }
+  // The scan-time alert rules and wishlist target-price ("favorite") alerts
+  // were removed on 2026-10-31 together with the multi-source scan. The three
+  // remaining features each post through their own method below.
 
   /**
-   * Feature 3 — Wishlist target-price alerts.
-   * When a wishlisted item appears (new) or drops to/below the user's target
-   * price, post an alert to a dedicated Discord webhook. Deduped per listing per
-   * target per cooldown.
-   */
-  async notifyWishlistTargets({ newItems = [], priceDrops = [], state, wishlistTargets = {}, config }) {
-    const empty = { sent: 0, skipped: 0, failed: 0, errors: [] };
-    if (!config || config.enabled !== true) return { ...empty, reason: 'disabled' };
-    const webhook = typeof config.webhook === 'string' ? config.webhook.trim() : '';
-    if (!webhook) return { ...empty, reason: 'no-webhook' };
-    const targets = wishlistTargets && typeof wishlistTargets === 'object' ? wishlistTargets : {};
-    if (!Object.keys(targets).length) return empty;
-
-    const now = Date.now();
-    let sent = 0, skipped = 0, failed = 0;
-    const errors = [];
-
-    // Candidate = any new item or price-dropped item that is on the wishlist with a target.
-    const seen = new Set();
-    const candidates = [];
-    for (const item of newItems) candidates.push(item);
-    for (const drop of priceDrops) candidates.push({ ...(state.items[drop.listingKey] ?? drop), buyUrl: drop.buyUrl, affiliate: drop.affiliate });
-
-    for (const item of candidates) {
-      const listingKey = item.listingKey;
-      if (!listingKey || seen.has(listingKey)) continue;
-      const target = Number(targets[listingKey]);
-      if (!Number.isFinite(target) || target <= 0) continue;
-
-      const price = Number(item.latestPriceSek ?? item.priceSek ?? item.newPriceSek);
-      if (!Number.isFinite(price) || price > target) continue;
-      seen.add(listingKey);
-
-      const notificationKey = `${listingKey}:target:${target}`;
-      const previousSentAt = state.notifications[notificationKey];
-      if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) { skipped++; continue; }
-
-      try {
-        await this.#postWebhook({
-          username: 'Price Watcher',
-          content: `🎯 **Wishlist target hit** — ${item.title}`,
-          embeds: [
-            {
-              title: item.title,
-              url: item.buyUrl ?? item.url,
-              description: `${item.sourceLabel ?? ''} • ${item.category ?? ''}`,
-              color: 0xeb459e,
-              fields: [
-                { name: 'Price', value: formatSek(price), inline: true },
-                { name: 'Your target', value: formatSek(target), inline: true },
-                { name: 'Under target by', value: formatSek(Math.max(0, target - price)), inline: true }
-              ],
-              image: item.imageUrl ? { url: item.imageUrl } : undefined
-            }
-          ]
-        }, webhook);
-        state.notifications[notificationKey] = new Date(now).toISOString();
-        sent++;
-      } catch (error) {
-        failed++;
-        this.#recordError(errors, error);
-      }
-    }
-
-    return { sent, skipped, failed, errors };
-  }
-
-  /**
-   * Send Discord notifications for each enabled alert rule.
-   * A rule fires when a new item — or a price drop, unless the rule sets
-   * notifyPriceDrops=false — matches all its constraints:
-   *   - Source filter: sourceFilterMode='include' → only listed sources;
-   *                    sourceFilterMode='exclude' (default) → all except listed
-   *   - At least one keyword matches item title (if keywords are set; empty = any)
-   *   - Item category matches a rule category (if categories are set; empty = any)
-   *   - Item discount % ≥ minDiscountPercent (if set)
-   *   - Price drops additionally require dropPercent ≥ minPriceDropPercent (default 5)
-   * Sends to all webhooks listed on the rule.
-   */
-  /**
-   * Hotlist notifications, deliberately separate from alert rules.
-   *
-   * The hotlist already decides what it cares about via its watch groups, so
-   * re-filtering its finds through unrelated keyword rules was doing the same
-   * job twice and doing it wrong: a hotlist iPhone find fired the generic
-   * "Iphone" rule and went to that rule's channel, while the Hotlist tab
-   * offered no webhook field to explain where anything was going. Everything
-   * the poller matched is worth sending, to one destination the user chose.
+   * Hotlist notifications. The hotlist decides what it cares about via its
+   * watch groups, so everything the poller matched is sent, to the one
+   * destination the user chose in the Hotlist tab.
    */
   async notifyHotlist({
     newItems = [],
@@ -301,159 +153,6 @@ export class DiscordNotifier {
         if (!Number.isFinite(drop.dropPercent) || drop.dropPercent < minPriceDropPercent) continue;
         const item = { ...(state.items[drop.listingKey] ?? drop), buyUrl: drop.buyUrl, affiliate: drop.affiliate };
         await deliver(item, `${drop.listingKey}:hotlist:drop`, { isDrop: true, dropPercent: drop.dropPercent });
-      }
-    }
-
-    return { sent, skipped, failed, errors };
-  }
-
-  async notifyAlertRules({ newItems, priceDrops = [], state, alertRules, purchase = null, stageListing = null }) {
-    if (!alertRules.length) {
-      return { sent: 0, skipped: 0, failed: 0, errors: [], reason: 'no-alert-rules' };
-    }
-
-    // Hotlist finds have their own channel and their own matching logic. Even
-    // though the poller no longer routes through here, this guard keeps the two
-    // systems from silently re-coupling if a future caller passes them in.
-    const isHotlistSource = (sourceId) => {
-      if (!sourceId) return false;
-      if (this.hotlistSourceId && sourceId === this.hotlistSourceId) return true;
-      if (Array.isArray(this.hotlistSourceIds) && this.hotlistSourceIds.includes(sourceId)) return true;
-      return sourceId.endsWith('-hotlist');
-    };
-
-    newItems = newItems.filter((item) => !isHotlistSource(item.sourceId));
-    priceDrops = priceDrops.filter((drop) => {
-      const sourceId = drop.sourceId ?? state.items?.[drop.listingKey]?.sourceId;
-      return !isHotlistSource(sourceId);
-    });
-
-    let sent = 0;
-    let skipped = 0;
-    let failed = 0;
-    const errors = [];
-    const now = Date.now();
-
-    for (const rule of alertRules) {
-      const webhooks = (rule.webhooks ?? []).filter((w) => typeof w === 'string' && w.trim());
-      if (!webhooks.length) continue;
-
-      const keywords = (rule.keywords ?? []).map((k) => String(k).toLowerCase().trim()).filter(Boolean);
-      const categories = (rule.categories ?? []).map((c) => String(c).toLowerCase().trim()).filter(Boolean);
-      // Backward compat: old rules used excludedSources; new rules use filteredSources + sourceFilterMode
-      const filteredSources = (rule.filteredSources ?? rule.excludedSources ?? []).map((s) => String(s).trim()).filter(Boolean);
-      const sourceFilterMode = rule.sourceFilterMode === 'include' ? 'include' : 'exclude';
-      const minDiscountPercent = typeof rule.minDiscountPercent === 'number' && Number.isFinite(rule.minDiscountPercent) ? rule.minDiscountPercent : null;
-      const constraints = { keywords, categories, minDiscountPercent, filteredSources, sourceFilterMode };
-      const ruleLabel = rule.label || (keywords.length ? keywords.join(', ') : categories.length ? categories.join(', ') : 'Alert');
-
-      const matches = newItems.filter((item) => itemMatchesRule(item, constraints));
-
-      for (const item of matches) {
-        const notificationKey = `${item.listingKey}:rule:${rule.id}`;
-        const previousSentAt = state.notifications[notificationKey];
-
-        if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
-          skipped++;
-          continue;
-        }
-
-        const discount = getDiscountSummary(item);
-        const purchaseNote = await this.#resolvePurchaseNote({ item, purchase, stageListing });
-
-        let itemSent = false;
-        for (const webhookUrl of webhooks) {
-          try {
-            await this.#postWebhook({
-              username: 'Price Watcher',
-              content: `🔔 **${ruleLabel}** — new match`,
-              embeds: [
-                {
-                  title: item.title,
-                  url: item.buyUrl ?? item.url,
-                  description: [
-                    `${item.sourceLabel} • ${item.category}`,
-                    purchaseNote
-                  ].filter(Boolean).join('\n'),
-                  color: 0x5865f2,
-                  fields: [
-                    { name: 'Price', value: formatSek(item.latestPriceSek ?? item.priceSek), inline: true },
-                    { name: 'Initial', value: formatSek(discount.initialPriceSek), inline: true },
-                    { name: 'Discount', value: formatPercent(discount.discountPercent), inline: true },
-                    { name: 'First seen', value: new Date(item.firstSeenAt ?? item.seenAt).toLocaleString('sv-SE'), inline: true }
-                  ],
-                  image: item.imageUrl ? { url: item.imageUrl } : undefined,
-                  footer: item.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
-                }
-              ]
-            }, webhookUrl);
-            itemSent = true;
-          } catch (error) {
-            failed++;
-            this.#recordError(errors, error);
-          }
-        }
-
-        if (itemSent) {
-          state.notifications[notificationKey] = new Date(now).toISOString();
-          sent++;
-        }
-      }
-
-      // ── Price drops ──────────────────────────────────────────────
-      if (rule.notifyPriceDrops === false) continue;
-      const minDropPercent = typeof rule.minPriceDropPercent === 'number' && Number.isFinite(rule.minPriceDropPercent)
-        ? rule.minPriceDropPercent
-        : 5;
-
-      for (const drop of priceDrops) {
-        if (!Number.isFinite(drop.dropPercent) || drop.dropPercent < minDropPercent) continue;
-        // Match against the full tracked item (has reference price + image); fall
-        // back to the drop record itself if the item was pruned mid-scan.
-        const item = { ...(state.items[drop.listingKey] ?? drop), buyUrl: drop.buyUrl, affiliate: drop.affiliate };
-        if (!itemMatchesRule(item, constraints)) continue;
-
-        // One drop alert per item per rule per cooldown window.
-        const notificationKey = `${drop.listingKey}:rule:${rule.id}:drop`;
-        const previousSentAt = state.notifications[notificationKey];
-        if (previousSentAt && now - Date.parse(previousSentAt) < this.cooldownMs) {
-          skipped++;
-          continue;
-        }
-
-        let dropSent = false;
-        for (const webhookUrl of webhooks) {
-          try {
-            await this.#postWebhook({
-              username: 'Price Watcher',
-              content: `📉 **${ruleLabel}** — price drop`,
-              embeds: [
-                {
-                  title: drop.title,
-                  url: drop.buyUrl ?? drop.url,
-                  description: `${drop.sourceLabel} • ${drop.category ?? ''}`,
-                  color: 0x57f287,
-                  fields: [
-                    { name: 'Was', value: formatSek(drop.previousPriceSek), inline: true },
-                    { name: 'Now', value: formatSek(drop.newPriceSek), inline: true },
-                    { name: 'Drop', value: `−${formatPercent(drop.dropPercent)} (${formatSek(drop.dropSek)})`, inline: true }
-                  ],
-                  image: item.imageUrl ? { url: item.imageUrl } : undefined,
-                  footer: drop.affiliate ? { text: 'Annonslänk · affiliate link' } : undefined
-                }
-              ]
-            }, webhookUrl);
-            dropSent = true;
-          } catch (error) {
-            failed++;
-            this.#recordError(errors, error);
-          }
-        }
-
-        if (dropSent) {
-          state.notifications[notificationKey] = new Date(now).toISOString();
-          sent++;
-        }
       }
     }
 
@@ -537,11 +236,6 @@ export class DiscordNotifier {
     }
 
     return { sent, failed, skipped: 0, errors, delivered };
-  }
-
-  /** Post an arbitrary payload (e.g. the daily digest) to a webhook with retry. */
-  async sendToWebhook(payload, webhookUrl) {
-    return this.#postWebhook(payload, webhookUrl);
   }
 
   /** Send instant stock alert for an NVIDIA Founders Edition GPU drop. */

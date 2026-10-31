@@ -7,7 +7,7 @@ import { firstFinite, median } from '../lib/utils.js';
 import { validateReferencePrice } from '../lib/referencePrice.js';
 import { buildIdentityGroups } from './dealEngine.js';
 
-const NEW_PRODUCT_FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
+const NEW_PRODUCT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function normalizeForSearch(str) {
   return String(str ?? '')
@@ -27,12 +27,12 @@ function toTimestamp(value) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function isNewProduct(product, latestRunStartedAt) {
+// "New" = first seen within the last 24 h. (It used to mean "since the last
+// full scan"; the hotlist and Komplett demo watcher poll continuously.)
+function isNewProduct(product, nowMs = Date.now()) {
   const firstSeenTs = toTimestamp(product.firstSeenAt);
   if (firstSeenTs == null) return false;
-  const runTs = toTimestamp(latestRunStartedAt);
-  if (runTs != null) return firstSeenTs >= runTs;
-  return Date.now() - firstSeenTs <= NEW_PRODUCT_FALLBACK_WINDOW_MS;
+  return nowMs - firstSeenTs <= NEW_PRODUCT_WINDOW_MS;
 }
 
 // Tokenize a search query into lowercase tokens
@@ -52,8 +52,8 @@ export class ProductCache {
     this._byCategory = new Map(); // category key → product indices
     this._byStore = new Map();    // sourceId → product indices
     this._byCampaign = new Map(); // conditionLabel lower → product indices
-    this._categories = [];        // Pre-computed category stats (no favorites applied)
-    this._sources = [];           // Unique sources [{id, label}]
+    this._categories = [];        // Pre-computed category stats
+    this._sources = [];           // Unique sources [{id, label, count}]
     this._campaigns = [];         // Unique campaigns [{label, value}]
     this._searchTextCache = new Map(); // input string → normalized search text (stable across rebuilds)
     this._version = 0;            // Incremented on rebuild
@@ -65,7 +65,7 @@ export class ProductCache {
   get sources() { return this._sources; }
   get campaigns() { return this._campaigns; }
 
-  // Rebuild the entire cache from raw state. Call after scan completes or state loads.
+  // Rebuild the entire cache from raw state. Call after a poll changes items or state loads.
   // sourceLabelMap: optional Map(sourceId → label) from config for label overrides
   rebuild(state, sourceLabelMap) {
     const items = state.items;
@@ -83,9 +83,8 @@ export class ProductCache {
     const sourceMap = new Map();
     const campaignSet = new Set();
 
-    // Buyable items only — precompute identity groups once so we can both
-    // validate reference prices against genuine cross-store peers and annotate
-    // cross-store pricing below without grouping twice.
+    // Buyable items only — identity groups let reference prices be validated
+    // against genuine cross-store peers.
     const buyableItems = Object.values(items).filter(
       (item) =>
         ['outlet', 'digital', 'deal', 'used'].includes(item.condition) &&
@@ -191,8 +190,12 @@ export class ProductCache {
         if (!byStore.has(item.sourceId)) byStore.set(item.sourceId, []);
         byStore.get(item.sourceId).push(idx);
         if (!sourceMap.has(item.sourceId)) {
-          sourceMap.set(item.sourceId, (labelOverrides && labelOverrides.get(item.sourceId)) || item.sourceLabel || item.sourceId);
+          sourceMap.set(item.sourceId, {
+            label: (labelOverrides && labelOverrides.get(item.sourceId)) || item.sourceLabel || item.sourceId,
+            count: 0
+          });
         }
+        sourceMap.get(item.sourceId).count++;
       }
 
       // Index by campaign
@@ -201,31 +204,6 @@ export class ProductCache {
         if (!byCampaign.has(campKey)) byCampaign.set(campKey, []);
         byCampaign.get(campKey).push(idx);
         campaignSet.add(item.conditionLabel);
-      }
-    }
-
-    // ── Cross-store annotation ───────────────────────────────────
-    // Products sharing a GTIN / manufacturer part number / productKey across
-    // at least two stores get cheapest-store info for the card UI.
-    const productByListingKey = new Map(products.map((p) => [p.listingKey, p]));
-    for (const group of identityGroups) {
-      if (group.length < 2) continue;
-      const groupProducts = group.map((item) => productByListingKey.get(item.listingKey)).filter(Boolean);
-      const distinctSources = new Set(groupProducts.map((p) => p.sourceId));
-      if (distinctSources.size < 2) continue;
-
-      let best = groupProducts[0];
-      for (const p of groupProducts) {
-        if (p.currentPriceSek < best.currentPriceSek) best = p;
-      }
-      for (const p of groupProducts) {
-        p.crossStore = {
-          offers: groupProducts.length,
-          stores: distinctSources.size,
-          bestPriceSek: best.currentPriceSek,
-          bestSourceLabel: best.sourceLabel,
-          isCheapest: p.currentPriceSek <= best.currentPriceSek
-        };
       }
     }
 
@@ -260,28 +238,20 @@ export class ProductCache {
     this._byStore = new Map([...byStore].map(([k, v]) => [k, remapIndexArray(v)]));
     this._byCampaign = new Map([...byCampaign].map(([k, v]) => [k, remapIndexArray(v)]));
     this._categories = [...categoryMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'sv-SE'));
-    this._sources = [...sourceMap.entries()].map(([id, label]) => ({ id, label }));
+    this._sources = [...sourceMap.entries()].map(([id, { label, count }]) => ({ id, label, count }));
     this._campaigns = [...campaignSet].sort().map(label => ({ label, value: label.toLowerCase() }));
 
     this._version++;
   }
 
-  // Get categories with favorites applied
-  getCategoriesWithFavorites(favoriteCategorySet) {
-    return this._categories.map(c => ({
-      ...c,
-      favorite: favoriteCategorySet.has(c.key)
-    }));
-  }
-
   /** Full filtered + sorted result set (no pagination) — used for CSV export. */
-  exportRows(params, favoriteCategorySet, latestRunStartedAt, wishlistSet) {
-    return this.#filteredSorted(params, favoriteCategorySet, latestRunStartedAt, wishlistSet);
+  exportRows(params, { wishlistSet = null } = {}) {
+    return this.#filteredSorted(params, wishlistSet);
   }
 
   // Fast filtered + sorted + paginated query
-  query(params, favoriteCategorySet, latestRunStartedAt, wishlistSet) {
-    const filtered = this.#filteredSorted(params, favoriteCategorySet, latestRunStartedAt, wishlistSet);
+  query(params, { wishlistSet = null } = {}) {
+    const filtered = this.#filteredSorted(params, wishlistSet);
     const { page = 1, pageSize = 50 } = params;
 
     // Aggregates
@@ -321,13 +291,12 @@ export class ProductCache {
   }
 
   // Shared filter + sort pipeline behind query() and exportRows()
-  #filteredSorted(params, favoriteCategorySet, latestRunStartedAt, wishlistSet) {
+  #filteredSorted(params, wishlistSet) {
     const {
       search = '',
       category = '',
       store = '',
       campaign = '',
-      favoritesOnly = false,
       discountedOnly = false,
       referenceOnly = false,
       newOnly = false,
@@ -381,15 +350,13 @@ export class ProductCache {
 
     // Linear filter over candidates (or all products if no index narrowing)
     const filtered = [];
+    const nowMs = Date.now();
     const total = this._products.length;
 
     for (let i = 0; i < total; i++) {
       if (candidates && !candidates.has(i)) continue;
 
       const product = this._products[i];
-
-      // Favorites filter
-      if (favoritesOnly && !favoriteCategorySet.has(normalizeCategoryKey(product.category))) continue;
 
       // Discounted filter
       if (discountedOnly && !(Number.isFinite(product.discountSek) && product.discountSek > 0)) continue;
@@ -398,7 +365,7 @@ export class ProductCache {
       if (referenceOnly && !Number.isFinite(product.initialPriceSek)) continue;
 
       // New filter
-      if (newOnly && !isNewProduct(product, latestRunStartedAt)) continue;
+      if (newOnly && !isNewProduct(product, nowMs)) continue;
 
       // Hot filter
       if (hotOnly && !((product.score ?? 0) >= 50 || (Number.isFinite(product.discountPercent) && product.discountPercent >= 20))) continue;

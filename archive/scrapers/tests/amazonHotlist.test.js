@@ -8,7 +8,7 @@ import {
   parseAmazonSearchResultsHtml,
   collectFromAmazonHotlist,
   fetchAmazonSuggestions
-} from '../src/sources/amazonHotlist.js';
+} from '../amazonHotlist.js';
 
 test('parseAmazonPrice handles Swedish currency string formats', () => {
   assert.equal(parseAmazonPrice('1 499,00 kr'), 1499);

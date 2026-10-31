@@ -1,4 +1,4 @@
-import { normalizeProductIdentity, sleep, slugify, stripText } from '../lib/utils.js';
+import { normalizeProductIdentity, sleep, slugify, stripText } from '../../src/lib/utils.js';
 
 const BASE_URL = 'https://www.webhallen.com';
 const FYNDWARE_API_URL = `${BASE_URL}/api/productdiscovery/search/fyndware`;

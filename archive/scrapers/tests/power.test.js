@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { collectFromPower } from '../src/sources/power.js';
+import { collectFromPower } from '../power.js';
 
 const SOURCE = { id: 'power-deals', type: 'power-deals', label: 'Power Outlet' };
 const NOW = '2026-06-12T12:00:00.000Z';

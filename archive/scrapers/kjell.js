@@ -13,8 +13,8 @@
 // (reference price) and an outlet grade (?outlet=a|b in the URL).
 // ═══════════════════════════════════════════════════════════════
 
-import { resolveIncrementalMode } from '../lib/incremental.js';
-import { normalizeProductIdentity, sleep, stripText } from '../lib/utils.js';
+import { resolveIncrementalMode } from './lib/incremental.js';
+import { normalizeProductIdentity, sleep, stripText } from '../../src/lib/utils.js';
 
 const BASE_URL = 'https://www.kjell.com';
 const OUTLET_PATH = '/se/outlet';

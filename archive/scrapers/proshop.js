@@ -1,7 +1,7 @@
 import { load } from 'cheerio';
-import { resolveIncrementalMode } from '../lib/incremental.js';
-import { normalizeProductIdentity, parseSekValue, sleep } from '../lib/utils.js';
-import { resolveBypassBackend } from '../lib/bypassFetch.js';
+import { resolveIncrementalMode } from './lib/incremental.js';
+import { normalizeProductIdentity, parseSekValue, sleep } from '../../src/lib/utils.js';
+import { resolveBypassBackend } from './lib/bypassFetch.js';
 
 /**
  * ProShop Outlet + Demo scraper.

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 // --- komplett-category tests ---
 // The category scraper accepts _ApifyClient for injection in tests.
 
-import { collectFromKomplettCategory } from '../src/sources/komplett.js';
+import { collectFromKomplettCategory } from '../komplettCategory.js';
 
 // Raw product data as returned by the cheerio-scraper actor.
 const actorProduct = {

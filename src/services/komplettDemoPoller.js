@@ -15,7 +15,8 @@
  *    when the projection would exceed the configured monthly cap.
  *
  * State (seen products, last prices, seeded categories, spend) is persisted
- * in its own SQLite row so a restart never re-alerts.
+ * in its own SQLite row so a restart never re-alerts. The tracked products are
+ * also mirrored into the main listing (see komplettDemoListing.js).
  */
 
 import {
@@ -455,6 +456,9 @@ export function createKomplettDemoPoller({
   getConfig,
   notifier = null,
   persistence = null,
+  // Called with the watcher state after every successful check, once it is
+  // persisted; src/index.js mirrors the products into the main listing.
+  onStateChange = null,
   fetchPages = fetchKomplettDemoPages,
   fetchRunUsage = fetchApifyRunUsage,
   logger = console,
@@ -658,6 +662,14 @@ export function createKomplettDemoPoller({
       failedCategories: outcome.failedCategories,
     };
     await persist();
+
+    if (onStateChange) {
+      try {
+        await onStateChange(state);
+      } catch (error) {
+        logger.error?.(`[komplett-demo] Listing update failed: ${error.message}`);
+      }
+    }
 
     return {
       count: outcome.productCount,

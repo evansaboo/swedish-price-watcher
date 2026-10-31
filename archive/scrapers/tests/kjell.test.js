@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extractKjellProducts, mapKjellProduct, resolveKjellCategory } from '../src/sources/kjell.js';
+import { extractKjellProducts, mapKjellProduct, resolveKjellCategory } from '../kjell.js';
 
 const SOURCE = { id: 'kjell-outlet', type: 'kjell-outlet', label: 'Kjell & Company Outlet' };
 const NOW = '2026-06-12T08:00:00.000Z';

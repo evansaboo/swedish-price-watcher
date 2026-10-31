@@ -1,4 +1,4 @@
-import { normalizeProductIdentity, sleep } from '../lib/utils.js';
+import { normalizeProductIdentity, sleep } from '../../src/lib/utils.js';
 
 /**
  * GG.deals multi-platform game price source.

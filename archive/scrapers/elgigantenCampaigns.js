@@ -1,5 +1,5 @@
-import { normalizeProductIdentity, sleep } from '../lib/utils.js';
-import { getSharedAlgoliaApiKey } from './elgigantenAuth.js';
+import { normalizeProductIdentity, sleep } from '../../src/lib/utils.js';
+import { getSharedAlgoliaApiKey } from '../../src/sources/elgigantenAuth.js';
 
 /**
  * Elgiganten campaign/sale source — direct Algolia API.

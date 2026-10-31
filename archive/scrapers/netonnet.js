@@ -1,5 +1,5 @@
-import { resolveIncrementalMode } from '../lib/incremental.js';
-import { normalizeProductIdentity, sleep } from '../lib/utils.js';
+import { resolveIncrementalMode } from './lib/incremental.js';
+import { normalizeProductIdentity, sleep } from '../../src/lib/utils.js';
 
 const BASE_URL = 'https://www.netonnet.se';
 const OUTLET_URL = `${BASE_URL}/art/outlet`;

@@ -9,7 +9,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { isSourceEnabled } from './lib/utils.js';
 import { createIndexHtmlBuilder } from './lib/assetVersion.js';
 import { buildProductSummaries } from './services/dealEngine.js';
 import { buildAffiliateUrl, decorateAffiliatePayload } from './services/affiliateLinks.js';
@@ -25,7 +24,6 @@ import {
   normalizeWebhookUrl
 } from './services/hotlistConfig.js';
 import { getTaxonomyCatalog, searchCatalog } from './sources/elgigantenTaxonomy.js';
-import { fetchAmazonSuggestions } from './sources/amazonHotlist.js';
 import { getElgigantenBlockStatus, clearElgigantenBlock } from './sources/elgigantenAuth.js';
 import {
   normalizePurchaseSettings,
@@ -35,7 +33,7 @@ import {
   summarizePurchaseState
 } from './services/purchaseEngine.js';
 import { createPurchaseService } from './services/purchaseService.js';
-import { normalizeNvidiaConfig, ensureNvidiaConfig, DEFAULT_NVIDIA_CONFIG } from './services/nvidiaConfig.js';
+import { normalizeNvidiaConfig } from './services/nvidiaConfig.js';
 import { GPU_DISPLAY_ORDER, CARD_METADATA } from './sources/nvidia.js';
 import {
   DEFAULT_KOMPLETT_DEMO_CONFIG,
@@ -64,30 +62,7 @@ const RUNNING_SHA = (() => {
   }
 })();
 
-const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
-
 // ── Shared helpers ─────────────────────────────────────────────
-
-// Feature 3 — wishlist target-price alert config. { enabled, webhook }
-function normalizeWishlistAlertsConfig(raw) {
-  const cfg = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  return {
-    enabled: cfg.enabled === true,
-    webhook: typeof cfg.webhook === 'string' ? cfg.webhook.trim() : ''
-  };
-}
-
-// Feature 3 — set or clear a wishlist item's target price on state.preferences.wishlistTargets.
-function applyWishlistTarget(state, listingKey, rawTarget) {
-  state.preferences = state.preferences ?? {};
-  state.preferences.wishlistTargets = state.preferences.wishlistTargets ?? {};
-  const target = Number(rawTarget);
-  if (Number.isFinite(target) && target > 0) {
-    state.preferences.wishlistTargets[listingKey] = Math.round(target);
-  } else {
-    delete state.preferences.wishlistTargets[listingKey];
-  }
-}
 
 function normalizeCategoryKey(category) {
   return String(category ?? '').trim().toLowerCase();
@@ -108,35 +83,6 @@ function matchesQuery(value, query) {
   const tokens = q.replace(/[^ -\u007F\p{L}\p{N}\s]+/gu, ' ').split(/\s+/).filter(Boolean);
   if (!tokens.length) return true;
   return tokens.every(t => normalizeForSearch(value).includes(t));
-}
-
-function getFavoriteCategories(state) {
-  return Array.isArray(state.preferences?.favoriteCategories)
-    ? state.preferences.favoriteCategories.map(c => String(c).trim()).filter(Boolean)
-    : [];
-}
-
-function getFavoriteCategorySet(state) {
-  return new Set(getFavoriteCategories(state).map(normalizeCategoryKey));
-}
-
-function normalizeFavoriteCategories(categories) {
-  const unique = new Map();
-  for (const category of Array.isArray(categories) ? categories : []) {
-    const label = String(category ?? '').trim();
-    const key = normalizeCategoryKey(label);
-    if (!key || unique.has(key)) continue;
-    unique.set(key, label);
-  }
-  return [...unique.values()].sort((a, b) => a.localeCompare(b, 'sv-SE'));
-}
-
-function describeSourceStatus(source, sourceState = {}) {
-  if (!source.enabled) return 'disabled';
-  if (sourceState.disabledUntil) return 'cooling-down';
-  if (sourceState.lastError) return 'error';
-  if (sourceState.lastSuccessAt) return 'healthy';
-  return 'idle';
 }
 
 function filterDeals(deals, query) {
@@ -163,50 +109,6 @@ function filterProducts(products, query) {
     (!condition || product.offers.some(o => o.condition.toLowerCase() === condition)) &&
     matchesQuery(product.title, search)
   );
-}
-
-// ── Scheduler validation ───────────────────────────────────────
-
-function normalizeSchedulerUpdate(payload) {
-  const normalized = {};
-
-  if (payload?.enabled !== undefined) {
-    normalized.enabled = Boolean(payload.enabled);
-  }
-
-  if (payload?.intervalMinutes !== undefined) {
-    const val = Number.parseInt(String(payload.intervalMinutes), 10);
-    if (!Number.isFinite(val) || val <= 0) throw new Error('intervalMinutes must be a positive integer.');
-    normalized.intervalMinutes = val;
-  }
-
-  if (payload?.activeWindow !== undefined) {
-    if (!payload.activeWindow || typeof payload.activeWindow !== 'object' || Array.isArray(payload.activeWindow)) {
-      throw new Error('activeWindow must be an object.');
-    }
-
-    const aw = {};
-    if (payload.activeWindow.enabled !== undefined) aw.enabled = Boolean(payload.activeWindow.enabled);
-    if (payload.activeWindow.startTime !== undefined) {
-      const s = String(payload.activeWindow.startTime).trim();
-      if (!TIME_OF_DAY_PATTERN.test(s)) throw new Error('activeWindow.startTime must use HH:MM format.');
-      aw.startTime = s;
-    }
-    if (payload.activeWindow.endTime !== undefined) {
-      const e = String(payload.activeWindow.endTime).trim();
-      if (!TIME_OF_DAY_PATTERN.test(e)) throw new Error('activeWindow.endTime must use HH:MM format.');
-      aw.endTime = e;
-    }
-    if (payload.activeWindow.timeZone !== undefined) {
-      const tz = String(payload.activeWindow.timeZone).trim();
-      if (!tz) throw new Error('activeWindow.timeZone cannot be empty.');
-      aw.timeZone = tz;
-    }
-    if (!Object.keys(aw).length) throw new Error('activeWindow must include enabled, startTime, endTime, or timeZone.');
-    normalized.activeWindow = aw;
-  }
-
-  return normalized;
 }
 
 /**
@@ -240,20 +142,9 @@ async function probeElgigantenReachability(timeoutMs = 8000) {
   }
 }
 
-function buildSchedulerStatus(schedulerState, lastRunStartedAt) {
-  if (!schedulerState) return null;
-  if (schedulerState.nextRunAt || !schedulerState.enabled) return schedulerState;
-
-  const intervalMinutes = Number.parseInt(String(schedulerState.intervalMinutes ?? ''), 10);
-  const lastRunTs = Date.parse(lastRunStartedAt ?? '');
-  if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0 || Number.isNaN(lastRunTs)) return schedulerState;
-
-  return { ...schedulerState, nextRunAt: new Date(lastRunTs + intervalMinutes * 60 * 1000).toISOString() };
-}
-
 // ── Route builder ──────────────────────────────────────────────
 
-export async function buildApp({ config, store, productCache, scanState, triggerScan, cancelScan, scheduler, hotlist, fetcher, notifier, nvidia, komplettDemo }) {
+export async function buildApp({ config, store, productCache, hotlist, fetcher, notifier, nvidia, komplettDemo }) {
   const app = Fastify({ logger: false });
   const sourceById = new Map((config.sources ?? []).map((source) => [source.id, source]));
   let preferencesSaveQueue = Promise.resolve();
@@ -329,35 +220,15 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   // ── Status ─────────────────────────────────────────────────────
+  // The scan machinery is gone; this reports what the dashboard header needs.
   app.get('/api/status', async () => {
     const state = store.getState();
-    const sourceStatuses = config.sources.map(s => describeSourceStatus(s, state.sourceStates[s.id]));
-    const schedulerState = buildSchedulerStatus(scheduler?.getState?.() ?? null, state.stats.lastScheduledRunStartedAt);
-
     return {
-      isRunning: scanState.running,
-      isCancelling: scanState.cancelling,
-      lastError: scanState.lastError,
-      lastRunStartedAt: state.stats.lastRunStartedAt,
-      lastRunCompletedAt: state.stats.lastRunCompletedAt,
-      lastRunSummary: state.stats.lastRunSummary,
-      scanProgress: {
-        startedAt: scanState.startedAt,
-        completedSources: scanState.completedSources,
-        totalSources: scanState.totalSources,
-        sourceProgress: scanState.sourceProgress ?? {}
-      },
       counts: {
         trackedItems: Object.keys(state.items).length,
-        deals: state.deals.length,
-        enabledSources: config.sources.filter(s => isSourceEnabled(s, state)).length,
-        healthySources: sourceStatuses.filter(s => s === 'healthy').length,
-        blockedSources: sourceStatuses.filter(s => s === 'error' || s === 'cooling-down').length,
-        outletItems: state.deals.filter(d => d.condition === 'outlet').length,
-        referencedItems: state.deals.filter(d => d.comparisonPriceSek > d.currentPriceSek).length,
-        favoriteCategories: getFavoriteCategories(state).length
+        listedProducts: productCache.products?.length ?? 0,
+        deals: state.deals.length
       },
-      scheduler: schedulerState,
       hotlist: hotlist ? hotlist.getStatus() : null,
       elgigantenBlock: getElgigantenBlockStatus()
     };
@@ -366,7 +237,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   /**
    * A hard block is tied to the egress IP, so the usual recovery is to change
    * it (VPN, proxy, new ISP lease). Once that is done the remaining cooldown is
-   * stale — this clears it so the next scan retries immediately instead of
+   * stale — this clears it so the next hotlist poll retries immediately instead of
    * waiting out hours of an obsolete block.
    */
   app.post('/api/elgiganten/retry', async () => {
@@ -387,19 +258,19 @@ export async function buildApp({ config, store, productCache, scanState, trigger
 
     // Clearing the cooldown alone gives no feedback on whether the IP change
     // actually worked. Probe the site so the answer is immediate rather than
-    // "wait for the next scan and see".
+    // "wait for the next poll and see".
     const probe = await probeElgigantenReachability();
 
     let message;
     if (probe.status === 'denied') {
       message = 'Cooldown cleared, but this IP is still blocked by Elgiganten. Change the egress IP (VPN, proxy or a new ISP lease) and try again.';
     } else if (probe.status === 'reachable') {
-      message = 'Elgiganten is reachable again — the next scan will pick it up.';
+      message = 'Elgiganten is reachable again — the next hotlist poll will pick it up.';
     } else if (probe.status === 'challenge') {
       // 429 is the normal, solvable bot challenge; the browser path handles it.
-      message = 'Cooldown cleared. Elgiganten is responding normally again — the next scan will pick it up.';
+      message = 'Cooldown cleared. Elgiganten is responding normally again — the next hotlist poll will pick it up.';
     } else {
-      message = 'Cooldown cleared — the next scan will retry immediately.';
+      message = 'Cooldown cleared — the next hotlist poll will retry immediately.';
     }
 
     return {
@@ -426,18 +297,13 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   app.get('/api/products', async (request) => decorateAffiliatePayload(filterProducts(buildProductSummaries(store.getState()), request.query), sourceById));
 
   // ── Outlet Products (main endpoint — uses ProductCache) ────────
-  app.get('/api/outlet-products', async (request) => {
-    const state = store.getState();
-    const favSet = getFavoriteCategorySet(state);
-    const wishlistSet = new Set(state.preferences?.wishlist ?? []);
-    const q = request.query;
-
-    const result = productCache.query({
+  // Elgiganten hotlist finds and Komplett demo products.
+  function listingParams(q) {
+    return {
       search: q.search,
       category: q.category,
       store: q.store,
       campaign: q.campaign,
-      favoritesOnly: q.favoritesOnly === 'true',
       discountedOnly: q.discountedOnly === 'true',
       referenceOnly: q.referenceOnly === 'true',
       newOnly: q.newOnly === 'true',
@@ -447,10 +313,20 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       minPriceSek: Number.parseInt(q.minPriceSek ?? q.minPrice ?? '', 10),
       maxPriceSek: Number.parseInt(q.maxPriceSek ?? q.maxPrice ?? '', 10),
       sortBy: q.sortBy,
-      sortDir: q.sortDir,
+      sortDir: q.sortDir
+    };
+  }
+
+  app.get('/api/outlet-products', async (request) => {
+    const state = store.getState();
+    const wishlistSet = new Set(state.preferences?.wishlist ?? []);
+    const q = request.query;
+
+    const result = productCache.query({
+      ...listingParams(q),
       page: Number.parseInt(q.page ?? '1', 10),
       pageSize: Number.parseInt(q.pageSize ?? '50', 10),
-    }, favSet, state.stats.lastRunStartedAt, wishlistSet);
+    }, { wishlistSet });
     return decorateAffiliatePayload(result, sourceById);
   });
 
@@ -545,24 +421,9 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   // ── CSV Export (same filters as /api/outlet-products) ──────────
   app.get('/api/export.csv', async (request, reply) => {
     const state = store.getState();
-    const q = request.query;
-    const rows = productCache.exportRows({
-      search: q.search,
-      category: q.category,
-      store: q.store,
-      campaign: q.campaign,
-      favoritesOnly: q.favoritesOnly === 'true',
-      discountedOnly: q.discountedOnly === 'true',
-      referenceOnly: q.referenceOnly === 'true',
-      newOnly: q.newOnly === 'true',
-      hotOnly: q.hotOnly === 'true',
-      wishlistOnly: q.wishlistOnly === 'true',
-      minDiscountPercent: Number.parseInt(q.minDiscountPercent ?? '', 10),
-      minPriceSek: Number.parseInt(q.minPriceSek ?? q.minPrice ?? '', 10),
-      maxPriceSek: Number.parseInt(q.maxPriceSek ?? q.maxPrice ?? '', 10),
-      sortBy: q.sortBy,
-      sortDir: q.sortDir,
-    }, getFavoriteCategorySet(state), state.stats.lastRunStartedAt, new Set(state.preferences?.wishlist ?? []));
+    const rows = productCache.exportRows(listingParams(request.query), {
+      wishlistSet: new Set(state.preferences?.wishlist ?? [])
+    });
 
     const esc = (v) => {
       const s = String(v ?? '');
@@ -586,145 +447,13 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   // ── Outlet Categories (from cache) ─────────────────────────────
-  app.get('/api/outlet-categories', async () => {
-    const state = store.getState();
-    return productCache.getCategoriesWithFavorites(getFavoriteCategorySet(state));
-  });
+  app.get('/api/outlet-categories', async () => productCache.categories);
 
   // ── Outlet Sources (from cache) ────────────────────────────────
   app.get('/api/outlet-sources', async () => productCache.sources);
 
   // ── Outlet Campaigns (from cache) ──────────────────────────────
   app.get('/api/outlet-campaigns', async () => productCache.campaigns);
-
-  // ── Preferences ────────────────────────────────────────────────
-  app.get('/api/preferences', async () => ({
-    favoriteCategories: getFavoriteCategories(store.getState())
-  }));
-
-  app.put('/api/preferences/favorite-categories', async (request) => {
-    const state = store.getState();
-    const categories = normalizeFavoriteCategories(request.body?.categories);
-    state.preferences = { ...(state.preferences ?? {}), favoriteCategories: categories };
-
-    if (typeof store.savePreferences === 'function') {
-      await store.savePreferences();
-    } else {
-      await store.save();
-    }
-
-    return { favoriteCategories: categories };
-  });
-
-  // ── Notification Settings ──────────────────────────────────────
-  app.get('/api/notification-settings', async () => {
-    const settings = store.getState().preferences?.notificationSettings ?? {};
-    const wishlistAlerts = normalizeWishlistAlertsConfig(settings.wishlistAlerts);
-
-    // Migrate legacy data to alertRules on first read
-    if (!Array.isArray(settings.alertRules)) {
-      const rules = [];
-      const legacyWebhook = settings.keywordWebhook ?? '';
-      for (const kw of (Array.isArray(settings.keywords) ? settings.keywords : [])) {
-        if (!kw?.keyword) continue;
-        const cats = Array.isArray(kw.categories) ? kw.categories : (kw.category ? [kw.category] : []);
-        if (legacyWebhook) {
-          rules.push({ id: kw.id ?? `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, label: kw.keyword, enabled: kw.enabled !== false, keywords: [kw.keyword], categories: cats, webhooks: [legacyWebhook] });
-        }
-      }
-      for (const cw of (Array.isArray(settings.categoryWebhooks) ? settings.categoryWebhooks : [])) {
-        if (!cw?.pattern || !cw?.webhook) continue;
-        rules.push({ id: cw.id ?? `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, label: cw.label || cw.pattern, enabled: true, keywords: [], categories: [cw.pattern], webhooks: [cw.webhook] });
-      }
-      return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: rules, digest: settings.digest ?? null, wishlistAlerts };
-    }
-
-    return { notificationsEnabled: settings.notificationsEnabled !== false, alertRules: settings.alertRules, digest: settings.digest ?? null, wishlistAlerts };
-  });
-
-  app.put('/api/notification-settings', async (request, reply) => {
-    const body = request.body ?? {};
-    const state = store.getState();
-    const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
-    const existing = state.preferences?.notificationSettings ?? {};
-
-    // Merge-by-default: only fields explicitly present in the body are replaced;
-    // omitted fields preserve their existing persisted value. This prevents a
-    // partial PUT (e.g. one that omits alertRules) from wiping other settings.
-    const notificationsEnabled = has('notificationsEnabled')
-      ? body.notificationsEnabled !== false
-      : existing.notificationsEnabled !== false;
-
-    const alertRules = has('alertRules')
-      ? (Array.isArray(body.alertRules)
-        ? body.alertRules.map(r => {
-            const keywords = (Array.isArray(r.keywords) ? r.keywords : []).filter(k => typeof k === 'string' && k.trim()).map(k => k.trim());
-            const categories = (Array.isArray(r.categories) ? r.categories : []).filter(c => typeof c === 'string' && c.trim()).map(c => c.trim());
-            const webhooks = (Array.isArray(r.webhooks) ? r.webhooks : []).filter(w => typeof w === 'string' && w.trim()).map(w => w.trim());
-            // Migrate old excludedSources → filteredSources with mode='exclude'
-            const rawFiltered = Array.isArray(r.filteredSources) ? r.filteredSources : (Array.isArray(r.excludedSources) ? r.excludedSources : []);
-            const filteredSources = rawFiltered.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim());
-            const sourceFilterMode = r.sourceFilterMode === 'include' ? 'include' : 'exclude';
-            return {
-              id: typeof r.id === 'string' && r.id ? r.id : `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              label: typeof r.label === 'string' ? r.label.trim() : '',
-              enabled: r.enabled !== false,
-              keywords, categories, webhooks, filteredSources, sourceFilterMode,
-              notifyPriceDrops: r.notifyPriceDrops !== false,
-              ...(typeof r.minDiscountPercent === 'number' && Number.isFinite(r.minDiscountPercent) && r.minDiscountPercent > 0 ? { minDiscountPercent: r.minDiscountPercent } : {}),
-              ...(typeof r.minPriceDropPercent === 'number' && Number.isFinite(r.minPriceDropPercent) && r.minPriceDropPercent >= 0 ? { minPriceDropPercent: r.minPriceDropPercent } : {})
-            };
-          })
-        : [])
-      : (Array.isArray(existing.alertRules) ? existing.alertRules : []);
-
-    let digest;
-    if (has('digest')) {
-      const rawDigest = body.digest;
-      digest = rawDigest && typeof rawDigest === 'object' && !Array.isArray(rawDigest)
-        ? {
-            enabled: rawDigest.enabled === true,
-            time: TIME_OF_DAY_PATTERN.test(String(rawDigest.time ?? '').trim()) ? String(rawDigest.time).trim() : '08:00',
-            webhook: typeof rawDigest.webhook === 'string' ? rawDigest.webhook.trim() : '',
-            ...(Number.isFinite(Number(rawDigest.minScore)) && Number(rawDigest.minScore) > 0 ? { minScore: Number(rawDigest.minScore) } : {}),
-            ...(Number.isFinite(Number(rawDigest.maxItems)) && Number(rawDigest.maxItems) > 0 ? { maxItems: Math.min(25, Number(rawDigest.maxItems)) } : {})
-          }
-        : null;
-    } else {
-      digest = existing.digest ?? null;
-    }
-
-    const wishlistAlerts = has('wishlistAlerts') ? normalizeWishlistAlertsConfig(body.wishlistAlerts) : normalizeWishlistAlertsConfig(existing.wishlistAlerts);
-
-    state.preferences = { ...(state.preferences ?? {}), notificationSettings: { notificationsEnabled, alertRules, ...(digest ? { digest } : {}), wishlistAlerts } };
-
-    if (typeof store.savePreferences === 'function') {
-      await store.savePreferences();
-    } else {
-      await store.save();
-    }
-
-    return { notificationsEnabled, alertRules, digest, wishlistAlerts };
-  });
-
-  // ── Scheduler ──────────────────────────────────────────────────
-  app.get('/api/scheduler', async (_, reply) => {
-    if (!scheduler?.getState) { reply.code(404); return { message: 'Scheduler is unavailable.' }; }
-    return scheduler.getState();
-  });
-
-  app.put('/api/scheduler', async (request, reply) => {
-    if (!scheduler?.update) { reply.code(404); return { message: 'Scheduler is unavailable.' }; }
-
-    let update;
-    try { update = normalizeSchedulerUpdate(request.body ?? {}); }
-    catch (error) { reply.code(400); return { message: error.message }; }
-
-    if (!Object.keys(update).length) { reply.code(400); return { message: 'Provide enabled, intervalMinutes, or activeWindow.' }; }
-
-    try { return await scheduler.update(update); }
-    catch (error) { reply.code(400); return { message: error.message }; }
-  });
 
   // ── Elgiganten hotlist ─────────────────────────────────────────
   // The hotlist is a continuous poller rather than a scheduled source, so it
@@ -807,17 +536,6 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     } catch (error) {
       reply.code(502);
       return { message: `Could not load Elgiganten's category list: ${error.message}` };
-    }
-  });
-
-  app.get('/api/hotlist/amazon-suggestions', async (request, reply) => {
-    const prefix = request.query?.q ?? '';
-    if (!prefix || !prefix.trim()) return [];
-    try {
-      const suggestions = await fetchAmazonSuggestions(prefix);
-      return suggestions;
-    } catch {
-      return [];
     }
   });
 
@@ -1028,52 +746,6 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
-  // ── Sources ────────────────────────────────────────────────────
-  // Standard scan sources only. Hotlist sources (Elgiganten, Amazon, etc.) are continuous pollers
-  // configured exclusively via /api/hotlist and have their own lifecycles.
-  const isHotlist = (s) => s?.type?.endsWith('-hotlist') || s?.id?.endsWith('-hotlist');
-
-  app.get('/api/sources', async () => {
-    const state = store.getState();
-    return (config.sources ?? [])
-      .filter(source => !isHotlist(source))
-      .map(source => {
-        const schedulerEnabled = isSourceEnabled(source, state);
-        return {
-          id: source.id,
-          label: source.label,
-          type: source.type,
-          enabled: source.enabled,
-          schedulerEnabled,
-          status: describeSourceStatus({ ...source, enabled: schedulerEnabled }, state.sourceStates[source.id]),
-          lastSuccessAt: state.sourceStates[source.id]?.lastSuccessAt ?? null,
-          lastCount: state.sourceStates[source.id]?.lastCount ?? null,
-          lastError: state.sourceStates[source.id]?.lastError ?? null,
-          disabledUntil: state.sourceStates[source.id]?.disabledUntil ?? null
-        };
-      });
-  });
-
-  app.patch('/api/sources/:id', async (request, reply) => {
-    const sourceId = request.params.id;
-    const source = (config.sources ?? []).find(s => s.id === sourceId && !isHotlist(s));
-    if (!source) { reply.code(404); return { message: `Source not found: ${sourceId}` }; }
-    if (typeof request.body?.enabled !== 'boolean') { reply.code(400); return { message: 'Provide { enabled: true|false }' }; }
-
-    const state = store.getState();
-    state.preferences = state.preferences ?? {};
-    state.preferences.sourceOverrides = state.preferences.sourceOverrides ?? {};
-    state.preferences.sourceOverrides[sourceId] = request.body.enabled;
-
-    if (typeof store.savePreferences === 'function') {
-      await store.savePreferences();
-    } else {
-      await store.save();
-    }
-
-    return { id: sourceId, label: source.label, enabled: request.body.enabled };
-  });
-
   // ── Price History ───────────────────────────────────────────────
   app.get('/api/price-history/:listingKey', async (request, reply) => {
     const { listingKey } = request.params;
@@ -1099,9 +771,11 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   });
 
   // ── Wishlist ──────────────────────────────────────────────────
+  // A per-item bookmark ("♡") with a dashboard filter. Its target-price
+  // Discord alerts were removed on 2026-10-31; stored targets are ignored.
   app.get('/api/wishlist', async () => {
     const state = store.getState();
-    return { items: state.preferences?.wishlist ?? [], targets: state.preferences?.wishlistTargets ?? {} };
+    return { items: state.preferences?.wishlist ?? [] };
   });
 
   app.post('/api/wishlist/:listingKey', async (request, reply) => {
@@ -1116,33 +790,12 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       wishlist.push(listingKey);
       state.preferences.wishlist = wishlist;
     }
-    // Optional target price (Feature 3). A value of 0/null clears the target.
-    if (request.body && Object.prototype.hasOwnProperty.call(request.body, 'targetPriceSek')) {
-      applyWishlistTarget(state, listingKey, request.body.targetPriceSek);
-    }
     if (typeof store.savePreferences === 'function') {
       await store.savePreferences();
     } else {
       await store.save();
     }
-    return { ok: true, listingKey, wishlisted: true, targetPriceSek: state.preferences.wishlistTargets?.[listingKey] ?? null };
-  });
-
-  // Set/clear the target price for a wishlisted item (Feature 3).
-  app.put('/api/wishlist/:listingKey/target', async (request, reply) => {
-    const { listingKey } = request.params;
-    const state = store.getState();
-    state.preferences = state.preferences ?? {};
-    const wishlist = state.preferences.wishlist ?? [];
-    if (!wishlist.includes(listingKey)) { reply.code(404); return { message: 'Item is not on the wishlist.' }; }
-
-    applyWishlistTarget(state, listingKey, request.body?.targetPriceSek);
-    if (typeof store.savePreferences === 'function') {
-      await store.savePreferences();
-    } else {
-      await store.save();
-    }
-    return { ok: true, listingKey, targetPriceSek: state.preferences.wishlistTargets?.[listingKey] ?? null };
+    return { ok: true, listingKey, wishlisted: true };
   });
 
   app.delete('/api/wishlist/:listingKey', async (request, reply) => {
@@ -1155,71 +808,12 @@ export async function buildApp({ config, store, productCache, scanState, trigger
       wishlist.splice(idx, 1);
       state.preferences.wishlist = wishlist;
     }
-    // Removing from the wishlist also clears any target.
-    if (state.preferences.wishlistTargets && listingKey in state.preferences.wishlistTargets) {
-      delete state.preferences.wishlistTargets[listingKey];
-    }
     if (typeof store.savePreferences === 'function') {
       await store.savePreferences();
     } else {
       await store.save();
     }
     return { ok: true, listingKey, wishlisted: false };
-  });
-
-  // ── Scan Control ───────────────────────────────────────────────
-  app.post('/api/run', async (request, reply) => {
-    if (scanState.running) { reply.code(409); return { ok: false, message: 'A scan is already running.' }; }
-
-    const rawSourceIds = request.body?.sourceIds;
-    const sourceIds = Array.isArray(rawSourceIds) && rawSourceIds.length > 0
-      ? rawSourceIds.map(id => String(id).trim()).filter(Boolean)
-      : null;
-
-    if (sourceIds) {
-      const knownIds = new Set(config.sources.map(s => s.id));
-      const unknown = sourceIds.filter(id => !knownIds.has(id));
-      if (unknown.length) { reply.code(400); return { ok: false, message: `Unknown source IDs: ${unknown.join(', ')}` }; }
-    }
-
-    // The hotlist is not part of a scan — it has its own continuous poller —
-    // so route a request for it to an immediate poll instead of failing.
-    const hotlistRequested = Boolean(hotlist && sourceIds?.includes(hotlist.source.id));
-    const scanSourceIds = hotlistRequested
-      ? sourceIds.filter((id) => id !== hotlist.source.id)
-      : sourceIds;
-
-    if (hotlistRequested) {
-      hotlist.pollNow().catch(() => {});
-      if (!scanSourceIds.length) {
-        reply.code(202);
-        return { ok: true, started: true, message: 'Hotlist poll started.' };
-      }
-    }
-
-    const canRun = scanSourceIds
-      ? config.sources.some(s => scanSourceIds.includes(s.id) && s.enabled)
-      : config.sources.some(s => isSourceEnabled(s, store.getState()));
-
-    if (!canRun) {
-      reply.code(400);
-      return {
-        ok: false,
-        message: scanSourceIds
-          ? `None of the requested sources are enabled: ${scanSourceIds.join(', ')}`
-          : 'No sources are enabled. Add or enable a source in config/sources.json.'
-      };
-    }
-
-    triggerScan('manual', { sourceIds: scanSourceIds }).catch(() => {});
-    reply.code(202);
-    return { ok: true, started: true, message: scanSourceIds ? `Scanning: ${scanSourceIds.join(', ')}` : 'Live scan started.' };
-  });
-
-  app.post('/api/cancel', async (request, reply) => {
-    if (!scanState.running) { reply.code(409); return { ok: false, message: 'No scan is currently running.' }; }
-    const wasCancelled = cancelScan();
-    return { ok: wasCancelled, message: wasCancelled ? 'Scan cancellation requested.' : 'No scan is running.' };
   });
 
   // Remote deploy webhook — pull latest code from git and restart via systemd.

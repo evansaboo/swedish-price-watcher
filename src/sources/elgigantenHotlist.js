@@ -1,6 +1,5 @@
 import { normalizeProductIdentity } from '../lib/utils.js';
 import { getSharedAlgoliaApiKey } from './elgigantenAuth.js';
-import { resolveImageUrl } from './elgiganten.js';
 import {
   MAX_SUBQUERIES,
   activeGroups,
@@ -51,6 +50,33 @@ const DEFAULT_WATCH_GROUPS = [
   { label: 'MacBook', taxonomyIds: ['PT254'], brands: ['Apple'] },
   { label: 'iPhone', taxonomyIds: ['PT238'], brands: ['Apple'] },
 ];
+
+/**
+ * Convert an Elgiganten next-media image URL into a direct media.elkjop.com URL.
+ *
+ * next-media is a Next.js image optimizer that serves with Content-Disposition: attachment
+ * which prevents Discord from rendering the image in embeds.
+ *
+ * Input:  https://next-media.elkjop.com/image/{blobId}/{articleNo}/{filename}
+ * Output: https://media.elkjop.com/assets/image/{blobId}
+ *
+ * (Moved here from the archived outlet scraper, archive/scrapers/elgiganten.js.)
+ */
+export function resolveImageUrl(raw) {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.hostname === 'next-media.elkjop.com') {
+      // Path: /image/{blobId}/...
+      const parts = url.pathname.split('/').filter(Boolean);
+      const blobId = parts[1]; // index 0 = "image", index 1 = blobId
+      if (blobId) return `https://media.elkjop.com/assets/image/${blobId}`;
+    }
+  } catch {
+    // fall through
+  }
+  return raw;
+}
 
 function buildAlgoliaHeaders(apiKey) {
   return {

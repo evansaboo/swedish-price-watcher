@@ -1,4 +1,4 @@
-import { normalizeProductIdentity, sleep } from '../lib/utils.js';
+import { normalizeProductIdentity, sleep } from '../../src/lib/utils.js';
 
 // Blocket's internal BFF search API — no auth required, same-origin session
 const API_BASE =

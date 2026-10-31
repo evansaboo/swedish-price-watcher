@@ -1,5 +1,5 @@
-import { normalizeProductIdentity, sleep } from '../lib/utils.js';
-import { getSharedAlgoliaApiKey } from './elgigantenAuth.js';
+import { normalizeProductIdentity, sleep } from '../../src/lib/utils.js';
+import { getSharedAlgoliaApiKey } from '../../src/sources/elgigantenAuth.js';
 
 const ALGOLIA_BASE_URL =
   'https://z0fl7r8ubh-dsn.algolia.net/1/indexes/*/queries' +

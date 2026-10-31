@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { normalizeActiveWindow } from '../scheduler.js';
 import { normalizeHotlistConfig } from '../services/hotlistConfig.js';
 
 let BetterSqlite3;
@@ -21,7 +20,6 @@ export function createDefaultState() {
     sourceStates: {},
     itemHistory: {},
     preferences: {
-      favoriteCategories: [],
       wishlist: []
     },
     stats: {
@@ -44,27 +42,13 @@ function normalizeState(rawState = {}) {
     ...state.preferences,
     ...(rawState.preferences ?? {})
   };
-  state.preferences.favoriteCategories = Array.isArray(state.preferences.favoriteCategories)
-    ? state.preferences.favoriteCategories.map((category) => String(category).trim()).filter(Boolean)
-    : [];
-  const rawOverrides = rawState.preferences?.sourceOverrides;
-  state.preferences.sourceOverrides = (rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides))
-    ? rawOverrides
-    : {};
+  // Preferences of retired features (favoriteCategories, wishlistTargets,
+  // scheduler, sourceOverrides, notificationSettings, …) are carried through
+  // untouched: nothing reads them any more, and keeping them means a rollback
+  // finds its settings intact.
   state.preferences.wishlist = Array.isArray(state.preferences.wishlist)
     ? state.preferences.wishlist.filter(k => typeof k === 'string' && k)
     : [];
-  if (Object.prototype.hasOwnProperty.call(rawState.preferences ?? {}, 'scheduler')) {
-    const schedulerEnabled = state.preferences.scheduler?.enabled;
-    const schedulerIntervalMinutes = Number.parseInt(String(state.preferences.scheduler?.intervalMinutes ?? ''), 10);
-    state.preferences.scheduler = {
-      enabled: schedulerEnabled === undefined ? true : Boolean(schedulerEnabled),
-      intervalMinutes: Number.isFinite(schedulerIntervalMinutes) && schedulerIntervalMinutes > 0 ? schedulerIntervalMinutes : 180,
-      activeWindow: normalizeActiveWindow(state.preferences.scheduler?.activeWindow)
-    };
-  } else {
-    delete state.preferences.scheduler;
-  }
   if (Object.prototype.hasOwnProperty.call(rawState.preferences ?? {}, 'hotlist')) {
     state.preferences.hotlist = normalizeHotlistConfig(state.preferences.hotlist);
   } else {
@@ -82,49 +66,57 @@ function normalizeState(rawState = {}) {
   return state;
 }
 
+/**
+ * Hide the items of sources that are no longer configured (the archived
+ * scrapers) without deleting them.
+ *
+ * They move from `state.items` to `state.inactiveItems`, which the dashboard,
+ * deals and product cache never read. Every store writes them back untouched:
+ * the JSON stores merge them into `items` on save, and SqliteStore's full sync
+ * leaves their rows alone. Reviving a source therefore brings its history
+ * back. Source states and notification cooldowns are left as they are.
+ *
+ * @param {object} state
+ * @param {Iterable<string|{id: string}>} sources active sources or source ids
+ * @returns {{ hiddenItems: number, hiddenSourceIds: string[] }}
+ */
 export function reconcileStateWithSources(state, sources) {
-  const allowedSourceIds = new Set(sources.map((source) => source.id));
+  const allowedSourceIds = new Set([...sources].map((source) => (typeof source === 'string' ? source : source?.id)));
+  const inactive = state.inactiveItems && typeof state.inactiveItems === 'object' ? state.inactiveItems : {};
+  state.inactiveItems = inactive;
 
+  // A source that is configured again gets its items back.
+  for (const [listingKey, item] of Object.entries(inactive)) {
+    if (allowedSourceIds.has(item?.sourceId)) {
+      state.items[listingKey] = item;
+      delete inactive[listingKey];
+    }
+  }
+
+  const hiddenSourceIds = new Set();
   for (const [listingKey, item] of Object.entries(state.items)) {
-    if (!allowedSourceIds.has(item.sourceId)) {
+    if (!allowedSourceIds.has(item?.sourceId)) {
+      inactive[listingKey] = item;
+      hiddenSourceIds.add(String(item?.sourceId));
       delete state.items[listingKey];
     }
   }
 
-  state.deals = state.deals.filter((deal) => state.items[deal.listingKey]);
+  state.deals = (state.deals ?? []).filter((deal) => state.items[deal.listingKey]);
 
-  for (const sourceId of Object.keys(state.sourceStates)) {
-    if (!allowedSourceIds.has(sourceId)) {
-      delete state.sourceStates[sourceId];
-    }
-  }
-
-  for (const notificationKey of Object.keys(state.notifications)) {
-    const sourceId = notificationKey.split(':', 1)[0];
-
-    if (!allowedSourceIds.has(sourceId)) {
-      delete state.notifications[notificationKey];
-    }
-  }
-
-  const lastRunSummary = state.stats?.lastRunSummary;
-
-  if (lastRunSummary?.sourceResults?.length) {
-    const hasUnknownSources = lastRunSummary.sourceResults.some((result) => !allowedSourceIds.has(result.sourceId));
-
-    if (hasUnknownSources) {
-      state.stats.lastRunStartedAt = null;
-      state.stats.lastRunCompletedAt = null;
-      state.stats.lastRunSummary = null;
-    }
-  }
-
-  return state;
+  return { hiddenItems: Object.keys(inactive).length, hiddenSourceIds: [...hiddenSourceIds].sort() };
 }
 
-/** Return a copy of state safe for serialization — excludes computed deals. */
+/**
+ * Return a copy of state safe for serialization — excludes computed deals and
+ * folds hidden items of archived sources back into `items` so they persist.
+ */
 function stateForSerialization(state) {
-  return { ...state, deals: [] };
+  const { inactiveItems, ...rest } = state;
+  const items = inactiveItems && Object.keys(inactiveItems).length
+    ? { ...inactiveItems, ...state.items }
+    : state.items;
+  return { ...rest, items, deals: [] };
 }
 
 /** Extract only the preferences sub-object for fast partial saves. */
@@ -397,7 +389,7 @@ export class ApifyStore {
 //   item_archive   — items that left scrapers (kept for history)
 //   scan_stats     — latest run stats + summary
 //
-//   preferences    — user-editable settings (scheduler, alert rules, favorites, …)
+//   preferences    — user-editable settings (hotlist, Komplett demo, NVIDIA, …)
 //                    stored as a single JSON blob row for fast partial saves
 // ═══════════════════════════════════════════════════════════════
 
@@ -593,6 +585,8 @@ export class SqliteStore {
         // ── Items: full sync (startup / migration / periodic) ──────
         const dbKeys = new Set(stmts.allItemKeys.all().map(r => r.listing_key));
         const stateKeys = new Set(Object.keys(items));
+        // Rows of archived sources are hidden from `items`, not deleted.
+        const hiddenKeys = new Set(Object.keys(this.state.inactiveItems ?? {}));
 
         for (const [key, item] of Object.entries(items)) {
           const { history = [], ...data } = item;
@@ -602,7 +596,7 @@ export class SqliteStore {
           }
         }
         for (const key of dbKeys) {
-          if (!stateKeys.has(key)) stmts.deleteItem.run(key); // cascades to price_history
+          if (!stateKeys.has(key) && !hiddenKeys.has(key)) stmts.deleteItem.run(key); // cascades to price_history
         }
       }
 

@@ -1,6 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 
-import { absoluteUrl, parseSekValue, slugify, stripText } from '../lib/utils.js';
+import { absoluteUrl, parseSekValue, slugify, stripText } from '../../src/lib/utils.js';
 
 const parser = new XMLParser({
   ignoreAttributes: false,

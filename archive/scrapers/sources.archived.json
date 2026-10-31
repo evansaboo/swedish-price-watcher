@@ -1,0 +1,313 @@
+{
+  "_comment": "Archived 2026-10-31: the config/sources.json entries of every retired scan source, verbatim. To revive one, copy its entry back into config/sources.json (see archive/scrapers/README.md).",
+  "sources": [
+    {
+      "id": "elgiganten-campaigns",
+      "type": "elgiganten-campaigns",
+      "enabled": true,
+      "label": "Elgiganten Weekly Deals",
+      "category": "electronics",
+      "condition": "deal",
+      "campaignTypes": [
+        "W",
+        "S"
+      ],
+      "campaignIds": [
+        "SSA2617S03"
+      ],
+      "minDiscountPct": 10,
+      "maxProducts": 5000,
+      "scanIntervalMinutes": 60,
+      "notes": "Auto-discovers active Elgiganten campaign IDs via Algolia facets, then fetches all products on sale. campaignTypes: W=weekly deals, S=store campaigns, R=recurring, B=brand — default ['W'] for the main weekly sale. minDiscountPct filters out small discounts. beforePrice is the original price; price.amount is the sale price. No external API key required."
+    },
+    {
+      "id": "amazon-hotlist",
+      "type": "amazon-hotlist",
+      "enabled": true,
+      "label": "Amazon.se Hotlist",
+      "category": "electronics",
+      "condition": "deal",
+      "minDiscountPct": 15,
+      "notes": "Targeted hotlist poller for Amazon.se. Runs targeted search queries with discount filters (pct-off) for active watch groups."
+    },
+    {
+      "id": "elgiganten-outlet",
+      "type": "elgiganten-algolia",
+      "enabled": true,
+      "label": "Elgiganten Outlet",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxProducts": 15000,
+      "notes": "Direct Algolia API (public search key). Filter productTaxonomy.id:PT793 returns all B-grade outlet products. price.amount = outlet price; bItem.aItemPrice = new-item reference price for discount %. ~13 000+ products, no Apify required."
+    },
+    {
+      "id": "elgiganten-outlet-legacy",
+      "type": "apify-elgiganten",
+      "enabled": false,
+      "label": "Elgiganten outlet (Apify legacy — disabled)",
+      "category": "electronics",
+      "condition": "outlet",
+      "actorId": "shahidirfan/elgiganten-scraper",
+      "apiTokenEnvVar": "APIFY_TOKEN",
+      "apiTokenEnvVars": [
+        "APIFY_TOKEN_2",
+        "APIFY_TOKEN_3"
+      ],
+      "actorTimeoutMs": 120000,
+      "actorRequestRetries": 4,
+      "actorRetryBaseMs": 1500,
+      "actorRetryMaxMs": 15000,
+      "includePaths": [
+        "/product/outlet/"
+      ],
+      "actorInput": {
+        "startUrl": "https://www.elgiganten.se/search?q=outlet&view=products",
+        "results_wanted": 2500,
+        "max_pages": 80,
+        "includeRawRecord": true
+      },
+      "actorKeywordQueries": [
+        "outlet gaming",
+        "outlet grafikkort",
+        "outlet playstation",
+        "outlet laptop",
+        "outlet mobil",
+        "outlet tv",
+        "outlet hörlurar",
+        "outlet dator"
+      ],
+      "actorKeywordResultsWanted": 250,
+      "actorKeywordMaxPages": 10,
+      "referenceLookup": true,
+      "referenceLookupMaxPerScan": 400,
+      "referenceLookupConcurrency": 8,
+      "referenceLookupRetryHours": 12,
+      "referenceLookupResultsWanted": 80,
+      "referenceLookupMaxPages": 2,
+      "notificationMode": "favorite-events",
+      "notes": "Runs an Apify-backed Elgiganten Sweden outlet search and keeps only URLs under /product/outlet/ before sending Discord alerts."
+    },
+    {
+      "id": "netonnet-outlet",
+      "type": "netonnet-outlet",
+      "enabled": true,
+      "label": "NetOnNet Outlet + Fyndvaror",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxPages": 25,
+      "incrementalStopPages": 2,
+      "incrementalFullScanEvery": 5,
+      "notes": "Scrapes both /art/outlet (~8 pages) and /art/fyndvaror (~18 pages) via RSC HTML parsing. Fixed marker to match both category paths. ~1200 products total. Incremental mode stops pagination after 2 fully-known pages; every 5th scan runs full so stale items get pruned."
+    },
+    {
+      "id": "webhallen-fyndware",
+      "type": "webhallen-api",
+      "enabled": true,
+      "label": "Webhallen Fyndware (outlet)",
+      "category": "electronics",
+      "condition": "outlet",
+      "notes": "Fetches all Fyndvara (outlet) products from Webhallen via their internal productdiscovery/search/fyndware API (~1957 products, 100/page). No Apify required. Includes regularPrice as reference price for discount calculation."
+    },
+    {
+      "id": "webhallen-toplist-deals",
+      "type": "webhallen-api",
+      "enabled": true,
+      "label": "Webhallen Deals",
+      "category": "electronics",
+      "condition": "deal",
+      "toplistId": 64,
+      "notes": "Fetches Webhallen Fyndvaror via toplist/64 API (1709 products, sorted by deal score). Complements the fyndware search source."
+    },
+    {
+      "id": "komplett-outlet-electronics",
+      "type": "komplett-category",
+      "enabled": false,
+      "label": "Komplett B-grade",
+      "category": "electronics",
+      "condition": "outlet",
+      "categoryUrl": "https://www.komplett.se/category/10066/demovaror",
+      "maxPages": 10,
+      "refPriceLookupPerScan": 20,
+      "apiTokenEnvVar": "APIFY_TOKEN",
+      "affiliateProgram": {
+        "network": "adtraction"
+      },
+      "actorTimeoutMs": 300000,
+      "actorRequestRetries": 2,
+      "actorRetryBaseMs": 3000,
+      "actorRetryMaxMs": 15000,
+      "notes": "RETIRED 2026-10-31: replaced by the Komplett demo watcher (src/services/komplettDemoPoller.js, dashboard Settings -> Komplett demo), which polls only the selected demo categories newest-first via one small Apify run per tick, with a cost guard. Kept disabled for reference; the scan-time reference-price lookups below fetched product pages from the Pi, which Komplett's Akamai edge blocks. Previously: Uses Apify cheerio-scraper to fetch Komplett demovaror category pages on Apify's infrastructure (bypasses Railway IP blocks). Each page embeds 24 products as JSON. Reference prices fetched lazily from product pages and cached."
+    },
+    {
+      "id": "proshop-outlet",
+      "type": "proshop-outlet",
+      "enabled": true,
+      "label": "ProShop Outlet",
+      "category": "electronics",
+      "condition": "outlet",
+      "notes": "Uses ScraperAPI (render=true, 5 credits/page, free: 5000/mo = ~9 full scans). Falls back to Scrapfly (SCRAPFLY_API_KEY) or self-hosted FlareSolverr (FLARESOLVERR_URL). Incremental mode stops pagination early when pages contain only already-known items — drastically cuts credit usage on repeat scans. scanIntervalMinutes=240 means scheduled scans run this source at most every 4h. Full scan via UI/API always runs immediately.",
+      "apiTokenEnvVar": "SCRAPERAPI_KEY",
+      "renderJs": true,
+      "pageDelayMs": 2000,
+      "maxOutletPages": 6,
+      "maxDemoPages": 5,
+      "scanIntervalMinutes": 240,
+      "incrementalStopPages": 2,
+      "sourceTimeoutMs": 600000
+    },
+    {
+      "id": "power-deals",
+      "type": "power-deals",
+      "enabled": true,
+      "label": "Power Outlet",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxProducts": 5000,
+      "notes": "Direct REST API: /api/v2/productlists?s=5&o=true&cd=false. No Apify needed. Returns outlet/returned products with full price, image, and outletReason. Paginates with from= offset until isLastPage=true. ~10k products total."
+    },
+    {
+      "id": "gg-deals-games",
+      "type": "gg-deals-games",
+      "enabled": false,
+      "label": "GG.deals – Game Prices",
+      "category": "games",
+      "condition": "digital",
+      "apiTokenEnvVar": "GG_DEALS_API_KEY",
+      "region": "se",
+      "scanIntervalMinutes": 120,
+      "platforms": [
+        "steam",
+        "ps5",
+        "xbox-series-x"
+      ],
+      "discoverPages": 10,
+      "discoverIntervalHours": 168,
+      "maxGamesPerScan": 500,
+      "dealsPageCount": 5,
+      "pageDelayMs": 3000,
+      "notes": "Auto-discovers top Steam games via SteamSpy (10k IDs, weekly refresh). Processes maxGamesPerScan=500 Steam games per scan via GG.deals API (rotating window). PS5/Xbox: scrapes GG.deals deal pages via FlareSolverr (dealsPageCount=5 pages per platform = ~250 active deals each). GG_DEALS_API_KEY required for Steam. FLARESOLVERR_URL required for PS5/Xbox. Steam rate limits: 100 games/min, 1000/hour — handled automatically with 62s inter-batch delay."
+    },
+    {
+      "id": "blocket-electronics",
+      "type": "blocket",
+      "enabled": true,
+      "label": "Blocket (begagnat elektronik)",
+      "category": "electronics",
+      "condition": "used",
+      "maxPagesPerKeyword": 3,
+      "maxProducts": 2000,
+      "sort": "PUBLISHED_DESC",
+      "keywords": [
+        "grafikkort",
+        "rtx",
+        "radeon",
+        "gaming laptop",
+        "playstation 5",
+        "ps5 pro",
+        "xbox series",
+        "nintendo switch",
+        "steam deck",
+        "iphone",
+        "ipad",
+        "macbook",
+        "airpods",
+        "apple watch",
+        "samsung galaxy",
+        "ryzen",
+        "hörlurar",
+        "bildskärm",
+        "cpu",
+        "gaming headset",
+        "kamera",
+        "datorkomponenter"
+      ],
+      "notes": "Uses Blocket's internal BFF JSON API (no auth required). Searches for electronics keywords and paginates up to maxPagesPerKeyword pages each. ~53 results per page. Good for spotting resale deals on second-hand Swedish electronics."
+    },
+    {
+      "id": "approved-rss-feed",
+      "type": "rss",
+      "enabled": false,
+      "label": "Approved or self-hosted RSS feed",
+      "productKey": "community-deals",
+      "category": "mixed",
+      "url": "https://replace-this-with-an-approved-feed.example/rss.xml",
+      "condition": "mixed",
+      "notes": "Useful for community deal feeds or approved marketplace exports. If a site blocks direct scraping, prefer feeds or official APIs instead."
+    },
+    {
+      "id": "sweclockers-dagensfynd",
+      "type": "sweclockers-dagensfynd",
+      "enabled": true,
+      "label": "SweClockers Deals",
+      "category": "electronics",
+      "condition": "deal",
+      "notes": "Community-submitted deals from sweclockers.com/dagensfynd. Each row is a member-posted deal with title, store, price, category, and community upvote score. Requires a Cloudflare bypass backend: FLARESOLVERR_URL (preferred, free self-hosted), SCRAPFLY_API_KEY, or SCRAPERAPI_KEY. No Apify token required. Set enabled=true and deploy FlareSolverr (ghcr.io/flaresolverr/flaresolverr:latest) to use."
+    },
+    {
+      "id": "inet-fyndhornan",
+      "type": "inet-fyndhornan",
+      "enabled": true,
+      "label": "Inet Fyndhörnan",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxPages": 7,
+      "actorTimeoutMs": 180000,
+      "scanIntervalMinutes": 120,
+      "notes": "Scrapes inet.se/fyndhornan (Bargain Corner) via Apify cheerio-scraper. Server-rendered React with embedded hydrate JSON. ~400 outlet/refurb products across 7 pages. Requires APIFY_TOKEN. Uses RESIDENTIAL proxy to avoid Cloudflare challenges."
+    },
+    {
+      "id": "kjell-outlet",
+      "type": "kjell-outlet",
+      "enabled": true,
+      "label": "Kjell & Company Outlet",
+      "category": "electronics",
+      "condition": "outlet",
+      "maxPages": 60,
+      "maxProducts": 5000,
+      "incrementalStopPages": 2,
+      "incrementalFullScanEvery": 5,
+      "notes": "Direct JSON API — kjell.com/se/outlet returns JSON with XHR headers (accept: application/json + x-requested-with). ~3 300 outlet products at 60/page. price.currentInclVat = outlet price, price.originalInclVat = reference price. Outlet grade A/B parsed from ?outlet= URL param. No API key or Cloudflare bypass needed. Incremental mode stops after 2 fully-known pages; every 5th scan runs full."
+    },
+    {
+      "id": "dustin-fyndvaror",
+      "type": "dustin-fyndvaror",
+      "enabled": false,
+      "label": "Dustin Fyndvaror",
+      "category": "electronics",
+      "condition": "outlet",
+      "listPaths": [
+        "/group/ovrigt/fyndvaror"
+      ],
+      "maxPages": 10,
+      "pageDelayMs": 2000,
+      "requireTitlePattern": "fyndvara",
+      "scanIntervalMinutes": 240,
+      "notes": "dustinhome.se hard-403s direct requests — requires FLARESOLVERR_URL (or SCRAPERAPI_KEY/SCRAPFLY_API_KEY). Parses embedded searchResultProduct JSON from listing pages; includes manufacturerProductIdentifier for cross-store matching. VERIFY ON THE PI before enabling: run a single-source scan (curl -X POST localhost:3000/api/run -d '{\"sourceIds\":[\"dustin-fyndvaror\"]}'), check item count and that ?page=2 pagination yields new products. Written against an Aug 2025 Wayback capture.",
+      "maxItems": null
+    },
+    {
+      "id": "power-campaigns",
+      "type": "power-deals",
+      "enabled": true,
+      "label": "Power Kampanjer",
+      "category": "electronics",
+      "condition": "deal",
+      "outletOnly": false,
+      "minDiscountPct": 15,
+      "maxProducts": 3000,
+      "scanIntervalMinutes": 120,
+      "notes": "Same Power REST API as Power Outlet but with o=false — regular campaign markdowns instead of outlet/returned items. Only keeps products with previousPrice above current price and discount ≥ minDiscountPct."
+    },
+    {
+      "id": "nvidia-fe",
+      "type": "nvidia",
+      "enabled": true,
+      "label": "NVIDIA Founders Edition",
+      "category": "electronics",
+      "condition": "new",
+      "locale": "sv-se",
+      "scanIntervalMinutes": 60,
+      "notes": "Records NVIDIA Founders Edition availability (RTX 5090, 5080, 5070) from the NVIDIA FE tracker's Notify-FE live feed. Makes no network calls itself; needs the tracker enabled in the NVIDIA FE panel. When in stock, links directly to the store purchase page."
+    }
+  ]
+}

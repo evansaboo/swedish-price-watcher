@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { extractJsonObjects, mapDustinProduct, parseDustinPage } from '../src/sources/dustin.js';
+import { extractJsonObjects, mapDustinProduct, parseDustinPage } from '../dustin.js';
 
 const FIXTURE = fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'dustin-fyndvaror.html'),

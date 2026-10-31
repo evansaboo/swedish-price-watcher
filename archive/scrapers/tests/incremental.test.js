@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveIncrementalMode } from '../src/lib/incremental.js';
+import { resolveIncrementalMode } from '../lib/incremental.js';
 
 function makeSourceState(knownCount = 10) {
   return {

@@ -5,8 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const supportedSourceTypes = new Set(['rss', 'komplett-category', 'apify-elgiganten', 'elgiganten-algolia', 'elgiganten-campaigns', 'elgiganten-hotlist', 'amazon-hotlist', 'webhallen-api', 'netonnet-outlet', 'proshop-outlet', 'power-deals', 'gg-deals-games', 'blocket', 'sweclockers-dagensfynd', 'inet-fyndhornan', 'kjell-outlet', 'dustin-fyndvaror', 'nvidia']);
-const supportedNotificationModes = new Set(['new-listings', 'favorite-events', 'none']);
+// Only the sources the app still runs. Every other scan-source type was
+// archived on 2026-10-31 (archive/scrapers/README.md); re-add its type here,
+// and any config fields it needs below, when reviving one.
+const supportedSourceTypes = new Set(['elgiganten-hotlist', 'komplett-demo']);
 const isContainerRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.DOCKER === '1' || process.env.container);
 
 function parsePositiveInt(value, fallback) {
@@ -14,26 +16,8 @@ function parsePositiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function parseNonNegativeInt(value, fallback) {
-  const parsed = Number.parseInt(value ?? '', 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function asStringArray(value) {
-  return Array.isArray(value) ? value.map((entry) => String(entry).trim()).filter(Boolean) : [];
-}
-
 function asPlainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
-
-function asPlainObjectArray(value) {
-  return Array.isArray(value) ? value.map((entry) => asPlainObject(entry)).filter((entry) => Object.keys(entry).length) : [];
-}
-
-function normalizeNotificationMode(value) {
-  const mode = String(value ?? 'new-listings').trim();
-  return supportedNotificationModes.has(mode) ? mode : 'new-listings';
 }
 
 function sanitizeSource(rawSource) {
@@ -56,44 +40,6 @@ function sanitizeSource(rawSource) {
     enabled: Boolean(source.enabled),
     category: source.category ?? 'uncategorized',
     condition: source.condition ?? 'new',
-    shippingEstimateSek: Number(source.shippingEstimateSek ?? 0),
-    feesEstimateSek: Number(source.feesEstimateSek ?? 0),
-    marketValueSek: source.marketValueSek == null ? null : Number(source.marketValueSek),
-    referencePriceSek: source.referencePriceSek == null ? null : Number(source.referencePriceSek),
-    resaleEstimateSek: source.resaleEstimateSek == null ? null : Number(source.resaleEstimateSek),
-    sitemapUrl: source.sitemapUrl ?? null,
-    includePaths: asStringArray(source.includePaths),
-    excludePaths: asStringArray(source.excludePaths),
-    matchReferenceIncludePaths: asStringArray(source.matchReferenceIncludePaths),
-    matchReferenceExcludePaths: asStringArray(source.matchReferenceExcludePaths),
-    categoryRoots: asStringArray(source.categoryRoots),
-    maxItems: source.maxItems == null ? null : Number(source.maxItems),
-    maxPages: source.maxPages == null ? null : Number(source.maxPages),
-    categoryUrl: source.categoryUrl ?? null,
-    refPriceLookupPerScan: source.refPriceLookupPerScan == null ? null : Number(source.refPriceLookupPerScan),
-    updatedSinceDays: source.updatedSinceDays == null ? null : Number(source.updatedSinceDays),
-    notificationMode: normalizeNotificationMode(source.notificationMode),
-    notificationBatchSize: parsePositiveInt(source.notificationBatchSize, 5),
-    actorId: source.actorId ?? null,
-    actorInput: asPlainObject(source.actorInput),
-    actorInputVariants: asPlainObjectArray(source.actorInputVariants),
-    actorKeywordQueries: asStringArray(source.actorKeywordQueries),
-    actorKeywordResultsWanted: parsePositiveInt(source.actorKeywordResultsWanted, 500),
-    actorKeywordMaxPages: parsePositiveInt(source.actorKeywordMaxPages, 30),
-    actorTimeoutMs: parsePositiveInt(source.actorTimeoutMs, 120000),
-    actorRequestRetries: parseNonNegativeInt(source.actorRequestRetries, 3),
-    actorRetryBaseMs: parsePositiveInt(source.actorRetryBaseMs, 1200),
-    actorRetryMaxMs: parsePositiveInt(source.actorRetryMaxMs, 12000),
-    apiTokenEnvVar: String(source.apiTokenEnvVar ?? 'APIFY_TOKEN').trim() || 'APIFY_TOKEN',
-    apiTokenEnvVars: asStringArray(source.apiTokenEnvVars),
-    referenceLookup: source.referenceLookup !== false,
-    referenceLookupMaxPerScan: parseNonNegativeInt(source.referenceLookupMaxPerScan, 300),
-    referenceLookupConcurrency: parsePositiveInt(source.referenceLookupConcurrency, 6),
-    referenceLookupRetryHours: parsePositiveInt(source.referenceLookupRetryHours, 24),
-    referenceLookupResultsWanted: parsePositiveInt(source.referenceLookupResultsWanted, 80),
-    referenceLookupMaxPages: parsePositiveInt(source.referenceLookupMaxPages, 2),
-    selectors: asPlainObject(source.selectors),
-    attributes: asPlainObject(source.attributes),
     affiliateProgram: affiliateLinkTemplate
       ? {
           network: String(rawAffiliate.network ?? 'affiliate').trim() || 'affiliate',
@@ -128,20 +74,13 @@ export async function loadConfig() {
     sourcesFile,
     port: parsePositiveInt(process.env.PORT, 3030),
     host: isContainerRuntime ? '0.0.0.0' : process.env.HOST ?? '127.0.0.1',
-    scanIntervalMinutes: parsePositiveInt(process.env.SCAN_INTERVAL_MINUTES, 180),
     hostDelayMs: parsePositiveInt(process.env.HOST_DELAY_MS, 8000),
     requestTimeoutMs: parsePositiveInt(process.env.REQUEST_TIMEOUT_MS, 20000),
     maxHistoryEntries: parsePositiveInt(process.env.MAX_HISTORY_ENTRIES, 20),
-    archiveRetentionDays: parsePositiveInt(process.env.ARCHIVE_RETENTION_DAYS, 90),
-    // During a scan, the deals + product-cache recompute is expensive (seconds
-    // over ~26k items) and synchronous. Coalesce it to at most once per this
-    // interval so a multi-source scan doesn't freeze the event loop / UI.
-    recomputeIntervalMs: parsePositiveInt(process.env.SCAN_RECOMPUTE_INTERVAL_MS, 9000),
     userAgent: process.env.USER_AGENT ?? 'swedish-price-watcher/0.1 (+set-contact-email)',
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL?.trim() ?? '',
     notificationCooldownHours: parsePositiveInt(process.env.NOTIFICATION_COOLDOWN_HOURS, 24),
     disableHoursOnBlock: parsePositiveInt(process.env.DISABLE_HOURS_ON_BLOCK, 12),
-    runOnStart: process.env.RUN_ON_START !== 'false',
     thresholds: {
       minimumScore: parsePositiveInt(process.env.MINIMUM_SCORE, 65),
       minimumDiscountPercent: parsePositiveInt(process.env.MINIMUM_DISCOUNT_PERCENT, 18),

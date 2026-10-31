@@ -15,8 +15,8 @@
 // runs — the source ships disabled by default.
 // ═══════════════════════════════════════════════════════════════
 
-import { normalizeProductIdentity, sleep, stripText } from '../lib/utils.js';
-import { resolveBypassBackend } from '../lib/bypassFetch.js';
+import { normalizeProductIdentity, sleep, stripText } from '../../src/lib/utils.js';
+import { resolveBypassBackend } from './lib/bypassFetch.js';
 
 const BASE_URL = 'https://www.dustinhome.se';
 const IMAGE_CDN = 'https://cf-images.dustin.eu/cdn-cgi/image/fit=contain,format=auto,quality=75,width=384/image';
