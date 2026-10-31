@@ -44,6 +44,7 @@ if (useApifyStateStore) {
 }
 
 await store.load();
+console.log(`[startup] store loaded at ${process.uptime().toFixed(1)}s`);
 reconcileStateWithSources(store.getState(), config.sources);
 const state = store.getState();
 // Recompute deals from loaded items — deals are not persisted to keep state lean.
@@ -59,6 +60,7 @@ const hotlistSources = config.sources.filter((entry) => entry.type?.endsWith('-h
 const hotlistSource = hotlistSources.find((entry) => entry.type === 'elgiganten-hotlist') ?? hotlistSources[0] ?? null;
 
 productCache.rebuild(state, sourceLabelMap);
+console.log(`[startup] deals and product cache built at ${process.uptime().toFixed(1)}s`);
 
 // Wire store invalidation to rebuild cache on saves
 if (store.onInvalidate) {
@@ -88,6 +90,7 @@ if (hotlistSource) ensureHotlistConfig(state.preferences, hotlistSource);
 ensureNvidiaConfig(state.preferences);
 
 await store.save();
+console.log(`[startup] store saved at ${process.uptime().toFixed(1)}s`);
 
 const fetcher = new PoliteFetcher(config);
 const notifier = new DiscordNotifier({
@@ -743,6 +746,7 @@ const app = await buildApp({
 });
 
 await app.listen({ port: config.port, host: config.host });
+console.log(`[startup] listening at ${process.uptime().toFixed(1)}s`);
 console.log(`Price watcher listening at http://${config.host}:${config.port}`);
 
 if (hotlistSource) {

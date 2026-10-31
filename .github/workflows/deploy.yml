@@ -33,18 +33,21 @@ jobs:
             *)   echo "❌ Unexpected HTTP $HTTP_CODE from deploy webhook."; exit 1 ;;
           esac
 
-      - name: Wait for Pi to restart and pass health check
+      - name: Wait for the Pi to come back on this commit
         run: |
-          echo "Waiting for Pi to pull, restart, and become healthy..."
-          sleep 20
-          for i in $(seq 1 18); do
+          # /health reports the commit the running process started from, so this
+          # only passes once the *restarted* app is up (the old process keeps
+          # answering while the Pi pulls and installs). Startup can take a few
+          # minutes on the Pi, hence the 5-minute budget.
+          echo "Waiting for the Pi to pull, restart and report ${GITHUB_SHA}..."
+          for i in $(seq 1 60); do
             sleep 5
-            STATUS=$(curl -sf --max-time 5 https://deals.evansaboo.com/health 2>/dev/null || echo "")
-            if echo "$STATUS" | grep -q '"ok":true'; then
-              echo "✅ Deploy successful (attempt $i)"
+            BODY=$(curl -s --max-time 5 https://deals.evansaboo.com/health 2>/dev/null || true)
+            if echo "$BODY" | grep -q "\"sha\":\"${GITHUB_SHA}\""; then
+              echo "✅ Deploy successful: ${GITHUB_SHA} is live after ~$((i * 5))s"
               exit 0
             fi
-            echo "Waiting... ($i/18)"
+            echo "Waiting... ($i/60) ${BODY:-no response}"
           done
-          echo "❌ Health check failed after 110s"
+          echo "❌ ${GITHUB_SHA} was not live and healthy after 300s"
           exit 1

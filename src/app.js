@@ -8,6 +8,7 @@ import fastifyStatic from '@fastify/static';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { isSourceEnabled } from './lib/utils.js';
 import { createIndexHtmlBuilder } from './lib/assetVersion.js';
 import { buildProductSummaries } from './services/dealEngine.js';
@@ -47,6 +48,16 @@ import { normalizeNvidiaConfig, ensureNvidiaConfig, DEFAULT_NVIDIA_CONFIG } from
 import { GPU_DISPLAY_ORDER, CARD_METADATA } from './sources/nvidia.js';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Commit this process was started from. /health reports it so the deploy
+// workflow can tell the restarted instance apart from the old one.
+const RUNNING_SHA = (() => {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT_DIR, encoding: 'utf8', timeout: 5000 }).trim();
+  } catch {
+    return null;
+  }
+})();
 
 const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -294,7 +305,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
   }
 
   // ── Health ─────────────────────────────────────────────────────
-  app.get('/health', async () => ({ ok: true }));
+  app.get('/health', async () => ({ ok: true, sha: RUNNING_SHA }));
 
   // ── Version / deployment info ──────────────────────────────────
   app.get('/api/version', async (_, reply) => {
