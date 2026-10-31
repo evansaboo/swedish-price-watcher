@@ -12,6 +12,7 @@ import { createHotlistPoller } from './services/hotlistPoller.js';
 import { ensureHotlistConfig, normalizeHotlistConfig } from './services/hotlistConfig.js';
 import { ensureNvidiaConfig, normalizeNvidiaConfig } from './services/nvidiaConfig.js';
 import { createNvidiaPoller } from './services/nvidiaPoller.js';
+import { setNvidiaLiveStatusProvider } from './sources/nvidia.js';
 import { buildDigestDeals, buildDigestPayload, shouldSendDigest } from './services/digest.js';
 import { ProductCache } from './services/productCache.js';
 import { DiscordNotifier } from './services/notifier.js';
@@ -651,6 +652,8 @@ const nvidiaPoller = createNvidiaPoller({
   notifier,
   logger: console
 });
+// The `nvidia` scan source reads the live feed's state instead of calling NVIDIA.
+setNvidiaLiveStatusProvider(() => nvidiaPoller.getStatus());
 
 async function updateNvidiaConfig(nextConfig) {
   const updated = normalizeNvidiaConfig({ ...(state.preferences?.nvidiaFe ?? {}), ...nextConfig });
@@ -758,10 +761,10 @@ if (hotlistSource) {
 }
 
 nvidiaPoller.start();
-const nvidiaPref = state.preferences?.nvidiaFe ?? {};
+const nvidiaPref = normalizeNvidiaConfig(state.preferences?.nvidiaFe ?? {});
 if (nvidiaPref.enabled) {
   console.log(
-    `[nvidia] Continuous poller started — checking every ${nvidiaPref.intervalSeconds}s for ${nvidiaPref.monitoredCards.join(', ')} (${nvidiaPref.locale})`
+    `[nvidia] Following the Notify-FE live feed for ${nvidiaPref.monitoredCards.join(', ')} (${nvidiaPref.locale})`
   );
 }
 
@@ -775,6 +778,7 @@ if (config.runOnStart) {
 async function shutdown(signal) {
   scheduler.stop();
   hotlistPoller.stop();
+  nvidiaPoller.stop();
   await app.close();
   console.log(`${signal} received, shutting down.`);
   process.exit(0);

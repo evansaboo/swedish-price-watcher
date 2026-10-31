@@ -493,7 +493,7 @@
                 <h3 style="margin:0;">NVIDIA Founders Edition</h3>
                 <span id="nvidia-poller-badge" class="section-badge" style="margin:0;">Loading...</span>
               </div>
-              <span style="font-size:11px; color:var(--text-tertiary);">Powered by Notify-FE • Continuous Inventory Scheduler</span>
+              <span style="font-size:11px; color:var(--text-tertiary);">Powered by the Notify-FE live stock feed</span>
             </div>
           </div>
           <button id="nvidia-modal-close" type="button" class="modal-close" aria-label="Close">×</button>
@@ -531,7 +531,7 @@
                 <span id="nvidia-last-check" style="font-size:11px; color:var(--text-tertiary);"></span>
                 <button id="nvidia-refresh-btn" type="button" class="ghost-btn" style="height:32px; display:inline-flex; align-items:center; gap:6px;">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
-                  Check Now
+                  Refresh
                 </button>
               </div>
             </div>
@@ -553,26 +553,12 @@
               <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:var(--bg-page); border:1px solid var(--border-light); border-radius:var(--radius-md); margin-bottom:14px;">
                 <div>
                   <div style="font-weight:600; font-size:13.5px; color:var(--text-primary);">Background Stock Scheduler</div>
-                  <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">Continuously checks NVIDIA inventory in the background and sends instant Discord alerts.</div>
+                  <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">Follows the Notify-FE live stock feed in the background and sends instant Discord alerts. Stock changes are pushed as they happen; there is no polling interval.</div>
                 </div>
                 <label class="toggle-switch" title="Toggle background stock scheduler">
                   <input type="checkbox" id="nvidia-enabled-input" />
                   <span class="toggle-track"><span class="toggle-thumb"></span></span>
                 </label>
-              </div>
-
-              <!-- Frequency / Interval -->
-              <div class="form-field" style="margin-bottom:14px;">
-                <label for="nvidia-interval-select" style="font-size:11px; font-weight:600; color:var(--text-tertiary); text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:5px;">Check Frequency</label>
-                <select id="nvidia-interval-select" class="field-select">
-                  <option value="10">Every 10 seconds (⚡ Fast Drop Sniffer)</option>
-                  <option value="15" selected>Every 15 seconds (Notify-FE Standard)</option>
-                  <option value="30">Every 30 seconds</option>
-                  <option value="60">Every 60 seconds (1 minute)</option>
-                  <option value="120">Every 2 minutes</option>
-                  <option value="300">Every 5 minutes</option>
-                </select>
-                <div style="font-size:11px; color:var(--text-tertiary); margin-top:4px;">Uses persistent HTTP/2 with Akamai bot cookies to avoid rate limits.</div>
               </div>
 
               <!-- Discord Webhook URL -->
@@ -607,7 +593,7 @@
                 <label class="toggle-switch">
                   <input type="checkbox" id="nvidia-api-alarm-input" />
                   <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  <span class="toggle-label">Alarm if NVIDIA Store API becomes unreachable</span>
+                  <span class="toggle-label">Log a server warning if the live feed becomes unhealthy</span>
                 </label>
               </div>
 

@@ -359,7 +359,7 @@
       "condition": "new",
       "locale": "sv-se",
       "scanIntervalMinutes": 60,
-      "notes": "Monitors official NVIDIA Founders Edition GPU availability (RTX 5090, 5080, 5070, 4090, 4080S, 4070S) via NVIDIA Store partner API using Notify-FE dynamic SKUs. When in stock, links directly to the store purchase page."
+      "notes": "Records NVIDIA Founders Edition availability (RTX 5090, 5080, 5070) from the NVIDIA FE tracker's Notify-FE live feed. Makes no network calls itself; needs the tracker enabled in the NVIDIA FE panel. When in stock, links directly to the store purchase page."
     }
   ]
 }

@@ -807,7 +807,7 @@ export async function buildApp({ config, store, productCache, scanState, trigger
     }
   });
 
-  // ── NVIDIA Founders Edition (Notify-FE integration & scheduler) ─
+  // ── NVIDIA Founders Edition (Notify-FE live feed) ─
   app.get('/api/nvidia/config', async () => {
     const state = store.getState();
     const cfg = normalizeNvidiaConfig(state.preferences?.nvidiaFe ?? {});
@@ -877,65 +877,21 @@ export async function buildApp({ config, store, productCache, scanState, trigger
 
   app.get('/api/nvidia/status', async (request, reply) => {
     try {
-      const state = store.getState();
-      const cfg = normalizeNvidiaConfig(state.preferences?.nvidiaFe ?? {});
-      const locale = String(request.query?.locale || cfg.locale || 'sv-se').toLowerCase();
-
-      const pollerStatus = nvidia?.getStatus ? nvidia.getStatus() : null;
-      if (pollerStatus?.cards?.length && pollerStatus.locale === locale && request.query?.refresh !== 'true') {
-        return {
-          ok: true,
-          locale,
-          poller: pollerStatus,
-          checkedAt: pollerStatus.lastSuccessAt || new Date().toISOString(),
-          cards: pollerStatus.cards
-        };
+      // Served from the live-feed poller's state; there is no direct NVIDIA query.
+      // `refresh=true` (the "Check Now" button) only forces a reconnect when the feed is down.
+      const pollerStatus = request.query?.refresh === 'true' && nvidia?.poller?.triggerNow
+        ? await nvidia.poller.triggerNow()
+        : (nvidia?.getStatus ? nvidia.getStatus() : null);
+      if (!pollerStatus) {
+        reply.code(503);
+        return { ok: false, error: 'NVIDIA tracker is not available' };
       }
-
-      const { fetchDynamicSkus, resolveCardSku, queryNvidiaFeInventory, GPU_DISPLAY_ORDER, CARD_METADATA } = await import('./sources/nvidia.js');
-      const dynamicSkus = await fetchDynamicSkus();
-
-      const cardSkus = GPU_DISPLAY_ORDER.map((cardKey) => ({
-        cardKey,
-        sku: resolveCardSku(cardKey, locale, dynamicSkus),
-        meta: CARD_METADATA[cardKey]
-      }));
-
-      const uniqueSkus = Array.from(new Set(cardSkus.map((c) => c.sku)));
-      const inventory = await queryNvidiaFeInventory(uniqueSkus, locale, { timeoutMs: 15000 });
-
-      const cards = cardSkus.map(({ cardKey, sku, meta }) => {
-        const raw = inventory.results?.[sku];
-        const item = raw?.listMap?.[0] || null;
-        const isActive = item?.is_active === 'true' || item?.is_active === true;
-        const parsedPrice = item?.price ? Number(item.price) : NaN;
-        const isRealPrice = Number.isFinite(parsedPrice) && parsedPrice > 0 && parsedPrice < 900000;
-        const isMonitored = cfg.monitoredCards.includes(cardKey);
-
-        return {
-          cardKey,
-          name: meta?.shortName || `RTX ${cardKey} FE`,
-          fullName: meta?.name || `NVIDIA GeForce RTX ${cardKey} Founders Edition`,
-          sku,
-          available: isActive,
-          api_reachable: Boolean(raw && !raw.error && raw.success !== false),
-          api_error: raw?.error || (raw ? null : (inventory.error || 'timeout')),
-          isMonitored,
-          product_url: isActive && item?.product_url ? item.product_url : null,
-          store_url: meta?.defaultUrl,
-          priceSek: isActive && isRealPrice ? parsedPrice : meta?.msrpSek,
-          msrpSek: meta?.msrpSek,
-          imageUrl: meta?.imageUrl,
-          last_checked: new Date().toISOString()
-        };
-      });
-
       return {
         ok: true,
-        locale,
+        locale: pollerStatus.locale,
         poller: pollerStatus,
-        checkedAt: new Date().toISOString(),
-        cards
+        checkedAt: pollerStatus.feed?.lastPacketAt || pollerStatus.lastSuccessAt || null,
+        cards: pollerStatus.cards
       };
     } catch (err) {
       reply.code(500);

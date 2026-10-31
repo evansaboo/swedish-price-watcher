@@ -949,7 +949,7 @@ function closePriceHistoryModal() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
-// ── NVIDIA Founders Edition (Notify-FE Scheduler & Tracker) ──────
+// ── NVIDIA Founders Edition (Notify-FE live feed tracker) ──────
 let nvidiaState = {
   config: null,
   poller: null,
@@ -1046,7 +1046,6 @@ async function loadNvidiaConfig() {
 
     const cfg = nvidiaState.config;
     const enabledInput = document.getElementById('nvidia-enabled-input');
-    const intervalSelect = document.getElementById('nvidia-interval-select');
     const webhookInput = document.getElementById('nvidia-webhook-input');
     const soundInput = document.getElementById('nvidia-sound-input');
     const autoOpenInput = document.getElementById('nvidia-auto-open-input');
@@ -1054,7 +1053,6 @@ async function loadNvidiaConfig() {
     const localeSelect = document.getElementById('nvidia-locale-select');
 
     if (enabledInput) enabledInput.checked = Boolean(cfg.enabled);
-    if (intervalSelect) intervalSelect.value = String(cfg.intervalSeconds || 15);
     if (webhookInput) webhookInput.value = cfg.discordWebhookUrl || '';
     if (soundInput) soundInput.checked = cfg.soundEnabled !== false;
     if (autoOpenInput) autoOpenInput.checked = Boolean(cfg.autoOpenShop);
@@ -1072,14 +1070,16 @@ function updateNvidiaPollerBadge() {
   if (!badge) return;
 
   const isRunning = Boolean(nvidiaState.config?.enabled);
-  const interval = nvidiaState.config?.intervalSeconds || 15;
+  const feed = nvidiaState.poller?.feed || {};
+  const healthy = feed.connected && feed.status === 'healthy' && !nvidiaState.poller?.lastError;
 
   badge.className = 'section-badge';
   if (isRunning) {
-    badge.textContent = `🟢 Active (${interval}s)`;
-    badge.style.background = 'var(--green-soft)';
-    badge.style.color = 'var(--green)';
-    badge.style.borderColor = 'var(--green)';
+    badge.textContent = nvidiaFeedLabel();
+    badge.title = nvidiaState.poller?.lastError || '';
+    badge.style.background = healthy ? 'var(--green-soft)' : 'var(--bg-inset)';
+    badge.style.color = healthy ? 'var(--green)' : 'var(--accent)';
+    badge.style.borderColor = healthy ? 'var(--green)' : 'var(--accent)';
   } else {
     badge.textContent = '⚪ Disabled';
     badge.style.background = 'var(--bg-inset)';
@@ -1088,10 +1088,24 @@ function updateNvidiaPollerBadge() {
   }
 }
 
+function nvidiaFeedLabel() {
+  const feed = nvidiaState.poller?.feed || {};
+  const pct = Number.isFinite(feed.monitorHealthPercent) ? ` ${feed.monitorHealthPercent}%` : '';
+  switch (feed.status) {
+    case 'healthy': return nvidiaState.poller?.lastError ? `🟠 Live (degraded cards)` : `🟢 Live${pct}`;
+    case 'source_degraded': return `🟠 Degraded${pct}`;
+    case 'offline': return '🔴 Monitor offline';
+    case 'stale': return '🔴 Feed stale';
+    case 'disconnected': return '🔴 Reconnecting';
+    case 'connecting':
+    case 'waiting': return '⏳ Connecting';
+    default: return '⏳ Starting';
+  }
+}
+
 async function saveNvidiaSettingsForm(e) {
   if (e) e.preventDefault();
   const enabledInput = document.getElementById('nvidia-enabled-input');
-  const intervalSelect = document.getElementById('nvidia-interval-select');
   const webhookInput = document.getElementById('nvidia-webhook-input');
   const soundInput = document.getElementById('nvidia-sound-input');
   const autoOpenInput = document.getElementById('nvidia-auto-open-input');
@@ -1100,7 +1114,6 @@ async function saveNvidiaSettingsForm(e) {
 
   const payload = {
     enabled: enabledInput?.checked ?? false,
-    intervalSeconds: Number(intervalSelect?.value) || 15,
     discordWebhookUrl: webhookInput?.value?.trim() || '',
     soundEnabled: soundInput?.checked ?? true,
     autoOpenShop: autoOpenInput?.checked ?? false,
@@ -1158,58 +1171,47 @@ function updateMonitoredCountBadge() {
   badge.textContent = `${count} monitored`;
 }
 
-async function refreshNvidiaCards() {
-  const container = document.getElementById('nvidia-cards-container');
+// The server follows one locale's feed; changing the region saves it and reconnects.
+async function changeNvidiaLocale() {
   const localeSelect = document.getElementById('nvidia-locale-select');
+  const locale = localeSelect?.value || 'sv-se';
+  if (nvidiaState.config?.locale === locale) return refreshNvidiaCards();
+  try {
+    const res = await fetchJson('/api/nvidia/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locale })
+    });
+    if (res?.ok) nvidiaState.config = res.config;
+  } catch (err) {
+    showToast(`Failed to change region: ${err.message}`, 'error');
+  }
+  await refreshNvidiaCards();
+}
+
+async function refreshNvidiaCards({ force = false } = {}) {
+  const container = document.getElementById('nvidia-cards-container');
   const lastCheckEl = document.getElementById('nvidia-last-check');
   const refreshBtn = document.getElementById('nvidia-refresh-btn');
   if (!container) return;
 
-  const locale = localeSelect?.value || 'sv-se';
   if (refreshBtn) refreshBtn.disabled = true;
 
   try {
-    const res = await fetchJson(`/api/nvidia/status?locale=${encodeURIComponent(locale)}&refresh=true`);
+    // Served from the server's live-feed state; force=true reconnects a dropped feed.
+    const res = await fetchJson(`/api/nvidia/status${force === true ? '?refresh=true' : ''}`);
     if (!res?.ok || !Array.isArray(res.cards)) {
       throw new Error(res?.error || 'Failed to fetch inventory');
     }
 
     nvidiaState.cards = res.cards;
     if (res.poller) nvidiaState.poller = res.poller;
-
-    // Direct browser verification fallback:
-    // If the server IP is challenged by Akamai (http_403), the browser verifies directly from NVIDIA Store API
-    const unverifiedCards = res.cards.filter(c => !c.api_reachable && c.sku);
-    if (unverifiedCards.length > 0) {
-      await Promise.all(unverifiedCards.map(async (card) => {
-        try {
-          const directRes = await fetch(`https://api.store.nvidia.com/partner/v1/feinventory?skus=${encodeURIComponent(card.sku)}&locale=${encodeURIComponent(locale)}`, {
-            headers: { 'Accept': 'application/json, text/plain, */*' }
-          });
-          if (directRes.ok) {
-            const data = await directRes.json();
-            const item = data?.listMap?.[0];
-            if (item) {
-              const isActive = item.is_active === 'true' || item.is_active === true;
-              const parsedPrice = item.price ? Number(item.price) : NaN;
-              card.available = isActive;
-              card.api_reachable = true;
-              card.api_error = null;
-              card.direct_verified = true;
-              if (isActive && item.product_url) card.product_url = item.product_url;
-              if (Number.isFinite(parsedPrice) && parsedPrice > 0 && parsedPrice < 900000) {
-                card.priceSek = parsedPrice;
-              }
-            }
-          }
-        } catch {
-          // Direct check fallback handled gracefully
-        }
-      }));
-    }
+    updateNvidiaPollerBadge();
 
     if (lastCheckEl) {
-      lastCheckEl.textContent = `Updated: ${new Date().toLocaleTimeString('sv-SE')}`;
+      lastCheckEl.textContent = res.checkedAt
+        ? `Last feed packet: ${new Date(res.checkedAt).toLocaleTimeString('sv-SE')}`
+        : 'No feed data yet';
     }
 
     updateMonitoredCountBadge();
@@ -1264,11 +1266,11 @@ async function refreshNvidiaCards() {
                 <span class="section-badge" style="font-size:10px; padding:1px 5px;">FE</span>
               </div>
               <div style="font-size:11.5px; color:var(--text-tertiary); display:flex; align-items:center; gap:8px; margin-top:2px; flex-wrap:wrap;">
-                <span>SKU: <code style="font-family:monospace; font-size:11px; background:var(--bg-inset); padding:1px 4px; border-radius:3px;">${escapeHtml(card.sku)}</code></span>
+                <span>SKU: <code style="font-family:monospace; font-size:11px; background:var(--bg-inset); padding:1px 4px; border-radius:3px;">${escapeHtml(card.sku || '—')}</code></span>
                 <span>MSRP: ${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</span>
-                <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};" title="${card.api_reachable ? 'NVIDIA Store API online' : escapeHtml(card.api_error || 'API unreachable')}">
+                <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};" title="${card.api_reachable ? 'Live feed reports a fresh, healthy check' : escapeHtml(card.api_error || 'Feed unavailable')}">
                   <span style="width:6px; height:6px; border-radius:50%; background:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};"></span>
-                  ${card.api_reachable ? 'API Live' : 'API Error'}
+                  ${card.api_reachable ? 'Live' : escapeHtml(card.api_error || 'Feed error')}
                 </span>
               </div>
             </div>
@@ -1313,33 +1315,18 @@ async function refreshNvidiaCards() {
   }
 }
 
+// While the modal is open, re-read the server's feed state every 10 s.
 function startNvidiaCountdown() {
   stopNvidiaCountdown();
   const cdEl = document.getElementById('nvidia-countdown');
-
+  const tick = () => {
+    if (cdEl) cdEl.textContent = nvidiaState.config?.enabled ? nvidiaFeedLabel() : '';
+  };
+  tick();
   nvidiaState.countdownTimer = setInterval(async () => {
-    if (!nvidiaState.config?.enabled) {
-      if (cdEl) cdEl.textContent = '';
-      return;
-    }
-
-    const nextPoll = nvidiaState.poller?.nextPollAt ? new Date(nvidiaState.poller.nextPollAt).getTime() : 0;
-    const now = Date.now();
-    const diffSecs = Math.max(0, Math.round((nextPoll - now) / 1000));
-
-    if (cdEl) {
-      if (diffSecs > 0) {
-        cdEl.textContent = `⏱ Next check in ${diffSecs}s`;
-      } else {
-        cdEl.textContent = `⏱ Checking...`;
-      }
-    }
-
-    // When timer expires, fetch status silently
-    if (diffSecs === 0 && nextPoll > 0) {
-      await refreshNvidiaCards();
-    }
-  }, 1000);
+    if (nvidiaState.config?.enabled) await refreshNvidiaCards();
+    tick();
+  }, 10_000);
 }
 
 function stopNvidiaCountdown() {
@@ -2640,8 +2627,8 @@ function bindEvents() {
   // NVIDIA FE modal
   document.getElementById('nvidia-open-btn')?.addEventListener('click', openNvidiaModal);
   document.getElementById('nvidia-modal-close')?.addEventListener('click', closeNvidiaModal);
-  document.getElementById('nvidia-refresh-btn')?.addEventListener('click', refreshNvidiaCards);
-  document.getElementById('nvidia-locale-select')?.addEventListener('change', refreshNvidiaCards);
+  document.getElementById('nvidia-refresh-btn')?.addEventListener('click', () => refreshNvidiaCards({ force: true }));
+  document.getElementById('nvidia-locale-select')?.addEventListener('change', changeNvidiaLocale);
   document.getElementById('nvidia-tab-cards')?.addEventListener('click', () => switchNvidiaTab('cards'));
   document.getElementById('nvidia-tab-settings')?.addEventListener('click', () => switchNvidiaTab('settings'));
   document.getElementById('nvidia-settings-form')?.addEventListener('submit', saveNvidiaSettingsForm);
