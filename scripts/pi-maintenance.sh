@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Raspberry Pi housekeeping — keeps the SD card from filling up.
+#  Raspberry Pi housekeeping — warns before the root disk fills up.
 #
-#  On 2026-10-31 the card hit 100% (Discount Bandit wrote ~2 GB/day of
-#  repeated errors), SQLite could no longer write, and the price watcher
-#  crash-looped until the site went down. This script prevents a repeat:
-#    * deletes Discount Bandit's Laravel logs older than BANDIT_LOG_DAYS
-#    * truncates today's Bandit log if it grows past BANDIT_LOG_MAX_MB
-#    * clears stale Chromium temp dirs and PHP core dumps in the container
-#    * posts a Discord alert when the root disk is at/above DISK_ALERT_PERCENT
+#  On 2026-10-31 the disk hit 100% (runaway logs from a since-removed Docker
+#  app), SQLite could no longer write, and the price watcher crash-looped until
+#  the site went down. This script posts a Discord alert (via
+#  DISCORD_WEBHOOK_URL in .env) when the root disk is at/above
+#  DISK_ALERT_PERCENT, at most once every ALERT_EVERY_HOURS.
 #
 #  Runs as the app user from cron (no sudo needed):
 #    bash scripts/pi-maintenance.sh --install   # adds the hourly cron entry
@@ -17,10 +15,6 @@
 set -uo pipefail
 
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-BANDIT_DIR="${BANDIT_DIR:-$HOME/discount-bandit}"
-BANDIT_CONTAINER="${BANDIT_CONTAINER:-discount-bandit}"
-BANDIT_LOG_DAYS="${BANDIT_LOG_DAYS:-3}"
-BANDIT_LOG_MAX_MB="${BANDIT_LOG_MAX_MB:-500}"
 DISK_ALERT_PERCENT="${DISK_ALERT_PERCENT:-85}"
 ALERT_EVERY_HOURS="${ALERT_EVERY_HOURS:-6}"
 STATE_FILE="${STATE_FILE:-$APP_DIR/data/.disk-alert-sent}"
@@ -32,31 +26,6 @@ if [[ "${1:-}" == "--install" ]]; then
   { crontab -l 2>/dev/null | grep -v 'scripts/pi-maintenance.sh'; echo "$entry"; } | crontab -
   log "installed hourly cron entry: $entry"
   exit 0
-fi
-
-# --- Discount Bandit logs -------------------------------------------------
-# The log dir is ours, so we can unlink root-owned files in it without sudo.
-if [[ -d "$BANDIT_DIR/logs" ]]; then
-  find "$BANDIT_DIR/logs" -maxdepth 1 -name 'laravel-*.log' -mtime "+$((BANDIT_LOG_DAYS - 1))" -print -delete \
-    | sed 's/^/deleted old log /' | while read -r line; do log "$line"; done
-
-  # Truncating needs write access to the file itself, so do it as root in the container.
-  find "$BANDIT_DIR/logs" -maxdepth 1 -name 'laravel-*.log' -size "+${BANDIT_LOG_MAX_MB}M" -printf '%f\n' \
-    | while read -r name; do
-        docker exec "$BANDIT_CONTAINER" truncate -s 0 "/app/storage/logs/$name" \
-          && log "truncated $name (over ${BANDIT_LOG_MAX_MB} MB)"
-      done
-fi
-
-# --- Discount Bandit container scratch -----------------------------------
-if docker inspect "$BANDIT_CONTAINER" >/dev/null 2>&1; then
-  docker exec "$BANDIT_CONTAINER" sh -c '
-    n=$(find /tmp -mindepth 1 -maxdepth 1 -mmin +1440 | wc -l)
-    find /tmp -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} +
-    c=$(find /app -maxdepth 1 -name "core.*" -mmin +1440 | wc -l)
-    find /app -maxdepth 1 -name "core.*" -mmin +1440 -delete
-    [ "$n" -gt 0 ] || [ "$c" -gt 0 ] && echo "removed $n stale /tmp entries and $c core dumps in container"
-    true' | while read -r line; do log "$line"; done
 fi
 
 # --- Disk alert ------------------------------------------------------------

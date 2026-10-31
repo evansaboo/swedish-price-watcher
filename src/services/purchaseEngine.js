@@ -3,12 +3,12 @@ import crypto from 'node:crypto';
 /**
  * Purchase engine — the shared brain behind the three checkout models.
  *
- *   deep-link     Alert carries a plain URL button to the product page.
+ *   deep-link     Alert links to the product page only.
  *                 Zero automation, zero risk. Default.
  *
- *   armed         You "arm" a listing in advance. Matching alerts gain a Discord
- *                 button; one tap stages the cart on demand and replies with a
- *                 checkout link. The tap is the human authorisation.
+ *   armed         You "arm" a listing in advance with its own spend cap and
+ *                 expiry. Matching alerts note that it is armed; you stage the
+ *                 cart on demand from the dashboard.
  *
  *   cart-staging  Staging runs proactively the moment an armed listing alerts,
  *                 so the alert already contains a checkout link. Fastest path.
@@ -47,7 +47,6 @@ function normalizeArm(raw, now) {
   return {
     listingKey: raw.listingKey,
     mode: normalizePurchaseMode(raw.mode, 'armed'),
-    token: typeof raw.token === 'string' && raw.token ? raw.token : crypto.randomBytes(18).toString('base64url'),
     maxPriceSek: Number.isFinite(Number(raw.maxPriceSek)) && Number(raw.maxPriceSek) > 0
       ? Number(raw.maxPriceSek)
       : null,
@@ -127,7 +126,6 @@ export function armListing(purchase, input = {}, now = new Date()) {
   const arm = {
     listingKey,
     mode: normalizePurchaseMode(input.mode, purchase.mode === 'deep-link' ? 'armed' : purchase.mode),
-    token: crypto.randomBytes(18).toString('base64url'),
     maxPriceSek,
     armedAt: timestamp,
     expiresAt: new Date(now.getTime() + ttlMinutes * 60_000).toISOString(),
@@ -157,36 +155,6 @@ export function pruneExpiredArms(purchase, now = new Date()) {
     }
   }
   return removed;
-}
-
-export function findArmByToken(purchase, token) {
-  const candidate = String(token ?? '');
-  if (!candidate) return null;
-  const candidateBuffer = Buffer.from(candidate);
-  for (const arm of Object.values(purchase.armed ?? {})) {
-    const known = Buffer.from(String(arm.token ?? ''));
-    if (known.length === candidateBuffer.length && crypto.timingSafeEqual(known, candidateBuffer)) {
-      return arm;
-    }
-  }
-  return null;
-}
-
-/**
- * Gate every staging request. Returns `{ ok: false, reason }` rather than
- * throwing so callers can surface a precise, user-facing refusal in Discord.
- */
-export function checkArmUsable(arm, { priceSek, now = new Date() } = {}) {
-  if (!arm) return { ok: false, reason: 'not-armed' };
-  if (arm.expiresAt && Date.parse(arm.expiresAt) <= now.getTime()) return { ok: false, reason: 'expired' };
-  if (arm.uses >= arm.maxUses) return { ok: false, reason: 'already-used' };
-
-  const price = Number(priceSek);
-  if (!Number.isFinite(price) || price <= 0) return { ok: false, reason: 'unknown-price' };
-  if (arm.maxPriceSek && price > arm.maxPriceSek) {
-    return { ok: false, reason: 'price-above-cap', cap: arm.maxPriceSek, priceSek: price };
-  }
-  return { ok: true };
 }
 
 export function consumeArm(arm, now = new Date()) {
@@ -227,48 +195,13 @@ export function recordAttempt(purchase, attempt = {}, now = new Date()) {
   return entry;
 }
 
-/**
- * Build the Discord message components for an alert.
- *
- * `deep-link` yields a URL button only. `armed` adds an interaction button whose
- * custom_id carries the single-use arm token. `cart-staging` surfaces the
- * already-staged checkout URL when one exists, and degrades to `armed`
- * behaviour when staging failed or has not run yet.
- */
-export function buildPurchaseComponents({ item, arm, mode, checkoutUrl } = {}) {
-  const url = item?.buyUrl ?? item?.url ?? null;
-  const buttons = [];
-
-  if (url) {
-    buttons.push({ type: 2, style: 5, label: 'Open product', url });
-  }
-
-  const effectiveMode = normalizePurchaseMode(mode, 'deep-link');
-
-  if (effectiveMode === 'cart-staging' && checkoutUrl) {
-    buttons.push({ type: 2, style: 5, label: '🛒 Complete payment', url: checkoutUrl });
-  } else if (arm?.token && effectiveMode !== 'deep-link') {
-    const usable = checkArmUsable(arm, { priceSek: item?.latestPriceSek ?? item?.priceSek });
-    buttons.push({
-      type: 2,
-      style: 1,
-      label: usable.ok ? '⚡ Stage checkout' : `Unavailable (${usable.reason})`,
-      custom_id: `buy:${arm.token}`,
-      disabled: !usable.ok,
-    });
-  }
-
-  return buttons.length ? [{ type: 1, components: buttons }] : [];
-}
-
 export function summarizePurchaseState(purchase) {
   return {
     mode: purchase.mode,
     maxPriceSek: purchase.maxPriceSek,
     defaultTtlMinutes: purchase.defaultTtlMinutes,
     maxStagesPerHour: purchase.maxStagesPerHour,
-    // Tokens are secrets — they authorise staging from Discord. Never expose them.
-    armed: Object.values(purchase.armed ?? {}).map(({ token: _token, ...rest }) => rest),
+    armed: Object.values(purchase.armed ?? {}),
     attempts: purchase.attempts ?? [],
   };
 }

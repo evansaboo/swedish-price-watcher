@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 
 import {
   ensurePurchaseState,
@@ -8,13 +7,8 @@ import {
   armListing,
   disarmListing,
   pruneExpiredArms,
-  findArmByToken,
-  checkArmUsable,
-  consumeArm,
   checkStageRateLimit,
   recordAttempt,
-  buildPurchaseComponents,
-  summarizePurchaseState,
 } from '../src/services/purchaseEngine.js';
 import { createPurchaseService } from '../src/services/purchaseService.js';
 
@@ -63,38 +57,22 @@ test('armListing clamps a per-arm cap to the global cap', () => {
   assert.equal(strict.maxPriceSek, 1000, 'a stricter cap is honoured');
 });
 
-test('armListing issues a unique token and an expiry', () => {
+test('armListing sets an expiry from the TTL', () => {
   const purchase = freshPurchase();
-  const a = armListing(purchase, { listingKey: 'a', ttlMinutes: 60 });
-  const b = armListing(purchase, { listingKey: 'b', ttlMinutes: 60 });
-  assert.notEqual(a.token, b.token);
-  assert.ok(a.token.length >= 20, 'token must not be guessable');
-  assert.ok(Date.parse(a.expiresAt) > Date.now());
+  const arm = armListing(purchase, { listingKey: 'a', ttlMinutes: 60 });
+  assert.ok(Date.parse(arm.expiresAt) > Date.now());
+  assert.ok(Date.parse(arm.expiresAt) <= Date.now() + 60 * 60_000);
 });
 
-test('findArmByToken matches only the exact token', () => {
-  const purchase = freshPurchase();
-  const arm = armListing(purchase, { listingKey: 'a' });
-  assert.equal(findArmByToken(purchase, arm.token)?.listingKey, 'a');
-  assert.equal(findArmByToken(purchase, `${arm.token}x`), null);
-  assert.equal(findArmByToken(purchase, ''), null);
-  assert.equal(findArmByToken(purchase, undefined), null);
-});
-
-test('checkArmUsable enforces expiry, single use and the price cap', () => {
-  const purchase = freshPurchase();
-  const arm = armListing(purchase, { listingKey: 'a', maxPriceSek: 2000, ttlMinutes: 60 });
-
-  assert.equal(checkArmUsable(arm, { priceSek: 1500 }).ok, true);
-  assert.equal(checkArmUsable(arm, { priceSek: 2500 }).reason, 'price-above-cap');
-  assert.equal(checkArmUsable(arm, { priceSek: null }).reason, 'unknown-price');
-  assert.equal(checkArmUsable(null, { priceSek: 100 }).reason, 'not-armed');
-
-  const later = new Date(Date.now() + 61 * 60_000);
-  assert.equal(checkArmUsable(arm, { priceSek: 1500, now: later }).reason, 'expired');
-
-  consumeArm(arm);
-  assert.equal(checkArmUsable(arm, { priceSek: 1500 }).reason, 'already-used');
+test('ensurePurchaseState loads arms saved with the old Discord button token', () => {
+  const purchase = ensurePurchaseState({
+    purchase: {
+      mode: 'armed',
+      armed: { a: { listingKey: 'a', mode: 'armed', token: 'old-discord-token', maxPriceSek: 900, uses: 0 } },
+    },
+  });
+  assert.equal(purchase.armed.a.maxPriceSek, 900);
+  assert.equal(purchase.armed.a.token, undefined);
 });
 
 test('pruneExpiredArms drops only expired entries', () => {
@@ -126,46 +104,6 @@ test('checkStageRateLimit counts only recent staging attempts', () => {
   // An attempt from two hours ago must fall outside the window.
   purchase.attempts[1].at = new Date(Date.now() - 2 * 3_600_000).toISOString();
   assert.equal(checkStageRateLimit(purchase).ok, true);
-});
-
-test('summarizePurchaseState never leaks arm tokens', () => {
-  const purchase = freshPurchase();
-  armListing(purchase, { listingKey: 'a' });
-  const summary = summarizePurchaseState(purchase);
-  assert.equal(summary.armed.length, 1);
-  assert.equal(summary.armed[0].token, undefined);
-  assert.ok(!JSON.stringify(summary).includes(purchase.armed.a.token));
-});
-
-test('buildPurchaseComponents renders one button per mode', () => {
-  const item = { url: ELG_URL, latestPriceSek: 1000, listingKey: 'a' };
-  const purchase = freshPurchase();
-  const arm = armListing(purchase, { listingKey: 'a', maxPriceSek: 5000 });
-
-  const deep = buildPurchaseComponents({ item, arm, mode: 'deep-link' });
-  assert.equal(deep[0].components.length, 1, 'deep-link is a plain URL button');
-  assert.equal(deep[0].components[0].style, 5);
-
-  const armed = buildPurchaseComponents({ item, arm, mode: 'armed' });
-  const button = armed[0].components[1];
-  assert.equal(button.custom_id, `buy:${arm.token}`);
-  assert.equal(button.disabled, false);
-
-  const staged = buildPurchaseComponents({ item, arm, mode: 'cart-staging', checkoutUrl: 'https://www.elgiganten.se/checkout' });
-  assert.equal(staged[0].components[1].url, 'https://www.elgiganten.se/checkout');
-});
-
-test('buildPurchaseComponents disables the button when the arm is unusable', () => {
-  const purchase = freshPurchase();
-  const arm = armListing(purchase, { listingKey: 'a', maxPriceSek: 500 });
-  const components = buildPurchaseComponents({
-    item: { url: ELG_URL, latestPriceSek: 9000, listingKey: 'a' },
-    arm,
-    mode: 'armed',
-  });
-  const button = components[0].components[1];
-  assert.equal(button.disabled, true);
-  assert.match(button.label, /price-above-cap/);
 });
 
 // ── purchaseService ───────────────────────────────────────────────
@@ -229,8 +167,6 @@ test('stageListing consumes a single-use arm', async () => {
 
   assert.equal((await service.stageListing({ listingKey: 'elg:1', arm })).ok, true);
   assert.equal(arm.uses, 1);
-  // Second attempt is blocked by checkArmUsable at the interaction layer.
-  assert.equal(checkArmUsable(arm, { priceSek: 3590 }).reason, 'already-used');
 });
 
 test('stageListing records a failure without throwing', async () => {
@@ -267,10 +203,3 @@ test('recordAttempt stores a null price rather than zero when unknown', () => {
   assert.equal(purchase.attempts[0].priceSek, null);
 });
 
-test('arm tokens are generated with a CSPRNG-sized entropy budget', () => {
-  const purchase = freshPurchase();
-  const tokens = new Set();
-  for (let i = 0; i < 200; i += 1) tokens.add(armListing(purchase, { listingKey: `k${i}` }).token);
-  assert.equal(tokens.size, 200, 'no collisions');
-  assert.ok(crypto.timingSafeEqual(Buffer.from('a'), Buffer.from('a')));
-});

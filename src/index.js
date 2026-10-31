@@ -96,16 +96,14 @@ const fetcher = new PoliteFetcher(config);
 const notifier = new DiscordNotifier({
   webhookUrl: config.discordWebhookUrl,
   cooldownHours: config.notificationCooldownHours,
-  botToken: config.purchase?.discordBotToken,
-  alertChannelId: config.purchase?.discordAlertChannelId,
   // The hotlist notifies through its own webhook; this keeps its finds out of
   // the alert-rule pipeline.
   hotlistSourceId: hotlistSource?.id ?? '',
   hotlistSourceIds: hotlistSources.map(s => s.id)
 });
 
-// Shared with the HTTP layer so dashboard, Discord button and proactive
-// cart-staging all run through the same spend caps and rate limits.
+// Shared with the HTTP layer so dashboard staging and proactive
+// cart-staging both run through the same spend caps and rate limits.
 const purchaseService = createPurchaseService({
   config,
   getPreferences: () => store.getState().preferences,

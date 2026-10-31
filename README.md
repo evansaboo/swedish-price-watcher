@@ -118,10 +118,6 @@ Open `http://127.0.0.1:3030`.
 | `ARCHIVE_RETENTION_DAYS` | No | How long pruned items keep their price history (default: 90) |
 | `MAX_HISTORY_ENTRIES` | No | Price-history points kept per item (default: 20) |
 | `ADMIN_API_TOKEN` | No | Protects assisted-checkout endpoints |
-| `DISCORD_PUBLIC_KEY` | No | Discord app public key; enables signed interaction buttons |
-| `DISCORD_BOT_TOKEN` | No | Bot token; required to post alerts *with* buttons |
-| `DISCORD_ALERT_CHANNEL_ID` | No | Channel the bot posts interactive alerts to |
-| `DISCORD_OWNER_IDS` | No | Comma-separated Discord user IDs allowed to press buy buttons (empty = nobody) |
 | `ELGIGANTEN_EMAIL` | No | Elgiganten login for signed-in cart staging |
 | `ELGIGANTEN_PASSWORD` | No | Elgiganten password (staging never enters card details) |
 | `ELGIGANTEN_SESSION_PATH` | No | Where the reusable browser session is stored (mode 0600) |
@@ -309,13 +305,10 @@ docker compose down
 
 ### Disk housekeeping
 
-`scripts/pi-maintenance.sh` keeps the SD card from filling up. A full disk makes
+`scripts/pi-maintenance.sh` warns before the disk fills up. A full disk makes
 SQLite fail with `SQLITE_IOERR_SHMSIZE` and the app crash-loops, which is what took
-the site down on 2026-10-31. Every hour it:
-
-- deletes Discount Bandit Laravel logs older than 3 days and truncates any over 500 MB
-- clears stale Chromium temp dirs and PHP core dumps inside the Bandit container
-- posts to `DISCORD_WEBHOOK_URL` when `/` is 85% full or more (at most every 6 h)
+the site down on 2026-10-31. Every hour it posts to `DISCORD_WEBHOOK_URL` when `/`
+is 85% full or more (at most every 6 h).
 
 ```bash
 bash scripts/pi-maintenance.sh --install   # hourly cron entry for the current user
@@ -380,59 +373,17 @@ Three models, selectable per-alert or as a default in the dashboard's **⚡ Buy*
 | Mode | Behaviour |
 |------|-----------|
 | `deep-link` | Alert carries a direct product link. Nothing is automated. |
-| `armed` | You pre-arm a listing (price cap + expiry + single use). One Discord tap then stages the cart. |
+| `armed` | You pre-arm a listing (price cap + expiry). Matching alerts say it is armed; you stage the cart from the dashboard. |
 | `cart-staging` | The bot stages the cart as soon as a matching alert fires, and the alert links straight to checkout. |
 
 Guard rails (all enforced server-side in `src/services/purchaseEngine.js`):
 
 - Every `/api/purchase/*` route requires `ADMIN_API_TOKEN` (`501` when unset, `401` when wrong).
-- Discord clicks need **both** a valid Ed25519 signature *and* a `DISCORD_OWNER_IDS` allow-list match. An empty allow-list refuses everyone.
-- Arm tokens are 18 random bytes, single-use, expiring, and compared with `timingSafeEqual`. They are never returned by the API.
 - A per-arm price cap is clamped to the global cap at arm time, so arming can never *raise* the ceiling. An existing arm governs staging no matter which path triggered it.
 - Staging is rate-limited by a sliding window (`maxStagesPerHour`, default 10), and every attempt — including every refusal — is written to an audit log visible in the panel.
 
 Arm a listing from any Elgiganten card with the **⚡** button, or manage
 defaults, armed listings, and the audit log from the **⚡ Buy** panel.
-
-### Enabling Discord buttons
-
-Plain channel webhooks cannot render buttons, so a real Discord application is
-required. Without one the feature still works from the dashboard and alerts fall
-back to plain embeds.
-
-Fetch three values from <https://discord.com/developers/applications> (create an
-application first):
-
-| Value | Where |
-|-------|-------|
-| Public Key | *General Information* tab |
-| Bot Token | *Bot* tab → **Reset Token** (shown once) |
-| Your User ID | Discord → *Settings → Advanced → Developer Mode*, then right-click yourself → **Copy User ID** |
-
-Then run, on the host serving the app:
-
-```bash
-./scripts/setup-discord-buy.sh
-```
-
-It validates each credential against Discord's API *before* writing anything —
-checking the key length, that the bot token authenticates, and that the bot can
-actually see your alert channel — then writes `.env` (mode `600`, previous
-version backed up), restarts the service and confirms `discordConfigured: true`.
-It resolves the alert channel from an existing `DISCORD_WEBHOOK_URL` and
-generates `ADMIN_API_TOKEN` if either is missing. Non-interactive form:
-
-```bash
-./scripts/setup-discord-buy.sh --public-key KEY --bot-token TOKEN --owner-ids ID
-```
-
-Finally, set the **Interactions Endpoint URL** in the Developer Portal to
-`https://<your-host>/api/discord/interactions`. Do this *after* running the
-script — Discord sends a signed test request and only saves the URL once the
-public key is live. The script prints the exact URL to paste.
-
-`DISCORD_OWNER_IDS` is the allow-list: leave it empty and every button press is
-refused, including your own.
 
 ## Post-change testing checklist
 

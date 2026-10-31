@@ -669,7 +669,7 @@ function renderProducts(response) {
             ${score > 0 ? `<div class="score-ring ${scoreClass}" title="Deal score: ${score}/100">${score}</div>` : ''}
           </div>
           <button type="button" class="${wishlistClass}" data-listing-key="${escapeHtml(product.listingKey)}" title="${product.wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}">${wishlistIcon}</button>
-          ${isElgigantenListing(product) ? `<button type="button" class="arm-btn${armedKeys.has(product.listingKey) ? ' active' : ''}" data-arm-key="${escapeHtml(product.listingKey)}" title="${armedKeys.has(product.listingKey) ? 'Disarm one-tap checkout' : 'Arm for one-tap checkout'}">⚡</button>` : ''}
+          ${isElgigantenListing(product) ? `<button type="button" class="arm-btn${armedKeys.has(product.listingKey) ? ' active' : ''}" data-arm-key="${escapeHtml(product.listingKey)}" title="${armedKeys.has(product.listingKey) ? 'Disarm checkout staging' : 'Arm for checkout staging'}">⚡</button>` : ''}
         </div>
         <div class="card-body">
           <span class="card-store">${escapeHtml(product.sourceLabel ?? '')}</span>
@@ -2787,10 +2787,7 @@ async function refreshPurchasePanel() {
 
     const caps = document.getElementById('purchase-capabilities');
     if (caps) {
-      caps.textContent = [
-        data.discordConfigured ? '✓ Discord buttons ready' : '✗ Discord buttons not configured',
-        data.credentialsConfigured ? '✓ Signed-in staging' : '✗ Anonymous cart staging',
-      ].join('  ·  ');
+      caps.textContent = data.credentialsConfigured ? '✓ Signed-in staging' : '✗ Anonymous cart staging';
     }
 
     renderArmedList(data.armed ?? []);

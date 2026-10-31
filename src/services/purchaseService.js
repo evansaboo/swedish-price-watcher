@@ -7,8 +7,8 @@ import {
 import { stageElgigantenCart } from './elgigantenCheckout.js';
 
 /**
- * Wraps the staging guard rails so the dashboard, the Discord button and the
- * proactive cart-staging alert path all share exactly one implementation.
+ * Wraps the staging guard rails so the dashboard and the proactive
+ * cart-staging alert path share exactly one implementation.
  * Duplicating these checks would risk one caller silently losing a spend cap.
  */
 export function createPurchaseService({ config, getPreferences, findItem, save, stage = stageElgigantenCart }) {
@@ -82,5 +82,5 @@ export function createPurchaseService({ config, getPreferences, findItem, save, 
     }
   }
 
-  return { purchaseState, stageListing, itemPrice };
+  return { purchaseState, stageListing };
 }
