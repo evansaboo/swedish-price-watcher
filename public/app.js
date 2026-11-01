@@ -1372,6 +1372,41 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions, placehol
     }
   }
 
+  // Phone keyboards often don't send usable key events (Android IME reports
+  // keyCode 229 / "Unidentified"), so Enter/comma keydown alone isn't enough.
+  // Free-text inputs (no fixed option list) also commit via an Add button,
+  // a typed comma, the keyboard's Done key, and leaving the field.
+  const freeText = !allOptions;
+  textInput.setAttribute('enterkeyhint', 'done');
+  const commitTyped = () => {
+    const parts = textInput.value.split(',');
+    for (const part of parts) addValue(part);
+    textInput.value = '';
+  };
+  if (freeText) {
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'chip-add-btn';
+    addBtn.textContent = 'Add';
+    // mousedown/pointerdown + preventDefault keeps focus (and the keyboard) on the input.
+    addBtn.addEventListener('pointerdown', e => e.preventDefault());
+    addBtn.addEventListener('click', () => { commitTyped(); textInput.focus(); });
+    textInput.insertAdjacentElement('afterend', addBtn);
+    textInput.addEventListener('input', () => {
+      if (textInput.value.includes(',')) {
+        const parts = textInput.value.split(',');
+        const rest = parts.pop();
+        for (const part of parts) addValue(part);
+        textInput.value = rest;
+      }
+    });
+    textInput.addEventListener('blur', () => { if (textInput.value.trim()) commitTyped(); });
+  }
+  textInput.addEventListener('keyup', e => {
+    // Android: Enter often arrives only as keyup (keydown is 229 during composition).
+    if ((e.key === 'Enter' || e.keyCode === 13) && textInput.value.trim()) { commitTyped(); if (dropdown) dropdown.classList.add('hidden'); }
+  });
+
   textInput.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addValue(textInput.value); if (dropdown) dropdown.classList.add('hidden'); }
     else if (e.key === 'Escape') { if (dropdown) dropdown.classList.add('hidden'); textInput.blur(); }
@@ -1492,7 +1527,7 @@ function createHotlistGroupElement(group) {
       </div>
       <div class="rule-row">
         <div class="rule-field">
-          <label class="rule-field-label">Keywords <span class="rule-hint">Enter/comma to add</span></label>
+          <label class="rule-field-label">Keywords <span class="rule-hint">type, then tap Add (or comma/Enter)</span></label>
           <div class="chip-input-wrap" id="hl-kw-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. RTX 5090, MacBook M3, 990 PRO" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
           <label class="toggle-switch hl-strict-toggle" title="Require the keyword to appear in the product title">
             <input type="checkbox" class="hl-strict-cb" ${group.strictKeywordMatch !== false ? 'checked' : ''} />

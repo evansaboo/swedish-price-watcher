@@ -2013,3 +2013,20 @@ select { cursor: pointer; }
   .block-notice-inner { align-items: flex-start; flex-wrap: wrap; }
   .block-notice-action { width: 100%; }
 }
+
+/* "Add" button for free-text chip inputs (phone keyboards often can't send Enter/comma). */
+.chip-add-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 3px 10px;
+  min-height: 26px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--accent, #2563eb);
+  color: #fff;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.chip-add-btn:active { opacity: 0.8; }
