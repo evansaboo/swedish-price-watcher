@@ -115,8 +115,8 @@ export class DiscordNotifier {
         await this.#postWebhook({
           username: 'Price Watcher',
           content: isDrop
-            ? `📉 **Hotlist** — price drop ${formatPercent(dropPercent)}`
-            : '⚡ **Hotlist** — new find',
+            ? `📉 **Elgiganten Hotlist** — price drop ${formatPercent(dropPercent)}`
+            : '⚡ **Elgiganten Hotlist** — new find',
           embeds: [
             {
               title: item.title,

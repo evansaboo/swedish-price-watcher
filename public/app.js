@@ -2037,10 +2037,10 @@ function bindEvents() {
     try {
       const res = await fetchJson('/api/hotlist/poll', { method: 'POST' });
       renderHotlistStatus(res.status);
-      showToast(`Hotlist: ${res.result?.count ?? 0} deal(s), ${res.result?.newCount ?? 0} new.`, 'success');
+      showToast(`Elgiganten Hotlist: ${res.result?.count ?? 0} deal(s), ${res.result?.newCount ?? 0} new.`, 'success');
       loadDashboard().catch(() => {});
     } catch (err) {
-      showToast(`Hotlist poll failed: ${err.message}`, 'error');
+      showToast(`Elgiganten Hotlist poll failed: ${err.message}`, 'error');
       refreshHotlistStatus();
     } finally {
       el.hotlistPollNow.disabled = false;
