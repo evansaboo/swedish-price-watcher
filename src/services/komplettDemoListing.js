@@ -39,13 +39,22 @@ export function listableKomplettDemoRecords(watcherState, config) {
 /** One watcher record as a listing observation (the shape mergeObservations expects). */
 export function komplettDemoRecordToObservation(record, source = {}) {
   const category = getKomplettDemoCategory(record.categoryId);
+  const description = typeof record.description === 'string' && record.description.trim() ? record.description.trim() : null;
+  // Demo PCs share a few generic names ("Komplett-PC Epic Gaming B-Grade"), so the
+  // specs go in the title: that's what tells them apart and makes "5090" searchable.
+  const title = category?.group === 'datorer' && description
+    ? `${record.title} (${description})`
+    : record.title;
   return {
     sourceId: source.id ?? KOMPLETT_DEMO_SOURCE_ID,
     sourceLabel: source.label ?? KOMPLETT_DEMO_SOURCE_LABEL,
     sourceType: 'komplett-demo',
     externalId: String(record.id),
-    productKey: normalizeProductIdentity(String(record.title).replace(/\b-?\s*b-?grade\b/gi, '')),
-    title: record.title,
+    // One card per demo unit: demo items are individual units, and grouping by
+    // name merged different PCs (17 configs under one "Epic Gaming" card).
+    productKey: `komplett-demo-${record.id}`,
+    title,
+    description,
     url: record.url,
     category: category?.label ?? 'Komplett demo',
     categoryGroupId: category?.group ?? null,

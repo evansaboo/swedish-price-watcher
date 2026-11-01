@@ -107,7 +107,8 @@ function filterProducts(products, query) {
   return products.filter(product =>
     (!category || normalizeCategoryKey(product.category) === category) &&
     (!condition || product.offers.some(o => o.condition.toLowerCase() === condition)) &&
-    matchesQuery(product.title, search)
+    (matchesQuery(product.title, search)
+      || product.offers.some((offer) => matchesQuery(offer.description, search)))
   );
 }
 

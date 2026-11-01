@@ -34,16 +34,32 @@ export function komplettImageUrl(product) {
  * is echoed back in the page's embedded search state
  * (`"queryParameters":[{"key":"sort","value":"ReleaseDateDesc"}]`) and the
  * products come back in strictly descending materialNumber order, i.e. the
- * newest demo listing first. Only page 1 is used: `&page=N` is NOT Komplett's
- * paging parameter (`&page=1` returns `"pageNumber":0` again), so the watcher
- * relies on newest-first ordering instead of paging.
+ * newest demo listing first.
+ *
+ * Paging (verified 2026-11-01): `&page=N` works like "load more". It returns the
+ * first N×24 products in one page (`page=2` gives 48), and `page=1` is the same as
+ * no page. So one request per category covers the whole category when N is
+ * ceil(total/24).
  */
+export const KOMPLETT_DEMO_PAGE_SIZE = 24;
+export const KOMPLETT_DEMO_MAX_PAGES = 5;
+
+/** Smallest `page` value that shows `total` products, clamped to [1, MAX_PAGES]. */
+export function komplettDemoPagesFor(total) {
+  const n = Number(total);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.min(KOMPLETT_DEMO_MAX_PAGES, Math.max(1, Math.ceil(n / KOMPLETT_DEMO_PAGE_SIZE)));
+}
 export const KOMPLETT_DEMO_SORT = 'ReleaseDateDesc';
 
 /** Newest-first listing URL (page 1) for one demo category ({ id, group, slug }). */
-export function buildKomplettDemoUrl(category, { sort = KOMPLETT_DEMO_SORT } = {}) {
+export function buildKomplettDemoUrl(category, { sort = KOMPLETT_DEMO_SORT, pages = 1 } = {}) {
   const base = `${KOMPLETT_ORIGIN}/category/${encodeURIComponent(category.id)}/demovaror/${category.group}/${category.slug}`;
-  return sort ? `${base}?sort=${encodeURIComponent(sort)}` : base;
+  const params = [];
+  if (sort) params.push(`sort=${encodeURIComponent(sort)}`);
+  const n = Math.floor(Number(pages));
+  if (Number.isFinite(n) && n > 1) params.push(`page=${Math.min(n, KOMPLETT_DEMO_MAX_PAGES)}`);
+  return params.length ? `${base}?${params.join('&')}` : base;
 }
 
 /**
@@ -135,6 +151,11 @@ export function mapKomplettDemoProduct(product, categoryId = null) {
     inStock: isKomplettInStock(product.stock),
     availabilityText: product.stock?.availabilityText ?? product.stock?.availabilityStatus ?? null,
     manufacturerPartNumber: product.manufacturerPartNumber ?? null,
+    // Komplett's one-line summary. For PCs it is the spec list ("GeForce RTX 5090,
+    // Ryzen 7 9800X3D, …"), the only place the GPU appears.
+    description: typeof product.description === 'string' && product.description.trim()
+      ? product.description.trim().slice(0, 300)
+      : null,
     productKey: normalizeProductIdentity(title.replace(/\b-?\s*b-?grade\b/gi, '')),
     categoryId: categoryId == null ? null : String(categoryId),
   };
@@ -164,7 +185,7 @@ export async function fetchKomplettDemoPages({
   if (!Array.isArray(categories) || !categories.length) throw new Error('No Komplett demo categories selected.');
 
   const startUrls = categories.map((category) => ({
-    url: buildKomplettDemoUrl(category),
+    url: buildKomplettDemoUrl(category, { pages: category.pages }),
     userData: { categoryId: String(category.id) },
   }));
 

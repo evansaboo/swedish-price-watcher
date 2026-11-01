@@ -313,3 +313,58 @@ test('startup backfills the listing from the saved komplett-demo record', async 
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+// ── 2026-11-01: per-unit cards, PC specs in the title ──
+import { komplettDemoRecordToObservation as toObservation } from '../src/services/komplettDemoListing.js';
+import { buildKomplettDemoUrl, komplettDemoPagesFor, mapKomplettDemoProduct } from '../src/sources/komplett.js';
+
+test('demo PCs get one card each, with specs in the title', () => {
+  const a = toObservation({ id: '1', title: 'Komplett-PC Epic Gaming B-Grade', description: 'Windows 11 Home, GeForce RTX 5090, Ryzen 7 9800X3D', url: 'https://www.komplett.se/product/1/x', priceSek: 40000, categoryId: '12423' });
+  const b = toObservation({ id: '2', title: 'Komplett-PC Epic Gaming B-Grade', description: 'Windows 11 Home, Radeon RX 9070 XT', url: 'https://www.komplett.se/product/2/x', priceSek: 20000, categoryId: '12423' });
+  assert.notEqual(a.productKey, b.productKey);
+  assert.match(a.title, /RTX 5090/);
+  assert.equal(a.description, 'Windows 11 Home, GeForce RTX 5090, Ryzen 7 9800X3D');
+});
+
+test('non-PC demo items keep their plain title but carry the description', () => {
+  const o = toObservation({ id: '3', title: 'Sapphire PULSE RX 7700 XT -B-Grade', description: 'Marketing blurb', url: 'https://www.komplett.se/product/3/x', priceSek: 4761, categoryId: '10072' });
+  assert.equal(o.title, 'Sapphire PULSE RX 7700 XT -B-Grade');
+  assert.equal(o.description, 'Marketing blurb');
+});
+
+test('load-more paging: page count covers the category total, clamped', () => {
+  assert.equal(komplettDemoPagesFor(undefined), 1);
+  assert.equal(komplettDemoPagesFor(24), 1);
+  assert.equal(komplettDemoPagesFor(48), 2);
+  assert.equal(komplettDemoPagesFor(49), 3);
+  assert.equal(komplettDemoPagesFor(10000), 5);
+  const cat = { id: '12423', group: 'datorer', slug: 'komplett-pc' };
+  assert.equal(buildKomplettDemoUrl(cat), 'https://www.komplett.se/category/12423/demovaror/datorer/komplett-pc?sort=ReleaseDateDesc');
+  assert.equal(buildKomplettDemoUrl(cat, { pages: 2 }), 'https://www.komplett.se/category/12423/demovaror/datorer/komplett-pc?sort=ReleaseDateDesc&page=2');
+});
+
+test('mapper keeps the product description', () => {
+  const p = mapKomplettDemoProduct({ materialNumber: 1346128, name: 'Komplett-PC Core Gaming', description: ' GeForce RTX 5060 Ti, 16GB RAM ', url: '/product/1346128/demovaror/datorer/komplett-pc/x', price: { listPriceNumber: 16890 }, stock: { availabilityStatus: 'Stocked' } }, '12423');
+  assert.equal(p.description, 'GeForce RTX 5060 Ti, 16GB RAM');
+});
+
+test('older products that come into view (more pages) do not alert as new', async () => {
+  const { createKomplettDemoPoller } = await import('../src/services/komplettDemoPoller.js');
+  const sent = [];
+  const page = (ids, total) => ({ categoryId: '12423', found: true, sort: 'ReleaseDateDesc', total, products: ids.map((n) => ({ materialNumber: n, name: `PC ${n}`, description: 'RTX 5090', url: `/product/${n}/demovaror/datorer/komplett-pc/pc`, price: { listPriceNumber: 20000 }, stock: { availabilityStatus: 'Stocked' } })) });
+  let pages = [page([110, 109, 108], 3)];
+  let saved = null;
+  const poller = createKomplettDemoPoller({
+    getConfig: () => ({ enabled: true, categories: ['12423'], intervalMinutes: 10 }),
+    notifier: { notifyKomplettDemo: async (p) => { sent.push(p); const n = p.alerts.length; return { sent: n, failed: 0, skipped: 0, errors: [], delivered: p.alerts.map(() => true) }; } },
+    persistence: { load: () => saved, save: (v) => { saved = structuredClone(v); } },
+    fetchPages: async () => ({ pages, runId: 'r', usageUsd: 0 }),
+    setTimeoutFn: () => 0, clearTimeoutFn: () => {}
+  });
+  await poller.pollNow?.() ?? poller.triggerNow?.();
+  pages = [page([111, 110, 109, 108, 50, 40], 6)];
+  await poller.pollNow?.() ?? poller.triggerNow?.();
+  const alerted = sent.flatMap((p) => p.alerts.map((a) => String(a.product?.id ?? a.id)));
+  assert.deepEqual(alerted.filter((id) => ['50', '40'].includes(id)), []);
+  assert.ok(alerted.includes('111'), `expected 111 to alert, got ${JSON.stringify(alerted)}`);
+});

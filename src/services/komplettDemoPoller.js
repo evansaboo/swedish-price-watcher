@@ -20,6 +20,7 @@
  */
 
 import {
+  komplettDemoPagesFor,
   KOMPLETT_DEMO_SORT,
   buildKomplettDemoUrl,
   fetchApifyRunUsage,
@@ -292,8 +293,22 @@ export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEna
   let newCount = 0;
   const threshold = config.notifyPriceDropPercent;
 
+  // Newest-known listing per category before this run. Komplett ids grow with
+  // each new listing, so an unseen product with a LOWER id isn't a new listing:
+  // it just came into view, e.g. because more "load more" pages are fetched now.
+  const newestKnown = new Map();
+  for (const record of Object.values(state.products)) {
+    const n = numericId(record.id);
+    if (n === null) continue;
+    const key = String(record.categoryId);
+    if (!newestKnown.has(key) || n > newestKnown.get(key)) newestKnown.set(key, n);
+  }
+
   for (const [id, { product, categories }] of seen) {
     const seededCategories = categories.filter((c) => state.seededCategories[c]);
+    const idNum = numericId(id);
+    const olderThanKnown = idNum !== null && seededCategories.length > 0
+      && seededCategories.every((c) => newestKnown.has(String(c)) && idNum < newestKnown.get(String(c)));
     const silent = !alertsEnabled || seededCategories.length === 0;
     const categoryId = seededCategories[0] ?? categories[0];
     const existing = state.products[id];
@@ -303,6 +318,7 @@ export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEna
       state.products[id] = {
         id,
         title: product.title,
+        description: product.description ?? null,
         url: product.url,
         imageUrl: product.imageUrl,
         priceSek: product.priceSek,
@@ -312,11 +328,11 @@ export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEna
         categoryId,
         firstSeenAt: nowIso,
         lastSeenAt: nowIso,
-        seeded: silent,
+        seeded: silent || olderThanKnown,
         missingSince: null,
         misses: 0,
       };
-      if (!silent) alerts.push({ reason: 'new', product, categoryId });
+      if (!silent && !olderThanKnown) alerts.push({ reason: 'new', product, categoryId });
       continue;
     }
 
@@ -346,6 +362,7 @@ export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEna
 
     Object.assign(existing, {
       title: product.title,
+      description: product.description ?? existing.description ?? null,
       url: product.url,
       imageUrl: product.imageUrl ?? existing.imageUrl ?? null,
       priceSek: product.priceSek ?? existing.priceSek,
@@ -607,7 +624,9 @@ export function createKomplettDemoPoller({
     const nowIso = new Date(nowMs).toISOString();
     rollUsageMonth(state.usage, nowMs);
 
-    const categories = config.categories.map(getKomplettDemoCategory).filter(Boolean);
+    // Fetch enough "load more" pages to cover each category's last known size.
+    const categories = config.categories.map(getKomplettDemoCategory).filter(Boolean)
+      .map((category) => ({ ...category, pages: komplettDemoPagesFor(state.categoryStats[category.id]?.total) }));
     if (!categories.length) throw new Error('Select at least one Komplett demo category first.');
 
     await settlePreviousRunCost();
