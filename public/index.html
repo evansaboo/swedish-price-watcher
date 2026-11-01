@@ -1,507 +1,314 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f6f5f3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#131316" media="(prefers-color-scheme: dark)" />
     <title>PriceWatch — Swedish Outlet Deals</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Figtree:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/vendor/shoelace/themes/light.css" />
+    <link rel="stylesheet" href="/vendor/shoelace/themes/dark.css" />
     <link rel="stylesheet" href="/styles.css" />
-    <script>try{const t=localStorage.getItem('spw-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
+    <script>
+      // Apply the theme before first paint: a saved choice wins, otherwise follow the system.
+      try {
+        var t = localStorage.getItem('spw-theme');
+        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.classList.add('sl-theme-' + t);
+      } catch (e) {}
+    </script>
   </head>
   <body>
-    <!-- ===== HEADER ===== -->
-    <header class="header" id="header">
-      <div class="header-inner">
-        <a href="/" class="logo" aria-label="PriceWatch home">
-          <span class="logo-diamond">◆</span>
-          <span class="logo-word">PriceWatch</span>
+    <!-- ===== TOP BAR (sticky) ===== -->
+    <header class="topbar" id="header">
+      <div class="topbar-inner">
+        <a href="/" class="brand" aria-label="PriceWatch home">
+          <span class="brand-mark" aria-hidden="true">◆</span>
+          <span class="brand-word">PriceWatch</span>
         </a>
 
-        <div class="search-wrap" id="search-container">
-          <div class="search-box">
-            <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-            <input id="search-input" type="search" class="search-input" placeholder="Search deals..." autocomplete="off" />
-            <kbd class="search-shortcut" aria-hidden="true">/</kbd>
-          </div>
-        </div>
+        <sl-input id="search-input" class="search" type="search" placeholder="Search deals" clearable pill
+          autocomplete="off" enterkeyhint="search" aria-label="Search deals">
+          <sl-icon name="search" slot="prefix"></sl-icon>
+        </sl-input>
 
-        <div class="header-actions">
-          <button id="theme-toggle" type="button" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">
-            <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-            <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-          </button>
-          <button id="settings-btn" type="button" class="icon-btn" title="Settings" aria-label="Settings">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
+        <nav class="topbar-actions" aria-label="Quick actions">
+          <sl-icon-button id="nvidia-open-btn" class="nvidia-btn" name="gpu-card" label="NVIDIA Founders Edition stock"></sl-icon-button>
+          <sl-icon-button id="purchase-open-btn" name="lightning-charge" label="Buy controls"></sl-icon-button>
+          <sl-icon-button id="theme-toggle" name="moon" label="Toggle dark mode"></sl-icon-button>
+          <sl-icon-button id="settings-btn" name="gear" label="Settings"></sl-icon-button>
+        </nav>
       </div>
-
     </header>
 
-    <!-- ===== FILTER BAR ===== -->
-    <nav class="filter-bar" id="filter-bar">
-      <div class="filter-bar-inner">
-        <div class="filter-pills" id="filter-pills">
-          <button type="button" class="filter-pill active" data-filter-preset="all">All</button>
-          <button type="button" class="filter-pill" data-filter-preset="new">New</button>
-          <button type="button" class="filter-pill" data-filter-preset="hot">Hot deals</button>
-          <button type="button" class="filter-pill" data-filter-preset="discounted">Discounted</button>
-          <button type="button" class="filter-pill" data-filter-preset="matched">Matched</button>
-          <button type="button" class="filter-pill" data-filter-preset="wishlist">♡ Wishlist</button>
-        </div>
+    <!-- ===== TOOLBAR: presets, filters, sort ===== -->
+    <section class="toolbar" aria-label="Listing controls">
+      <div class="presets" id="filter-pills" role="group" aria-label="Quick filters">
+        <sl-button pill data-filter-preset="all">All</sl-button>
+        <sl-button pill data-filter-preset="new">New</sl-button>
+        <sl-button pill data-filter-preset="hot">Hot deals</sl-button>
+        <sl-button pill data-filter-preset="discounted">Discounted</sl-button>
+        <sl-button pill data-filter-preset="matched">Matched</sl-button>
+        <sl-button pill data-filter-preset="wishlist"><sl-icon slot="prefix" name="heart"></sl-icon>Wishlist</sl-button>
+      </div>
 
-        <div class="filter-bar-right">
-          <button id="purchase-open-btn" type="button" class="filter-expand-btn" title="Buy controls">⚡ Buy</button>
-          <button id="nvidia-open-btn" type="button" class="filter-expand-btn" title="NVIDIA Founders Edition Live Stock Tracker (Notify-FE)" style="display:inline-flex; align-items:center; gap:4px; color:#76b900; font-weight:600;"><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#76b900;"></span>NVIDIA FE</button>
-          <button id="filter-expand-btn" type="button" class="filter-expand-btn" title="More filters">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-            Filters
-            <span id="filter-count-badge" class="filter-count-badge hidden"></span>
-          </button>
-          <div class="view-toggle" role="group" aria-label="View mode">
-            <button id="view-grid" type="button" class="view-btn active" title="Grid" aria-pressed="true">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-            </button>
-            <button id="view-list" type="button" class="view-btn" title="List" aria-pressed="false">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-            </button>
-          </div>
-          <select id="sort-select" class="sort-select" aria-label="Sort by">
-            <option value="score-desc">Best deals</option>
-            <option value="discountPercent-desc">Highest discount %</option>
-            <option value="discountSek-desc">Biggest savings</option>
-            <option value="currentPriceSek-asc">Price: low → high</option>
-            <option value="currentPriceSek-desc">Price: high → low</option>
-            <option value="lastSeenAt-desc">Recently seen</option>
-            <option value="title-asc">Name A–Ö</option>
-          </select>
+      <div class="toolbar-row">
+        <sl-button id="filter-expand-btn" class="filter-btn">
+          <sl-icon slot="prefix" name="sliders"></sl-icon>
+          Filters
+          <sl-badge id="filter-count-badge" class="filter-count hidden" variant="primary" pill></sl-badge>
+        </sl-button>
+
+        <sl-select id="sort-select" class="sort-select" aria-label="Sort by" value="score-desc">
+          <sl-icon name="sort-down" slot="prefix"></sl-icon>
+          <sl-option value="score-desc">Best deals</sl-option>
+          <sl-option value="discountPercent-desc">Highest discount %</sl-option>
+          <sl-option value="discountSek-desc">Biggest savings</sl-option>
+          <sl-option value="currentPriceSek-asc">Price: low → high</sl-option>
+          <sl-option value="currentPriceSek-desc">Price: high → low</sl-option>
+          <sl-option value="lastSeenAt-desc">Recently seen</sl-option>
+          <sl-option value="title-asc">Name A–Ö</sl-option>
+        </sl-select>
+
+        <div class="view-toggle" role="group" aria-label="View mode">
+          <sl-icon-button id="view-grid" name="grid" label="Grid view" aria-pressed="true"></sl-icon-button>
+          <sl-icon-button id="view-list" name="list-ul" label="List view" aria-pressed="false"></sl-icon-button>
         </div>
       </div>
-    </nav>
 
-    <!-- ===== FILTER PANEL ===== -->
-    <div id="filter-panel" class="filter-panel hidden">
-      <div class="filter-panel-inner">
-        <div class="filter-grid">
-          <div class="filter-field">
-            <label for="category-filter">Category</label>
-            <select id="category-filter" class="field-select"><option value="">All categories</option></select>
-          </div>
-          <div class="filter-field">
-            <label for="store-filter">Store</label>
-            <select id="store-filter" class="field-select"><option value="">All stores</option></select>
-          </div>
-          <div class="filter-field hidden" id="campaign-filter-group">
-            <label for="campaign-filter">Condition</label>
-            <select id="campaign-filter" class="field-select"><option value="">All conditions</option></select>
-          </div>
-          <div class="filter-field">
-            <label for="min-discount-filter">Min discount %</label>
-            <input id="min-discount-filter" type="number" class="field-input" min="0" max="99" step="1" placeholder="e.g. 20" />
-          </div>
-          <div class="filter-field">
-            <label for="min-price-filter">Min price (kr)</label>
-            <input id="min-price-filter" type="number" class="field-input" min="0" step="1" placeholder="e.g. 500" />
-          </div>
-          <div class="filter-field">
-            <label for="max-price-filter">Max price (kr)</label>
-            <input id="max-price-filter" type="number" class="field-input" min="0" step="1" placeholder="e.g. 5000" />
-          </div>
-        </div>
-        <div class="filter-checks">
-          <label class="check-label"><input id="new-only" type="checkbox" /><span>New only</span></label>
-          <label class="check-label"><input id="discounted-only" type="checkbox" /><span>Discounted</span></label>
-          <label class="check-label"><input id="reference-only" type="checkbox" /><span>Matched price</span></label>
-        </div>
-        <div class="filter-panel-footer">
-          <button id="clear-filters-btn" type="button" class="clear-btn">Clear all</button>
-          <button id="export-csv-btn" type="button" class="clear-btn" title="Download the current filtered list as CSV">⬇ Export CSV</button>
-          <div id="active-filter-tags" class="active-filter-tags"></div>
-        </div>
+      <div class="summary-row">
+        <div id="stats-pills" class="stats" aria-live="polite"></div>
+        <div id="active-filter-tags" class="active-tags"></div>
       </div>
-    </div>
-
-    <!-- ===== STATS BAR ===== -->
-    <div class="stats-bar" id="stats-bar">
-      <div class="stats-inner">
-        <div id="stats-pills" class="stats-row"></div>
-        <span id="products-count" class="products-count"></span>
-      </div>
-    </div>
+    </section>
 
     <!-- ===== ELGIGANTEN BLOCK NOTICE ===== -->
     <div class="block-notice hidden" id="elgiganten-block" role="status" aria-live="polite">
-      <div class="block-notice-inner">
-        <span class="block-notice-icon" aria-hidden="true">&#9888;</span>
-        <div class="block-notice-body">
-          <strong class="block-notice-title">Elgiganten is blocking this network</strong>
-          <span class="block-notice-text" id="elgiganten-block-text"></span>
+      <sl-alert variant="warning" open>
+        <sl-icon slot="icon" name="exclamation-triangle"></sl-icon>
+        <strong>Elgiganten is blocking this network</strong><br />
+        <span id="elgiganten-block-text"></span>
+        <div class="block-notice-actions">
+          <sl-button id="elgiganten-block-retry" size="small" variant="warning" outline>Retry now</sl-button>
         </div>
-        <button type="button" class="block-notice-action" id="elgiganten-block-retry">
-          Retry now
-        </button>
-      </div>
+      </sl-alert>
     </div>
 
     <!-- ===== MAIN ===== -->
     <main class="main" id="main-content">
-      <div id="product-grid" class="product-grid"></div>
+      <div id="product-grid" class="product-grid" aria-busy="true">
+        <div class="product-card is-skeleton"><sl-skeleton effect="sheen" class="sk-img"></sl-skeleton><div class="card-body"><sl-skeleton effect="sheen"></sl-skeleton><sl-skeleton effect="sheen"></sl-skeleton><sl-skeleton effect="sheen" class="sk-short"></sl-skeleton></div></div>
+        <div class="product-card is-skeleton"><sl-skeleton effect="sheen" class="sk-img"></sl-skeleton><div class="card-body"><sl-skeleton effect="sheen"></sl-skeleton><sl-skeleton effect="sheen"></sl-skeleton><sl-skeleton effect="sheen" class="sk-short"></sl-skeleton></div></div>
+        <div class="product-card is-skeleton"><sl-skeleton effect="sheen" class="sk-img"></sl-skeleton><div class="card-body"><sl-skeleton effect="sheen"></sl-skeleton><sl-skeleton effect="sheen"></sl-skeleton><sl-skeleton effect="sheen" class="sk-short"></sl-skeleton></div></div>
+      </div>
       <div id="pagination-area" class="pagination"></div>
       <div id="empty-state" class="empty-state hidden">
-        <div class="empty-icon">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        </div>
+        <sl-icon name="search" class="empty-icon"></sl-icon>
         <h3>No products found</h3>
         <p>Try adjusting your filters. Elgiganten Hotlist and Komplett demo finds show up here as their watchers report them.</p>
       </div>
     </main>
 
-    <!-- ===== SETTINGS DRAWER ===== -->
-    <div id="settings-overlay" class="drawer-overlay hidden" aria-hidden="true"></div>
-    <aside id="settings-drawer" class="drawer hidden" role="dialog" aria-modal="true" aria-label="Settings">
-      <div class="drawer-header">
-        <h2>Settings</h2>
-        <button id="drawer-close" type="button" class="drawer-close" aria-label="Close">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
+    <!-- ===== FILTERS (bottom sheet on phones, side panel on desktop) ===== -->
+    <sl-drawer id="filter-drawer" label="Filters" class="sheet">
+      <div class="form-stack">
+        <sl-select id="category-filter" label="Category" value="__all"><sl-option value="__all">All categories</sl-option></sl-select>
+        <sl-select id="store-filter" label="Store" value="__all"><sl-option value="__all">All stores</sl-option></sl-select>
+        <div id="campaign-filter-group" class="hidden">
+          <sl-select id="campaign-filter" label="Condition" value="__all"><sl-option value="__all">All conditions</sl-option></sl-select>
+        </div>
+        <sl-input id="min-discount-filter" label="Min discount %" type="number" inputmode="numeric" min="0" max="99" step="1" placeholder="e.g. 20"></sl-input>
+        <div class="form-grid-2">
+          <sl-input id="min-price-filter" label="Min price (kr)" type="number" inputmode="numeric" min="0" step="1" placeholder="e.g. 500"></sl-input>
+          <sl-input id="max-price-filter" label="Max price (kr)" type="number" inputmode="numeric" min="0" step="1" placeholder="e.g. 5000"></sl-input>
+        </div>
+        <div class="check-stack">
+          <sl-checkbox id="new-only">New only (last 24 h)</sl-checkbox>
+          <sl-checkbox id="discounted-only">Discounted</sl-checkbox>
+          <sl-checkbox id="reference-only">Matched price</sl-checkbox>
+        </div>
       </div>
-      <div class="drawer-body">
-        <div class="drawer-tabs" role="tablist">
-          <button type="button" class="drawer-tab active" data-tab="hotlist" role="tab" aria-selected="true">Elgiganten Hotlist</button>
-          <button type="button" class="drawer-tab" data-tab="komplett-demo" role="tab" aria-selected="false">Komplett demo</button>
-        </div>
+      <div slot="footer" class="drawer-actions">
+        <sl-button id="clear-filters-btn">Clear all</sl-button>
+        <sl-button id="export-csv-btn" title="Download the current filtered list as CSV"><sl-icon slot="prefix" name="download"></sl-icon>CSV</sl-button>
+        <sl-button id="filter-done-btn" variant="primary" class="grow">Show results</sl-button>
+      </div>
+    </sl-drawer>
 
-        <!-- Hotlist — continuous Elgiganten poller -->
-        <div id="tab-hotlist" class="drawer-tab-content">
-          <div class="section-title-row" style="margin-bottom: 6px">
-            <div class="section-title-wrap">
-              <span class="section-title-icon">⚡</span>
-              <h3>Elgiganten Hotlist</h3>
-            </div>
-            <span class="section-badge hotlist-badge">Fast Loop</span>
-          </div>
-          <p class="section-hint" style="margin-bottom: 12px">Continuous poller for Elgiganten resale finds, outlet units and flash discounts, on its own randomised loop. Its finds appear in the main listing and post to the Discord webhook below.</p>
-          <div id="hotlist-status" class="hotlist-status" aria-live="polite"></div>
+    <!-- ===== SETTINGS ===== -->
+    <sl-drawer id="settings-drawer" label="Settings" class="sheet settings-drawer">
+      <sl-tab-group id="settings-tabs">
+        <sl-tab slot="nav" panel="hotlist" data-tab="hotlist" active><span class="tab-long">Elgiganten&nbsp;</span>Hotlist</sl-tab>
+        <sl-tab slot="nav" panel="komplett-demo" data-tab="komplett-demo">Komplett<span class="tab-long">&nbsp;demo</span></sl-tab>
+        <sl-tab slot="nav" panel="nvidia" data-tab="nvidia">NVIDIA FE</sl-tab>
 
-          <div class="hotlist-controls">
-            <label class="toggle-switch">
-              <input id="hotlist-enabled" type="checkbox" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">Continuous polling</span>
-            </label>
-            <div class="form-row" style="margin-top:0.5rem">
-              <div class="form-field">
-                <label for="hotlist-interval">Every (seconds)</label>
-                <input id="hotlist-interval" type="number" class="field-input" min="30" max="3600" step="5" />
-              </div>
-              <div class="form-field">
-                <label for="hotlist-jitter">Jitter (%)</label>
-                <input id="hotlist-jitter" type="number" class="field-input" min="0" max="50" step="5" />
-              </div>
-              <div class="form-field">
-                <label for="hotlist-min-discount">Min discount (%)</label>
-                <input id="hotlist-min-discount" type="number" class="field-input" min="0" max="99" step="1" />
-              </div>
+        <!-- Elgiganten Hotlist — continuous poller -->
+        <sl-tab-panel name="hotlist" id="tab-hotlist" active>
+          <p class="section-hint">Polls Elgiganten for resale finds, outlet units and flash discounts on its own randomised loop. Finds appear in the listing and post to the Discord webhook below.</p>
+          <div id="hotlist-status" class="status-card" aria-live="polite"></div>
+
+          <div class="form-stack">
+            <sl-switch id="hotlist-enabled">Continuous polling</sl-switch>
+            <div class="form-grid-3">
+              <sl-input id="hotlist-interval" label="Every (s)" type="number" inputmode="numeric" min="30" max="3600" step="5"></sl-input>
+              <sl-input id="hotlist-jitter" label="Jitter %" type="number" inputmode="numeric" min="0" max="50" step="5"></sl-input>
+              <sl-input id="hotlist-min-discount" label="Min off %" type="number" inputmode="numeric" min="0" max="99" step="1"></sl-input>
             </div>
-            <div class="form-field" style="margin-top:0.5rem">
-              <label for="hotlist-webhook">Elgiganten Hotlist Discord webhook</label>
-              <input id="hotlist-webhook" type="url" class="field-input" placeholder="https://discord.com/api/webhooks/…" />
-              <p class="field-hint">Elgiganten Hotlist finds post directly here. Blank = the app's default webhook.</p>
-            </div>
-            <label class="toggle-switch" style="margin-top:0.5rem">
-              <input id="hotlist-notify-drops" type="checkbox" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">Also notify on price drops</span>
-            </label>
+            <sl-input id="hotlist-webhook" label="Discord webhook" type="url" inputmode="url" placeholder="https://discord.com/api/webhooks/…"
+              help-text="Elgiganten Hotlist finds post here. Blank = the app's default webhook." autocomplete="off" spellcheck="false"></sl-input>
+            <sl-switch id="hotlist-notify-drops">Also notify on price drops</sl-switch>
           </div>
 
-          <div class="rules-toolbar">
-            <span id="hotlist-count-label" class="rules-count"></span>
-            <span class="hotlist-toolbar-actions">
-              <button id="hotlist-poll-now" type="button" class="ghost-btn">Poll now</button>
-              <button id="hotlist-add-group" type="button" class="ghost-btn accent">+ Add watch</button>
-            </span>
+          <div class="section-head">
+            <div>
+              <h3>Watches</h3>
+              <span id="hotlist-count-label" class="muted"></span>
+            </div>
+            <div class="section-head-actions">
+              <sl-button id="hotlist-poll-now"><sl-icon slot="prefix" name="arrow-clockwise"></sl-icon>Poll now</sl-button>
+              <sl-button id="hotlist-add-group" variant="primary" outline><sl-icon slot="prefix" name="plus-lg"></sl-icon>Add watch</sl-button>
+            </div>
           </div>
-          <ul id="hotlist-groups" class="rules-list hotlist-groups"></ul>
-        </div>
+          <div id="hotlist-groups" class="group-list"></div>
+        </sl-tab-panel>
 
         <!-- Komplett demo — B-grade demovaror watcher -->
-        <div id="tab-komplett-demo" class="drawer-tab-content hidden">
-          <div class="section-title-row" style="margin-bottom: 6px">
-            <div class="section-title-wrap">
-              <span class="section-title-icon">🏷️</span>
-              <h3>Komplett demo</h3>
-            </div>
-            <span class="section-badge hotlist-badge">B-grade</span>
-          </div>
-          <p class="section-hint" style="margin-bottom: 12px">Watches the Komplett demovaror (B-grade) categories you pick, newest first, and posts new demo products to Discord. Each check is one small Apify run on a randomised loop, with a monthly spend cap. A newly picked category is recorded silently on its first check. Tracked demo products also appear in the main listing under the store "Komplett demo".</p>
-          <div id="kd-status" class="hotlist-status" aria-live="polite"></div>
+        <sl-tab-panel name="komplett-demo" id="tab-komplett-demo">
+          <p class="section-hint">Watches the Komplett demovaror (B-grade) categories you pick, newest first, and posts new demo products to Discord. Each check is one small Apify run on a randomised loop, with a monthly spend cap. A newly picked category is recorded silently on its first check. Tracked demo products also appear in the listing as “Komplett demo”.</p>
+          <div id="kd-status" class="status-card" aria-live="polite"></div>
 
-          <div class="hotlist-controls">
-            <label class="toggle-switch">
-              <input id="kd-enabled" type="checkbox" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">Watch demo products</span>
-            </label>
-            <div class="form-row" style="margin-top:0.5rem">
-              <div class="form-field">
-                <label for="kd-interval">Every (minutes)</label>
-                <input id="kd-interval" type="number" class="field-input" min="5" max="240" step="1" />
-              </div>
-              <div class="form-field">
-                <label for="kd-jitter">Jitter (%)</label>
-                <input id="kd-jitter" type="number" class="field-input" min="0" max="50" step="5" />
-              </div>
-              <div class="form-field">
-                <label for="kd-max-usd">Apify cap ($/month)</label>
-                <input id="kd-max-usd" type="number" class="field-input" min="0.1" max="50" step="0.5" />
-              </div>
+          <div class="form-stack">
+            <sl-switch id="kd-enabled">Watch demo products</sl-switch>
+            <div class="form-grid-3">
+              <sl-input id="kd-interval" label="Every (min)" type="number" inputmode="numeric" min="5" max="240" step="1"></sl-input>
+              <sl-input id="kd-jitter" label="Jitter %" type="number" inputmode="numeric" min="0" max="50" step="5"></sl-input>
+              <sl-input id="kd-max-usd" label="Cap $/mo" type="number" inputmode="decimal" min="0.1" max="50" step="0.5"></sl-input>
             </div>
-            <div class="form-row">
-              <div class="form-field">
-                <label for="kd-drop-pct">Price-drop alert (%)</label>
-                <input id="kd-drop-pct" type="number" class="field-input" min="0" max="90" step="1" />
-                <p class="field-hint">0 = off.</p>
-              </div>
-              <div class="form-field kd-toggle-field">
-                <label class="toggle-switch">
-                  <input id="kd-back-in-stock" type="checkbox" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  <span class="toggle-label">Notify when back in stock</span>
-                </label>
-              </div>
-            </div>
-            <div class="form-field">
-              <label for="kd-webhook">Komplett demo Discord webhook</label>
-              <input id="kd-webhook" type="text" class="field-input" autocomplete="off" spellcheck="false" placeholder="Blank = the app's default webhook" />
-              <p class="field-hint">Optional. The saved webhook is shown masked; leave it as is to keep it, or clear it to use the default.</p>
-            </div>
+            <sl-input id="kd-drop-pct" label="Price-drop alert (%)" type="number" inputmode="numeric" min="0" max="90" step="1" help-text="0 = off."></sl-input>
+            <sl-switch id="kd-back-in-stock">Notify when back in stock</sl-switch>
+            <sl-input id="kd-webhook" label="Discord webhook" type="text" autocomplete="off" spellcheck="false" placeholder="Blank = the app's default webhook"
+              help-text="Optional. The saved webhook is shown masked; leave it to keep it, or clear it to use the default."></sl-input>
           </div>
 
-          <div class="rules-toolbar">
-            <span id="kd-count-label" class="rules-count"></span>
-            <span class="hotlist-toolbar-actions">
-              <button id="kd-poll-now" type="button" class="ghost-btn">Check now</button>
-            </span>
-          </div>
-          <div id="kd-categories" class="kd-categories"></div>
-
-          <h4 class="kd-subhead">Latest demo finds</h4>
-          <ul id="kd-alerts" class="kd-finds"></ul>
-          <ul id="kd-finds" class="kd-finds"></ul>
-        </div>
-
-      </div>
-      <div class="drawer-footer">
-        <span id="drawer-save-status" class="save-status"></span>
-        <button id="save-settings-btn" type="button" class="save-btn">Save changes</button>
-      </div>
-    </aside>
-
-    <!-- ===== PRICE HISTORY MODAL ===== -->
-    <!-- ===== PURCHASE / CHECKOUT ===== -->
-    <div id="purchase-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-dialog purchase-dialog">
-        <div class="modal-header">
-          <div><span class="modal-kicker">Checkout</span><h3>Buy controls</h3></div>
-          <button id="purchase-close" type="button" class="modal-close" aria-label="Close">×</button>
-        </div>
-        <div class="modal-body">
-          <p class="purchase-note">
-            Payment is <strong>never</strong> automated. Staging stops at the checkout page —
-            you always confirm the card step yourself (BankID / 3‑D Secure).
-          </p>
-
-          <div class="form-field">
-            <label for="purchase-token">Admin API token</label>
-            <input id="purchase-token" type="password" class="field-input" placeholder="ADMIN_API_TOKEN" autocomplete="off" />
-            <span class="field-hint">Stored in this browser only. Required for every buy control.</span>
-          </div>
-
-          <div id="purchase-status" class="purchase-status hidden"></div>
-
-          <div id="purchase-panel" class="hidden">
-            <h4 class="purchase-subhead">Defaults</h4>
-            <div class="revenue-form-grid">
-              <div class="form-field">
-                <label for="purchase-mode">Checkout model</label>
-                <select id="purchase-mode" class="field-select">
-                  <option value="deep-link">Deep link — alert links to the product</option>
-                  <option value="armed">Armed — stage from the dashboard on demand</option>
-                  <option value="cart-staging">Cart staging — basket filled on alert</option>
-                </select>
-              </div>
-              <div class="form-field">
-                <label for="purchase-max-price">Max price (SEK)</label>
-                <input id="purchase-max-price" type="number" min="1" class="field-input" />
-              </div>
-              <div class="form-field">
-                <label for="purchase-ttl">Arm expires after (min)</label>
-                <input id="purchase-ttl" type="number" min="1" class="field-input" />
-              </div>
-              <div class="form-field">
-                <label for="purchase-rate">Max stagings / hour</label>
-                <input id="purchase-rate" type="number" min="1" class="field-input" />
-              </div>
-            </div>
-            <div class="purchase-actions">
-              <button id="purchase-save" type="button" class="ghost-btn accent">Save defaults</button>
-              <span id="purchase-capabilities" class="field-hint"></span>
-            </div>
-
-            <h4 class="purchase-subhead">Armed listings</h4>
-            <div id="purchase-armed" class="purchase-list"></div>
-
-            <h4 class="purchase-subhead">Recent attempts</h4>
-            <div id="purchase-attempts" class="purchase-list"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="price-history-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-header">
-          <h3 id="ph-modal-title">Price History</h3>
-          <button id="ph-modal-close" type="button" class="modal-close" aria-label="Close">×</button>
-        </div>
-        <div class="modal-body">
-          <div id="ph-chart-container" class="ph-chart-container"></div>
-          <div id="ph-stats" class="ph-stats"></div>
-        </div>
-      </div>
-    </div>
-
-    <div id="nvidia-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-dialog" style="max-width: 680px; width: 95vw;">
-        <div class="modal-header">
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span style="font-size:1.3rem;">🟢</span>
+          <div class="section-head">
             <div>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <h3 style="margin:0;">NVIDIA Founders Edition</h3>
-                <span id="nvidia-poller-badge" class="section-badge" style="margin:0;">Loading...</span>
-              </div>
-              <span style="font-size:11px; color:var(--text-tertiary);">Powered by the Notify-FE live stock feed</span>
+              <h3>Categories</h3>
+              <span id="kd-count-label" class="muted"></span>
+            </div>
+            <div class="section-head-actions">
+              <sl-button id="kd-poll-now"><sl-icon slot="prefix" name="arrow-clockwise"></sl-icon>Check now</sl-button>
             </div>
           </div>
-          <button id="nvidia-modal-close" type="button" class="modal-close" aria-label="Close">×</button>
-        </div>
+          <div id="kd-categories" class="group-list"></div>
 
-        <div class="modal-body">
-          <!-- Navigation Tabs matching Drawer Tabs -->
-          <div class="drawer-tabs" role="tablist" style="margin: -20px -20px 16px; padding: 0 20px;">
-            <button id="nvidia-tab-cards" type="button" class="drawer-tab active" role="tab" aria-selected="true">
-              GPU Stock & Watchlist
-            </button>
-            <button id="nvidia-tab-settings" type="button" class="drawer-tab" role="tab" aria-selected="false">
-              Scheduler & Alerts
-            </button>
+          <h3 class="subhead">Latest demo finds</h3>
+          <ul id="kd-alerts" class="find-list"></ul>
+          <ul id="kd-finds" class="find-list"></ul>
+        </sl-tab-panel>
+
+        <!-- NVIDIA Founders Edition — Notify-FE live feed -->
+        <sl-tab-panel name="nvidia" id="tab-nvidia">
+          <div class="nv-head">
+            <div>
+              <p class="section-hint flush">Live Founders Edition stock from the Notify-FE feed. Stock changes are pushed as they happen.</p>
+            </div>
+            <sl-badge id="nvidia-poller-badge" variant="neutral" pill>Loading…</sl-badge>
           </div>
 
-          <!-- TAB 1: GPU Cards List -->
-          <div id="nvidia-pane-cards">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
-              <div style="display:flex; align-items:center; gap:8px;">
-                <label for="nvidia-locale-select" style="font-size:13px; font-weight:600; color:var(--text-secondary);">Region:</label>
-                <select id="nvidia-locale-select" class="field-select" style="width:auto; height:32px; font-size:12px; padding:0 28px 0 10px;">
-                  <option value="sv-se" selected>Sverige (sv-se)</option>
-                  <option value="de-de">Deutschland (de-de)</option>
-                  <option value="en-gb">United Kingdom (en-gb)</option>
-                  <option value="fr-fr">France (fr-fr)</option>
-                  <option value="en-us">United States (en-us)</option>
-                  <option value="nb-no">Norge (nb-no)</option>
-                  <option value="da-dk">Danmark (da-dk)</option>
-                  <option value="fi-fi">Suomi (fi-fi)</option>
-                </select>
-              </div>
-              <div style="display:flex; align-items:center; gap:10px;">
-                <span id="nvidia-countdown" style="font-size:12px; color:var(--green); font-weight:600; font-variant-numeric:tabular-nums;"></span>
-                <span id="nvidia-last-check" style="font-size:11px; color:var(--text-tertiary);"></span>
-                <button id="nvidia-refresh-btn" type="button" class="ghost-btn" style="height:32px; display:inline-flex; align-items:center; gap:6px;">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
-                  Refresh
-                </button>
-              </div>
-            </div>
+          <div class="nv-toolbar">
+            <sl-select id="nvidia-locale-select" label="Region" value="sv-se">
+              <sl-option value="sv-se">Sverige (sv-se)</sl-option>
+              <sl-option value="de-de">Deutschland (de-de)</sl-option>
+              <sl-option value="en-gb">United Kingdom (en-gb)</sl-option>
+              <sl-option value="fr-fr">France (fr-fr)</sl-option>
+              <sl-option value="en-us">United States (en-us)</sl-option>
+              <sl-option value="nb-no">Norge (nb-no)</sl-option>
+              <sl-option value="da-dk">Danmark (da-dk)</sl-option>
+              <sl-option value="fi-fi">Suomi (fi-fi)</sl-option>
+            </sl-select>
+            <sl-button id="nvidia-refresh-btn"><sl-icon slot="prefix" name="arrow-clockwise"></sl-icon>Refresh</sl-button>
+          </div>
+          <div class="nv-meta">
+            <span id="nvidia-countdown" class="nv-live"></span>
+            <span id="nvidia-last-check" class="muted"></span>
+            <sl-badge id="nvidia-monitored-count" variant="neutral" pill>— monitored</sl-badge>
+          </div>
+          <p class="muted small">Switch a card on to have the background scheduler alert on it.</p>
+          <div id="nvidia-cards-container" class="nv-cards"><sl-spinner></sl-spinner></div>
 
-            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:var(--bg-page); border:1px solid var(--border-light); border-radius:var(--radius-sm); margin-bottom:12px;">
-              <span style="font-size:12px; color:var(--text-secondary);">Select GPUs to monitor in the background scheduler:</span>
-              <span id="nvidia-monitored-count" class="section-badge">3 monitored</span>
+          <h3 class="subhead">Scheduler &amp; alerts</h3>
+          <div class="form-stack">
+            <sl-switch id="nvidia-enabled-input" help-text="Follows the live feed in the background and sends Discord alerts. Applies immediately.">Background stock scheduler</sl-switch>
+            <div class="input-with-action">
+              <sl-input id="nvidia-webhook-input" label="Discord webhook for stock drops" type="text" autocomplete="off" spellcheck="false"
+                placeholder="https://discord.com/api/webhooks/…" help-text="Blank = the server's default webhook."></sl-input>
+              <sl-button id="nvidia-test-webhook-btn" variant="primary" outline><sl-icon slot="prefix" name="send"></sl-icon>Test webhook</sl-button>
             </div>
-
-            <div id="nvidia-cards-container" class="sources-list" style="display:flex; flex-direction:column; gap:8px;">
-              <!-- Rendered dynamically by app.js -->
+            <div class="sub-card">
+              <span class="sub-card-title">This browser</span>
+              <div class="switch-with-action">
+                <sl-switch id="nvidia-sound-input" checked>Sound alarm on stock drop</sl-switch>
+                <sl-button id="nvidia-test-sound-btn" size="small"><sl-icon slot="prefix" name="volume-up"></sl-icon>Test</sl-button>
+              </div>
+              <sl-switch id="nvidia-auto-open-input">Auto-open the store page in a new tab</sl-switch>
+              <sl-switch id="nvidia-api-alarm-input">Log a server warning if the feed becomes unhealthy</sl-switch>
             </div>
           </div>
+        </sl-tab-panel>
+      </sl-tab-group>
 
-          <!-- TAB 2: Scheduler & Alerts Settings -->
-          <div id="nvidia-pane-settings" class="hidden">
-            <form id="nvidia-settings-form" style="display:flex; flex-direction:column;">
-              <!-- Poller Enable Switch -->
-              <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:var(--bg-page); border:1px solid var(--border-light); border-radius:var(--radius-md); margin-bottom:14px;">
-                <div>
-                  <div style="font-weight:600; font-size:13.5px; color:var(--text-primary);">Background Stock Scheduler</div>
-                  <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">Follows the Notify-FE live stock feed in the background and sends instant Discord alerts. Stock changes are pushed as they happen; there is no polling interval.</div>
-                </div>
-                <label class="toggle-switch" title="Toggle background stock scheduler">
-                  <input type="checkbox" id="nvidia-enabled-input" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                </label>
-              </div>
-
-              <!-- Discord Webhook URL -->
-              <div class="form-field" style="margin-bottom:14px;">
-                <label for="nvidia-webhook-input" style="font-size:11px; font-weight:600; color:var(--text-tertiary); text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:5px;">Discord Webhook URL for Stock Drops</label>
-                <div style="display:flex; gap:8px;">
-                  <input type="text" id="nvidia-webhook-input" class="field-input" placeholder="https://discord.com/api/webhooks/..." style="flex:1;" />
-                  <button type="button" id="nvidia-test-webhook-btn" class="ghost-btn accent" style="white-space:nowrap; height:36px; padding:0 14px;">Test Webhook</button>
-                </div>
-                <div style="font-size:11px; color:var(--text-tertiary); margin-top:4px;">Leave blank to use the server's default Discord webhook.</div>
-              </div>
-
-              <!-- Browser Client Features -->
-              <div style="display:flex; flex-direction:column; gap:12px; padding:14px; background:var(--bg-page); border:1px solid var(--border-light); border-radius:var(--radius-md); margin-bottom:16px;">
-                <div style="font-weight:600; font-size:13px; color:var(--text-primary); margin-bottom:2px;">Browser Client Features</div>
-
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                  <label class="toggle-switch" style="flex:1;">
-                    <input type="checkbox" id="nvidia-sound-input" checked />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                    <span class="toggle-label">Play sound alarm on stock drop</span>
-                  </label>
-                  <button type="button" id="nvidia-test-sound-btn" class="ghost-btn" style="height:26px; padding:0 10px; font-size:11px;">Test Sound</button>
-                </div>
-
-                <label class="toggle-switch">
-                  <input type="checkbox" id="nvidia-auto-open-input" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  <span class="toggle-label">Auto-open store purchase page in new tab</span>
-                </label>
-
-                <label class="toggle-switch">
-                  <input type="checkbox" id="nvidia-api-alarm-input" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  <span class="toggle-label">Log a server warning if the live feed becomes unhealthy</span>
-                </label>
-              </div>
-
-              <div style="display:flex; justify-content:flex-end; gap:10px; padding-top:12px; border-top:1px solid var(--border-light);">
-                <button type="submit" class="save-btn">
-                  Save & Apply Settings
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      <div slot="footer" class="drawer-actions">
+        <span id="drawer-save-status" class="save-status" aria-live="polite"></span>
+        <sl-button id="save-settings-btn" variant="primary" class="grow">Save changes</sl-button>
       </div>
-    </div>
+    </sl-drawer>
 
-    <!-- ===== TOASTS ===== -->
-    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+    <!-- ===== BUY CONTROLS ===== -->
+    <sl-dialog id="purchase-modal" label="Buy controls" class="dialog">
+      <sl-alert variant="primary" open class="purchase-note">
+        <sl-icon slot="icon" name="shield-check"></sl-icon>
+        Payment is <strong>never</strong> automated. Staging stops at the checkout page; you always confirm the card step yourself (BankID / 3-D Secure).
+      </sl-alert>
+      <div class="form-stack">
+        <sl-input id="purchase-token" label="Admin API token" type="password" password-toggle placeholder="ADMIN_API_TOKEN" autocomplete="off"
+          help-text="Stored in this browser only. Required for every buy control."></sl-input>
+        <div id="purchase-status" class="purchase-status hidden"></div>
+      </div>
+
+      <div id="purchase-panel" class="hidden">
+        <h3 class="subhead">Defaults</h3>
+        <div class="form-stack">
+          <sl-select id="purchase-mode" label="Checkout model">
+            <sl-option value="deep-link">Deep link: alert links to the product</sl-option>
+            <sl-option value="armed">Armed: stage from the dashboard on demand</sl-option>
+            <sl-option value="cart-staging">Cart staging: basket filled on alert</sl-option>
+          </sl-select>
+          <div class="form-grid-3">
+            <sl-input id="purchase-max-price" label="Max SEK" type="number" inputmode="numeric" min="1"></sl-input>
+            <sl-input id="purchase-ttl" label="Expiry (min)" type="number" inputmode="numeric" min="1"></sl-input>
+            <sl-input id="purchase-rate" label="Per hour" type="number" inputmode="numeric" min="1"></sl-input>
+          </div>
+          <div class="row-actions">
+            <sl-button id="purchase-save" variant="primary" outline>Save defaults</sl-button>
+            <span id="purchase-capabilities" class="muted small"></span>
+          </div>
+        </div>
+
+        <h3 class="subhead">Armed listings</h3>
+        <div id="purchase-armed" class="purchase-list"></div>
+
+        <h3 class="subhead">Recent attempts</h3>
+        <div id="purchase-attempts" class="purchase-list"></div>
+      </div>
+    </sl-dialog>
+
+    <!-- ===== PRICE HISTORY ===== -->
+    <sl-dialog id="price-history-modal" label="Price history" class="dialog">
+      <div id="ph-chart-container" class="ph-chart-container"></div>
+      <div id="ph-stats" class="ph-stats"></div>
+    </sl-dialog>
 
     <!-- ===== FOOTER ===== -->
     <footer class="app-footer" id="app-footer">
@@ -511,6 +318,6 @@
       </span>
     </footer>
 
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js" data-shoelace="/vendor/shoelace"></script>
   </body>
 </html>

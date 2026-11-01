@@ -230,3 +230,43 @@ test('a malformed hotlist webhook is rejected instead of silently clearing it', 
 
   await app.close();
 });
+
+test('the dashboard loads Shoelace from the vendored copy, never a CDN', async () => {
+  const state = createDefaultState();
+  const app = await buildApp({
+    config: { publicDir, sources: [] },
+    store: { getState: () => state },
+    productCache: buildTestCache(state)
+  });
+
+  const page = await app.inject({ method: 'GET', url: '/' });
+  assert.equal(page.statusCode, 200);
+  const html = page.body;
+  assert.match(html, /href="\/vendor\/shoelace\/themes\/light\.css"/);
+  assert.match(html, /href="\/vendor\/shoelace\/themes\/dark\.css"/);
+  assert.match(html, /data-shoelace="\/vendor\/shoelace"/);
+  assert.match(html, /<meta name="viewport"[^>]*width=device-width/);
+  assert.doesNotMatch(html, /(src|href)="https?:\/\//, 'no external assets at runtime');
+
+  for (const url of [
+    '/vendor/shoelace/themes/light.css',
+    '/vendor/shoelace/components/button/button.js',
+    '/vendor/shoelace/assets/icons/gear.svg'
+  ]) {
+    const res = await app.inject({ method: 'GET', url });
+    assert.equal(res.statusCode, 200, url);
+  }
+  const script = await app.inject({ method: 'GET', url: '/vendor/shoelace/components/button/button.js' });
+  assert.match(script.headers['content-type'], /javascript/);
+
+  // Every component the dashboard imports must exist in the vendored copy.
+  const appJs = (await app.inject({ method: 'GET', url: '/app.js' })).body;
+  const imports = [...appJs.matchAll(/from '(\/vendor\/shoelace\/[^']+)'|import '(\/vendor\/shoelace\/[^']+)'/g)]
+    .map((m) => m[1] ?? m[2]);
+  assert.ok(imports.length > 10);
+  for (const url of imports) {
+    assert.equal((await app.inject({ method: 'GET', url })).statusCode, 200, url);
+  }
+
+  await app.close();
+});

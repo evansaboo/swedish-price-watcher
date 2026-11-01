@@ -1,6 +1,32 @@
 // ═══════════════════════════════════════════════════════════════
-// PriceWatch — Nordic Ink Frontend
+// PriceWatch dashboard: plain JS + Shoelace web components.
+// Shoelace is vendored and served from /vendor/shoelace/ (no CDN).
+// The imports below define every component before any code runs, so
+// reading .value/.checked on them is always safe.
 // ═══════════════════════════════════════════════════════════════
+import '/vendor/shoelace/components/alert/alert.js';
+import '/vendor/shoelace/components/badge/badge.js';
+import '/vendor/shoelace/components/button/button.js';
+import '/vendor/shoelace/components/checkbox/checkbox.js';
+import '/vendor/shoelace/components/details/details.js';
+import '/vendor/shoelace/components/dialog/dialog.js';
+import '/vendor/shoelace/components/drawer/drawer.js';
+import '/vendor/shoelace/components/icon/icon.js';
+import '/vendor/shoelace/components/icon-button/icon-button.js';
+import '/vendor/shoelace/components/input/input.js';
+import '/vendor/shoelace/components/option/option.js';
+import '/vendor/shoelace/components/select/select.js';
+import '/vendor/shoelace/components/skeleton/skeleton.js';
+import '/vendor/shoelace/components/spinner/spinner.js';
+import '/vendor/shoelace/components/switch/switch.js';
+import '/vendor/shoelace/components/tab/tab.js';
+import '/vendor/shoelace/components/tab-group/tab-group.js';
+import '/vendor/shoelace/components/tab-panel/tab-panel.js';
+import '/vendor/shoelace/components/tag/tag.js';
+import { setBasePath } from '/vendor/shoelace/utilities/base-path.js';
+
+// Icons and other assets resolve from the vendored copy.
+setBasePath('/vendor/shoelace');
 
 const sekFormatter = new Intl.NumberFormat('sv-SE', {
   style: 'currency',
@@ -27,8 +53,7 @@ const state = {
   sortDirection: 'desc',
   currentPage: 1,
   pageSize: 48,
-  viewMode: 'grid', // 'grid' or 'list'
-  filterPanelOpen: false,
+  viewMode: 'grid', // 'grid' or 'list' (phones always get the compact one-column layout)
   activePreset: 'all',
   // Wishlist: a per-item bookmark with its own filter (no alerts).
   wishlist: new Set()
@@ -56,12 +81,12 @@ const el = {
   referenceOnly: $('#reference-only'),
   filterPills: $$('[data-filter-preset]'),
   filterExpandBtn: $('#filter-expand-btn'),
-  filterPanel: $('#filter-panel'),
+  filterDrawer: $('#filter-drawer'),
+  filterDoneBtn: $('#filter-done-btn'),
   filterCountBadge: $('#filter-count-badge'),
   clearFiltersBtn: $('#clear-filters-btn'),
   activeFilterTags: $('#active-filter-tags'),
   statsPills: $('#stats-pills'),
-  productsCount: $('#products-count'),
   productGrid: $('#product-grid'),
   paginationArea: $('#pagination-area'),
   emptyState: $('#empty-state'),
@@ -70,9 +95,7 @@ const el = {
   viewList: $('#view-list'),
   settingsBtn: $('#settings-btn'),
   settingsDrawer: $('#settings-drawer'),
-  settingsOverlay: $('#settings-overlay'),
-  drawerClose: $('#drawer-close'),
-  drawerTabs: $$('#settings-drawer .drawer-tab'),
+  settingsTabs: $('#settings-tabs'),
   hotlistStatus: $('#hotlist-status'),
   elgigantenBlock: $('#elgiganten-block'),
   elgigantenBlockText: $('#elgiganten-block-text'),
@@ -102,7 +125,6 @@ const el = {
   kdFinds: $('#kd-finds'),
   saveSettingsBtn: $('#save-settings-btn'),
   drawerSaveStatus: $('#drawer-save-status'),
-  toastContainer: $('#toast-container'),
   themeToggle: $('#theme-toggle')
 };
 
@@ -110,14 +132,12 @@ let filterApplyTimer = null;
 let latestProducts = {};
 let lastStatus = null; // cached /api/status for product-only refreshes
 
+// Phones get bottom sheets; wider screens get side panels.
+const phoneQuery = window.matchMedia('(max-width: 639px)');
+
 // ── UTILITIES ───────────────────────────────────────────────────
 function formatSek(value) {
   return Number.isFinite(value) ? sekFormatter.format(Math.round(value)) : 'n/a';
-}
-
-function formatDate(value) {
-  if (!value) return 'n/a';
-  return new Date(value).toLocaleString('sv-SE');
 }
 
 function timeAgo(isoStr) {
@@ -163,6 +183,18 @@ function isNewProduct(product) {
   if (firstSeenTimestamp == null) return false;
   return Date.now() - firstSeenTimestamp <= NEW_PRODUCT_WINDOW_MS;
 }
+
+// <sl-option> values can't be empty or contain spaces (Shoelace replaces
+// spaces with underscores), so filter values are URI-encoded and "all" is a
+// sentinel.
+const ALL_OPTION = '__all';
+const toOptionValue = (value) => (value ? encodeURIComponent(value) : ALL_OPTION);
+function fromOptionValue(value) {
+  if (!value || value === ALL_OPTION) return '';
+  try { return decodeURIComponent(value); } catch { return value; }
+}
+
+const inputValue = (input) => String(input?.value ?? '').trim();
 
 // ── PERSISTENCE ─────────────────────────────────────────────────
 function loadPrefs() {
@@ -230,16 +262,23 @@ function hydratePrefs() {
 }
 
 // ── TOAST NOTIFICATIONS ─────────────────────────────────────────
+const TOAST_STYLE = {
+  info: ['primary', 'info-circle'],
+  success: ['success', 'check2-circle'],
+  error: ['danger', 'exclamation-octagon'],
+  warning: ['warning', 'exclamation-triangle']
+};
+
 function showToast(message, variant = 'info', duration = 4000) {
-  const toast = document.createElement('div');
-  toast.className = `toast ${variant}`;
-  toast.innerHTML = `
-    <span class="toast-message">${escapeHtml(message)}</span>
-    <button type="button" class="toast-close" aria-label="Dismiss">×</button>
-  `;
-  toast.querySelector('.toast-close').addEventListener('click', () => toast.remove());
-  el.toastContainer.appendChild(toast);
-  if (duration > 0) setTimeout(() => toast.remove(), duration);
+  const [slVariant, icon] = TOAST_STYLE[variant] ?? TOAST_STYLE.info;
+  const alert = Object.assign(document.createElement('sl-alert'), {
+    variant: slVariant,
+    closable: true,
+    duration: duration > 0 ? duration : Infinity
+  });
+  alert.innerHTML = `<sl-icon slot="icon" name="${icon}"></sl-icon>${escapeHtml(message)}`;
+  document.body.append(alert);
+  return alert.toast();
 }
 
 // ── API HELPERS ─────────────────────────────────────────────────
@@ -281,20 +320,27 @@ function buildProductsQuery() {
 }
 
 // ── THEME ───────────────────────────────────────────────────────
+// Follows the system until the user picks one with the toggle.
 function initTheme() {
-  function getTheme() { return document.documentElement.getAttribute('data-theme') || 'dark'; }
+  const root = document.documentElement;
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+  const saved = () => {
+    try { const t = localStorage.getItem('spw-theme'); return t === 'light' || t === 'dark' ? t : null; } catch { return null; }
+  };
   function apply(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-    try { localStorage.setItem('spw-theme', theme); } catch {}
+    const dark = theme === 'dark';
+    root.classList.toggle('sl-theme-dark', dark);
+    root.classList.toggle('sl-theme-light', !dark);
+    el.themeToggle.name = dark ? 'sun' : 'moon';
+    el.themeToggle.label = dark ? 'Switch to light mode' : 'Switch to dark mode';
   }
-  try {
-    const saved = localStorage.getItem('spw-theme');
-    if (saved === 'light' || saved === 'dark') apply(saved);
-    else apply('dark');
-  } catch { apply('dark'); }
+  apply(saved() ?? (systemDark.matches ? 'dark' : 'light'));
+  systemDark.addEventListener('change', (e) => { if (!saved()) apply(e.matches ? 'dark' : 'light'); });
 
   el.themeToggle.addEventListener('click', () => {
-    apply(getTheme() === 'dark' ? 'light' : 'dark');
+    const next = root.classList.contains('sl-theme-dark') ? 'light' : 'dark';
+    try { localStorage.setItem('spw-theme', next); } catch {}
+    apply(next);
   });
 }
 
@@ -302,16 +348,20 @@ function initTheme() {
 function syncViewMode() {
   el.viewGrid.classList.toggle('active', state.viewMode === 'grid');
   el.viewList.classList.toggle('active', state.viewMode === 'list');
-  el.viewGrid.setAttribute('aria-pressed', state.viewMode === 'grid');
-  el.viewList.setAttribute('aria-pressed', state.viewMode === 'list');
+  el.viewGrid.setAttribute('aria-pressed', String(state.viewMode === 'grid'));
+  el.viewList.setAttribute('aria-pressed', String(state.viewMode === 'list'));
   el.productGrid.classList.toggle('list-view', state.viewMode === 'list');
 }
 
 // ── FILTER PRESETS ──────────────────────────────────────────────
 function syncFilterPresets() {
   for (const pill of el.filterPills) {
-    const preset = pill.getAttribute('data-filter-preset');
-    pill.classList.toggle('active', preset === state.activePreset);
+    const active = pill.getAttribute('data-filter-preset') === state.activePreset;
+    pill.variant = active ? 'primary' : 'default';
+    pill.setAttribute('aria-pressed', String(active));
+    if (pill.dataset.filterPreset === 'wishlist') {
+      pill.querySelector('sl-icon')?.setAttribute('name', active ? 'heart-fill' : 'heart');
+    }
   }
 }
 
@@ -338,13 +388,12 @@ function applyPreset(preset) {
 }
 
 // ── FILTER COUNT ────────────────────────────────────────────────
+// Counts what lives in the Filters sheet (search and presets are visible already).
 function getActiveFilterCount() {
   let count = 0;
-  if (state.search) count++;
   if (state.category) count++;
   if (state.store) count++;
   if (state.campaign) count++;
-  if (state.hotOnly) count++;
   if (state.discountedOnly) count++;
   if (state.newOnly) count++;
   if (state.referenceOnly) count++;
@@ -356,12 +405,8 @@ function getActiveFilterCount() {
 
 function syncFilterBadge() {
   const count = getActiveFilterCount();
-  if (count > 0) {
-    el.filterCountBadge.textContent = count;
-    el.filterCountBadge.classList.remove('hidden');
-  } else {
-    el.filterCountBadge.classList.add('hidden');
-  }
+  el.filterCountBadge.textContent = String(count);
+  el.filterCountBadge.classList.toggle('hidden', count === 0);
 }
 
 // ── RENDER: ELGIGANTEN BLOCK NOTICE ─────────────────────────────
@@ -378,7 +423,7 @@ function renderElgigantenBlock(block) {
     return;
   }
 
-  const parts = ['Elgiganten is refusing requests from this network\u2019s IP address, so its sources are paused.'];
+  const parts = ['Elgiganten is refusing requests from this network’s IP address, so its sources are paused.'];
   if (block.blockedUntil) {
     const until = new Date(block.blockedUntil);
     if (!Number.isNaN(until.getTime())) {
@@ -386,7 +431,7 @@ function renderElgigantenBlock(block) {
     }
   }
   parts.push(block.proxyConfigured
-    ? 'A proxy is configured but still blocked \u2014 try a different exit IP.'
+    ? 'A proxy is configured but still blocked — try a different exit IP.'
     : 'Change your public IP (VPN, proxy or a new ISP lease), then hit Retry.');
 
   el.elgigantenBlockText.textContent = parts.join(' ');
@@ -398,23 +443,25 @@ function renderStats(status, response) {
   const agg = response?.aggregates ?? {};
   const total = response?.total ?? 0;
   const pills = [
+    [total.toLocaleString('sv-SE'), total === 1 ? 'product' : 'products'],
     [status.counts?.listedProducts ?? 0, 'listed'],
-    [total, 'filtered'],
     [agg.matched ?? 0, 'matched'],
     [agg.discounted ?? 0, 'discounted'],
     [Number.isFinite(agg.avgDiscountPercent) ? `${agg.avgDiscountPercent}%` : '–', 'avg off']
   ];
 
   el.statsPills.innerHTML = pills
-    .map(([val, label]) => `<span class="stat-pill"><strong>${escapeHtml(String(val))}</strong> ${escapeHtml(label)}</span>`)
+    .map(([val, label]) => `<span class="stat"><strong>${escapeHtml(String(val))}</strong> ${escapeHtml(label)}</span>`)
     .join('');
-  el.productsCount.textContent = `${total} products`;
 }
 
 // ── RENDER: PRODUCTS ────────────────────────────────────────────
+const PLACEHOLDER_IMG = '<div class="card-placeholder-img"><sl-icon name="image"></sl-icon></div>';
+
 function renderProducts(response) {
   const products = response?.items ?? [];
   const total = response?.total ?? products.length;
+  el.productGrid.setAttribute('aria-busy', 'false');
 
   if (!total) {
     el.productGrid.innerHTML = '';
@@ -427,32 +474,29 @@ function renderProducts(response) {
 
   const armedKeys = armedSet();
   const cards = products.map((product, idx) => {
+    const key = escapeHtml(product.listingKey);
     const isNew = isNewProduct(product);
     const hasDiscount = Number.isFinite(product.discountPercent) && product.discountPercent > 0;
     const score = product.score ?? 0;
 
-    // Score class
     let scoreClass = 's-low';
     if (score >= 75) scoreClass = 's-great';
     else if (score >= 55) scoreClass = 's-good';
     else if (score >= 30) scoreClass = 's-ok';
 
     // Badges
-    let badgesLeft = '';
-    if (isNew) badgesLeft += '<span class="badge badge-new">New</span>';
-    if (hasDiscount && product.discountPercent >= 20) badgesLeft += `<span class="badge badge-discount">-${product.discountPercent}%</span>`;
-    if (score >= 75) badgesLeft += '<span class="badge badge-hot">Hot</span>';
-    if (product.affiliate) badgesLeft += '<span class="badge badge-affiliate">Annonslänk</span>';
+    const badges = [];
+    if (isNew) badges.push('<sl-badge variant="success" pill>New</sl-badge>');
+    if (hasDiscount && product.discountPercent >= 20) badges.push(`<sl-badge variant="primary" pill>-${product.discountPercent}%</sl-badge>`);
+    if (score >= 75) badges.push('<sl-badge variant="warning" pill>Hot</sl-badge>');
+    if (product.affiliate) badges.push('<sl-badge variant="neutral" pill>Annonslänk</sl-badge>');
     const condition = product.conditionLabel && product.conditionLabel !== 'Outlet' ? product.conditionLabel : '';
-    if (condition) badgesLeft += `<span class="badge badge-condition">${escapeHtml(condition)}</span>`;
+    if (condition) badges.push(`<sl-badge variant="neutral" pill>${escapeHtml(condition)}</sl-badge>`);
 
-    // Image
-    const imgSrc = product.imageUrl;
-    const imageHtml = imgSrc
-      ? `<img src="${escapeHtml(imgSrc)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder-img\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'" />`
-      : `<div class="card-placeholder-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+    const imageHtml = product.imageUrl
+      ? `<img src="${escapeHtml(product.imageUrl)}" alt="" loading="lazy" decoding="async" />`
+      : PLACEHOLDER_IMG;
 
-    // URL
     const url = product.url ? escapeHtml(`/api/out/${encodeURIComponent(product.listingKey)}`) : '';
     const titleLink = url
       ? `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(product.title)}</a>`
@@ -467,17 +511,16 @@ function renderProducts(response) {
         : conf === 'claimed'
           ? 'Reference price reported by the store only — not independently confirmed'
           : 'Reference price';
-      const verifiedMark = conf === 'verified'
-        ? '<span class="card-ref-verified" title="Verified reference price">✓</span>'
+      const mark = conf === 'verified'
+        ? '<span class="ref-mark verified" title="Verified reference price">✓</span>'
         : conf === 'claimed'
-          ? '<span class="card-ref-claimed" title="Store-reported price, unconfirmed">?</span>'
+          ? '<span class="ref-mark claimed" title="Store-reported price, unconfirmed">?</span>'
           : '';
       refHtml = `
-        <div class="card-price-ref" title="${escapeHtml(refTitle)}">
-          <span class="card-price-was">${formatSek(product.initialPriceSek)}</span>
-          ${verifiedMark}
-          ${Number.isFinite(product.discountSek) && product.discountSek > 0 ? `<span class="card-price-save">Save ${formatSek(product.discountSek)}</span>` : ''}
-        </div>`;
+        <span class="price-ref" title="${escapeHtml(refTitle)}">
+          <s class="price-was">${formatSek(product.initialPriceSek)}</s>${mark}
+          ${Number.isFinite(product.discountSek) && product.discountSek > 0 ? `<span class="price-save">Save ${formatSek(product.discountSek)}</span>` : ''}
+        </span>`;
     }
 
     // Availability
@@ -493,13 +536,9 @@ function renderProducts(response) {
     } else if (seenText) {
       availLabel = seenText;
     }
+    const availText = seenText && availDot !== 'out' ? `${availLabel} · ${seenText}` : availLabel;
 
-    const cardClass = `product-card${isNew ? ' is-new' : ''}${product.wishlisted ? ' is-wishlisted' : ''}`;
-    const delay = Math.min(idx * 25, 300);
-    const wishlistIcon = product.wishlisted ? '♥' : '♡';
-    const wishlistClass = product.wishlisted ? 'wishlist-btn active' : 'wishlist-btn';
-
-    // Mini sparkline from history (last 10 points)
+    // Mini sparkline from history
     const historyPoints = product.historyPreview ?? [];
     let sparklineHtml = '';
     if (historyPoints.length >= 2) {
@@ -509,34 +548,40 @@ function renderProducts(response) {
       const range = maxP - minP || 1;
       const w = 60, h2 = 20;
       const points = prices.map((p, i) => `${(i / (prices.length - 1)) * w},${h2 - ((p - minP) / range) * h2}`).join(' ');
-      const trendColor = prices[prices.length - 1] <= prices[0] ? 'var(--clr-success)' : 'var(--clr-danger)';
-      sparklineHtml = `<svg class="sparkline" viewBox="0 0 ${w} ${h2}" preserveAspectRatio="none"><polyline points="${points}" fill="none" stroke="${trendColor}" stroke-width="1.5"/></svg>`;
+      const trend = prices[prices.length - 1] <= prices[0] ? 'down' : 'up';
+      sparklineHtml = `<svg class="sparkline ${trend}" viewBox="0 0 ${w} ${h2}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}" fill="none" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
     }
 
+    const wish = Boolean(product.wishlisted);
+    const armed = armedKeys.has(product.listingKey);
+    const cardClass = `product-card${isNew ? ' is-new' : ''}${wish ? ' is-wishlisted' : ''}`;
+    const delay = Math.min(idx * 20, 240);
+
     return `
-      <article class="${cardClass}" style="animation-delay:${delay}ms" data-listing-key="${escapeHtml(product.listingKey)}">
-        <div class="card-image">
+      <article class="${cardClass}" style="animation-delay:${delay}ms" data-listing-key="${key}">
+        <div class="card-media">
           ${imageHtml}
-          <div class="card-badges">
-            <div class="card-badges-left">${badgesLeft}</div>
-            ${score > 0 ? `<div class="score-ring ${scoreClass}" title="Deal score: ${score}/100">${score}</div>` : ''}
-          </div>
-          <button type="button" class="${wishlistClass}" data-listing-key="${escapeHtml(product.listingKey)}" title="${product.wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}">${wishlistIcon}</button>
-          ${isElgigantenListing(product) ? `<button type="button" class="arm-btn${armedKeys.has(product.listingKey) ? ' active' : ''}" data-arm-key="${escapeHtml(product.listingKey)}" title="${armedKeys.has(product.listingKey) ? 'Disarm checkout staging' : 'Arm for checkout staging'}">⚡</button>` : ''}
+          ${score > 0 ? `<span class="score ${scoreClass}" title="Deal score: ${score}/100">${score}</span>` : ''}
         </div>
         <div class="card-body">
-          <span class="card-store">${escapeHtml(product.sourceLabel ?? '')}</span>
+          <div class="card-meta">
+            <span class="card-store">${escapeHtml(product.sourceLabel ?? '')}</span>
+            <button type="button" class="card-category" data-filter-category="${escapeHtml(product.category)}" title="Filter by this category">${escapeHtml(product.category || 'Uncategorized')}</button>
+          </div>
           <h3 class="card-title">${titleLink}</h3>
-          <span class="card-category" data-filter-category="${escapeHtml(product.category)}">${escapeHtml(product.category || 'Uncategorized')}</span>
+          ${badges.length ? `<div class="card-badges">${badges.join('')}</div>` : ''}
           <div class="card-pricing">
-            <span class="card-price-main">${formatSek(product.currentPriceSek)}</span>
+            <span class="price">${formatSek(product.currentPriceSek)}</span>
             ${refHtml}
           </div>
-          ${sparklineHtml ? `<div class="card-sparkline" data-listing-key="${escapeHtml(product.listingKey)}" title="Click for price history">${sparklineHtml}</div>` : ''}
         </div>
         <div class="card-footer">
-          <span class="card-availability"><span class="avail-dot ${availDot}"></span>${escapeHtml(availLabel)}</span>
-          ${seenText && availDot !== 'out' ? `<span>${escapeHtml(seenText)}</span>` : ''}
+          <span class="avail"><span class="avail-dot ${availDot}"></span><span class="avail-text">${escapeHtml(availText)}</span></span>
+          <span class="card-actions">
+            ${sparklineHtml ? `<button type="button" class="spark-btn" data-listing-key="${key}" aria-label="Price history" title="Price history">${sparklineHtml}</button>` : ''}
+            ${isElgigantenListing(product) ? `<sl-icon-button class="arm-btn${armed ? ' active' : ''}" name="${armed ? 'lightning-charge-fill' : 'lightning-charge'}" data-arm-key="${key}" label="${armed ? 'Disarm checkout staging' : 'Arm for checkout staging'}"></sl-icon-button>` : ''}
+            <sl-icon-button class="wishlist-btn${wish ? ' active' : ''}" name="${wish ? 'heart-fill' : 'heart'}" data-listing-key="${key}" label="${wish ? 'Remove from wishlist' : 'Add to wishlist'}"></sl-icon-button>
+          </span>
         </div>
       </article>
     `;
@@ -544,17 +589,21 @@ function renderProducts(response) {
 
   el.productGrid.innerHTML = cards;
 
-  // Wire category click handlers
+  // Broken product images fall back to a neutral placeholder.
+  for (const img of el.productGrid.querySelectorAll('.card-media img')) {
+    img.addEventListener('error', () => { img.outerHTML = PLACEHOLDER_IMG; }, { once: true });
+  }
+
+  // Category chip → filter by that category
   for (const catEl of el.productGrid.querySelectorAll('[data-filter-category]')) {
     catEl.addEventListener('click', () => {
       const catName = catEl.getAttribute('data-filter-category');
       const match = state.categories.find(c => normalizeCategoryKey(c.name) === normalizeCategoryKey(catName));
-      el.categoryFilter.value = match ? match.key : normalizeCategoryKey(catName);
+      el.categoryFilter.value = toOptionValue(match ? match.key : normalizeCategoryKey(catName));
       updateFilters();
     });
   }
 
-  // Wire checkout-arm buttons
   for (const btn of el.productGrid.querySelectorAll('.arm-btn')) {
     btn.addEventListener('click', (event) => {
       event.preventDefault();
@@ -570,14 +619,10 @@ function renderProducts(response) {
     });
   }
 
-  // Wire sparkline click → open price history modal
-  for (const spark of el.productGrid.querySelectorAll('.card-sparkline')) {
-    spark.addEventListener('click', () => {
-      openPriceHistoryModal(spark.getAttribute('data-listing-key'));
-    });
+  for (const spark of el.productGrid.querySelectorAll('.spark-btn')) {
+    spark.addEventListener('click', () => openPriceHistoryModal(spark.getAttribute('data-listing-key')));
   }
 
-  // Pagination
   renderPagination(response);
 }
 
@@ -594,23 +639,25 @@ function renderPagination(response) {
   let lastP = 0;
   for (const p of sorted) {
     if (lastP && p - lastP > 1) buttons += '<span class="page-ellipsis">…</span>';
-    buttons += `<button type="button" class="page-btn${p === page ? ' active' : ''}" data-page="${p}">${p}</button>`;
+    buttons += `<sl-button class="page-btn" variant="${p === page ? 'primary' : 'default'}" data-page="${p}"${p === page ? ' aria-current="page"' : ''}>${p}</sl-button>`;
     lastP = p;
   }
 
   el.paginationArea.innerHTML = `
     <div class="pagination-controls">
-      <button type="button" class="page-btn page-nav" data-page="${page - 1}"${page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹</button>
-      ${buttons}
-      <button type="button" class="page-btn page-nav" data-page="${page + 1}"${page >= totalPages ? ' disabled' : ''} aria-label="Next page">›</button>
+      <sl-button class="page-nav" data-page="${page - 1}"${page <= 1 ? ' disabled' : ''} aria-label="Previous page"><sl-icon name="chevron-left"></sl-icon></sl-button>
+      <span class="page-numbers">${buttons}</span>
+      <span class="page-compact">Page ${page} of ${totalPages}</span>
+      <sl-button class="page-nav" data-page="${page + 1}"${page >= totalPages ? ' disabled' : ''} aria-label="Next page"><sl-icon name="chevron-right"></sl-icon></sl-button>
     </div>
     <span class="pagination-info">Showing ${start}–${end} of ${total.toLocaleString('sv-SE')}</span>
   `;
 
   for (const btn of el.paginationArea.querySelectorAll('[data-page]')) {
     btn.addEventListener('click', () => {
+      if (btn.disabled) return;
       const target = Number(btn.getAttribute('data-page'));
-      if (!Number.isFinite(target) || target < 1) return;
+      if (!Number.isFinite(target) || target < 1 || target > totalPages) return;
       state.currentPage = target;
       loadProducts().catch(err => showToast(err.message, 'error'));
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -626,21 +673,13 @@ async function toggleWishlist(listingKey, btnEl) {
 
   try {
     await fetch(`/api/wishlist/${encodeURIComponent(listingKey)}`, { method });
-    if (isWishlisted) {
-      state.wishlist.delete(listingKey);
-      btnEl.classList.remove('active');
-      btnEl.textContent = '♡';
-      btnEl.title = 'Add to wishlist';
-      const card = btnEl.closest('.product-card');
-      card?.classList.remove('is-wishlisted');
-    } else {
-      state.wishlist.add(listingKey);
-      btnEl.classList.add('active');
-      btnEl.textContent = '♥';
-      btnEl.title = 'Remove from wishlist';
-      const card = btnEl.closest('.product-card');
-      card?.classList.add('is-wishlisted');
-    }
+    if (isWishlisted) state.wishlist.delete(listingKey);
+    else state.wishlist.add(listingKey);
+    const nowWishlisted = !isWishlisted;
+    btnEl.classList.toggle('active', nowWishlisted);
+    btnEl.name = nowWishlisted ? 'heart-fill' : 'heart';
+    btnEl.label = nowWishlisted ? 'Remove from wishlist' : 'Add to wishlist';
+    btnEl.closest('.product-card')?.classList.toggle('is-wishlisted', nowWishlisted);
   } catch (err) {
     showToast('Failed to update wishlist', 'error');
   }
@@ -653,109 +692,114 @@ async function loadWishlist() {
   } catch { state.wishlist = new Set(); }
 }
 
-// ── PRICE HISTORY MODAL ─────────────────────────────────────────
+// ── PRICE HISTORY ───────────────────────────────────────────────
 async function openPriceHistoryModal(listingKey) {
   const modal = document.getElementById('price-history-modal');
-  const titleEl = document.getElementById('ph-modal-title');
   const chartContainer = document.getElementById('ph-chart-container');
   const statsEl = document.getElementById('ph-stats');
 
-  modal.classList.remove('hidden');
-  modal.setAttribute('aria-hidden', 'false');
-  chartContainer.innerHTML = '<p style="text-align:center;opacity:0.6">Loading...</p>';
+  modal.label = 'Price history';
+  chartContainer.innerHTML = '<div class="centered"><sl-spinner></sl-spinner></div>';
   statsEl.innerHTML = '';
-  titleEl.textContent = 'Price History';
+  modal.show();
 
   try {
     const data = await fetchJson(`/api/price-history/${encodeURIComponent(listingKey)}`);
-    titleEl.textContent = data.title ? `${data.title.slice(0, 60)}${data.title.length > 60 ? '…' : ''}` : 'Price History';
+    modal.label = data.title ? `${data.title.slice(0, 60)}${data.title.length > 60 ? '…' : ''}` : 'Price history';
 
     const history = data.history ?? [];
     if (history.length < 2) {
-      chartContainer.innerHTML = '<p style="text-align:center;opacity:0.6">Not enough data points yet</p>';
+      chartContainer.innerHTML = '<p class="centered muted">Not enough data points yet</p>';
       return;
     }
 
-    // Render full SVG chart
     const prices = history.map(h => h.priceSek);
     const dates = history.map(h => new Date(h.seenAt));
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
     const priceRange = maxPrice - minPrice || 1;
 
-    const chartW = 500, chartH = 200, pad = 40;
-    const plotW = chartW - pad * 2, plotH = chartH - pad * 2;
+    const chartW = 500, chartH = 220, padL = 70, padR = 16, padY = 24;
+    const plotW = chartW - padL - padR, plotH = chartH - padY * 2;
 
     const points = prices.map((p, i) => {
-      const x = pad + (i / (prices.length - 1)) * plotW;
-      const y = pad + plotH - ((p - minPrice) / priceRange) * plotH;
+      const x = padL + (i / (prices.length - 1)) * plotW;
+      const y = padY + plotH - ((p - minPrice) / priceRange) * plotH;
       return `${x},${y}`;
     });
 
-    // Y-axis labels
     const ySteps = 4;
     let yLabels = '';
     for (let i = 0; i <= ySteps; i++) {
       const val = minPrice + (i / ySteps) * priceRange;
-      const y = pad + plotH - (i / ySteps) * plotH;
-      yLabels += `<text x="${pad - 5}" y="${y + 4}" text-anchor="end" class="chart-label">${formatSek(val)}</text>`;
-      yLabels += `<line x1="${pad}" y1="${y}" x2="${chartW - pad}" y2="${y}" class="chart-grid"/>`;
+      const y = padY + plotH - (i / ySteps) * plotH;
+      yLabels += `<text x="${padL - 8}" y="${y + 4}" text-anchor="end" class="chart-label">${formatSek(val)}</text>`;
+      yLabels += `<line x1="${padL}" y1="${y}" x2="${chartW - padR}" y2="${y}" class="chart-grid"/>`;
     }
 
-    // X-axis labels (first, mid, last)
     const xLabels = [0, Math.floor(dates.length / 2), dates.length - 1]
-      .map(i => {
-        const x = pad + (i / (dates.length - 1)) * plotW;
-        const d = dates[i];
-        return `<text x="${x}" y="${chartH - 5}" text-anchor="middle" class="chart-label">${d.toLocaleDateString('sv-SE', { month: 'short', day: 'numeric' })}</text>`;
+      .map((i, n) => {
+        const x = padL + (i / (dates.length - 1)) * plotW;
+        const anchor = n === 0 ? 'start' : n === 2 ? 'end' : 'middle';
+        return `<text x="${x}" y="${chartH - 4}" text-anchor="${anchor}" class="chart-label">${dates[i].toLocaleDateString('sv-SE', { month: 'short', day: 'numeric' })}</text>`;
       }).join('');
 
-    const trendColor = prices[prices.length - 1] <= prices[0] ? 'var(--clr-success)' : 'var(--clr-danger)';
-
-    // Area fill
-    const areaPoints = `${pad},${pad + plotH} ${points.join(' ')} ${chartW - pad},${pad + plotH}`;
+    const trend = prices[prices.length - 1] <= prices[0] ? 'down' : 'up';
+    const areaPoints = `${padL},${padY + plotH} ${points.join(' ')} ${chartW - padR},${padY + plotH}`;
+    const [lastX, lastY] = points[points.length - 1].split(',');
 
     chartContainer.innerHTML = `
-      <svg class="ph-chart" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet">
+      <svg class="ph-chart ${trend}" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Price history chart">
         ${yLabels}
         ${xLabels}
-        <polygon points="${areaPoints}" fill="${trendColor}" opacity="0.1"/>
-        <polyline points="${points.join(' ')}" fill="none" stroke="${trendColor}" stroke-width="2" stroke-linejoin="round"/>
-        <circle cx="${points[points.length - 1].split(',')[0]}" cy="${points[points.length - 1].split(',')[1]}" r="4" fill="${trendColor}"/>
+        <polygon class="ph-area" points="${areaPoints}"/>
+        <polyline class="ph-line" points="${points.join(' ')}" fill="none" stroke-width="2" stroke-linejoin="round"/>
+        <circle class="ph-dot" cx="${lastX}" cy="${lastY}" r="4"/>
       </svg>
     `;
 
-    // Stats
     const currentPrice = prices[prices.length - 1];
     const priceChange = currentPrice - prices[0];
     const changePercent = prices[0] > 0 ? Math.round((priceChange / prices[0]) * 100) : 0;
-    const changeClass = priceChange <= 0 ? 'ph-stat-good' : 'ph-stat-bad';
+    const changeClass = priceChange <= 0 ? 'good' : 'bad';
 
     statsEl.innerHTML = `
-      <div class="ph-stat"><span class="ph-stat-label">Current</span><span class="ph-stat-value">${formatSek(currentPrice)}</span></div>
-      <div class="ph-stat"><span class="ph-stat-label">Lowest</span><span class="ph-stat-value">${formatSek(data.lowestPriceSek)}</span></div>
-      <div class="ph-stat"><span class="ph-stat-label">Highest</span><span class="ph-stat-value">${formatSek(data.highestPriceSek)}</span></div>
-      <div class="ph-stat ${changeClass}"><span class="ph-stat-label">Change</span><span class="ph-stat-value">${priceChange <= 0 ? '' : '+'}${formatSek(priceChange)} (${changePercent}%)</span></div>
-      <div class="ph-stat"><span class="ph-stat-label">Data points</span><span class="ph-stat-value">${history.length}</span></div>
+      <div class="ph-stat"><span>Current</span><strong>${formatSek(currentPrice)}</strong></div>
+      <div class="ph-stat"><span>Lowest</span><strong>${formatSek(data.lowestPriceSek)}</strong></div>
+      <div class="ph-stat"><span>Highest</span><strong>${formatSek(data.highestPriceSek)}</strong></div>
+      <div class="ph-stat ${changeClass}"><span>Change</span><strong>${priceChange <= 0 ? '' : '+'}${formatSek(priceChange)} (${changePercent}%)</strong></div>
+      <div class="ph-stat"><span>Data points</span><strong>${history.length}</strong></div>
     `;
   } catch (err) {
-    chartContainer.innerHTML = `<p style="text-align:center;color:var(--clr-danger)">${escapeHtml(err.message)}</p>`;
+    chartContainer.innerHTML = `<p class="centered error-text">${escapeHtml(err.message)}</p>`;
   }
 }
 
-function closePriceHistoryModal() {
-  const modal = document.getElementById('price-history-modal');
-  modal.classList.add('hidden');
-  modal.setAttribute('aria-hidden', 'true');
-}
-
 // ── NVIDIA Founders Edition (Notify-FE live feed tracker) ──────
+// Lives in the Settings drawer's "NVIDIA FE" tab; the header GPU button opens it.
 let nvidiaState = {
   config: null,
   poller: null,
   cards: [],
   countdownTimer: null,
   knownInStock: new Set()
+};
+
+const nv = {
+  enabled: $('#nvidia-enabled-input'),
+  webhook: $('#nvidia-webhook-input'),
+  sound: $('#nvidia-sound-input'),
+  autoOpen: $('#nvidia-auto-open-input'),
+  apiAlarm: $('#nvidia-api-alarm-input'),
+  locale: $('#nvidia-locale-select'),
+  badge: $('#nvidia-poller-badge'),
+  monitored: $('#nvidia-monitored-count'),
+  cards: $('#nvidia-cards-container'),
+  lastCheck: $('#nvidia-last-check'),
+  refresh: $('#nvidia-refresh-btn'),
+  countdown: $('#nvidia-countdown'),
+  testWebhook: $('#nvidia-test-webhook-btn'),
+  testSound: $('#nvidia-test-sound-btn')
 };
 
 function playNvidiaChime() {
@@ -791,49 +835,19 @@ function playNvidiaChime() {
   }
 }
 
-async function openNvidiaModal() {
-  const modal = document.getElementById('nvidia-modal');
-  if (!modal) return;
-  modal.classList.remove('hidden');
-  modal.setAttribute('aria-hidden', 'false');
+let nvidiaActive = false;
 
-  // Activate cards tab by default
-  switchNvidiaTab('cards');
-
+async function activateNvidiaTab() {
+  if (nvidiaActive) return;
+  nvidiaActive = true;
   await loadNvidiaConfig();
   await refreshNvidiaCards();
   startNvidiaCountdown();
 }
 
-function closeNvidiaModal() {
-  const modal = document.getElementById('nvidia-modal');
-  if (!modal) return;
-  modal.classList.add('hidden');
-  modal.setAttribute('aria-hidden', 'true');
+function deactivateNvidiaTab() {
+  nvidiaActive = false;
   stopNvidiaCountdown();
-}
-
-function switchNvidiaTab(tab) {
-  const tabCards = document.getElementById('nvidia-tab-cards');
-  const tabSettings = document.getElementById('nvidia-tab-settings');
-  const paneCards = document.getElementById('nvidia-pane-cards');
-  const paneSettings = document.getElementById('nvidia-pane-settings');
-
-  if (tab === 'settings') {
-    tabCards?.classList.remove('active');
-    tabCards?.setAttribute('aria-selected', 'false');
-    tabSettings?.classList.add('active');
-    tabSettings?.setAttribute('aria-selected', 'true');
-    paneCards?.classList.add('hidden');
-    paneSettings?.classList.remove('hidden');
-  } else {
-    tabSettings?.classList.remove('active');
-    tabSettings?.setAttribute('aria-selected', 'false');
-    tabCards?.classList.add('active');
-    tabCards?.setAttribute('aria-selected', 'true');
-    paneSettings?.classList.add('hidden');
-    paneCards?.classList.remove('hidden');
-  }
 }
 
 async function loadNvidiaConfig() {
@@ -845,19 +859,12 @@ async function loadNvidiaConfig() {
     nvidiaState.poller = data.poller || {};
 
     const cfg = nvidiaState.config;
-    const enabledInput = document.getElementById('nvidia-enabled-input');
-    const webhookInput = document.getElementById('nvidia-webhook-input');
-    const soundInput = document.getElementById('nvidia-sound-input');
-    const autoOpenInput = document.getElementById('nvidia-auto-open-input');
-    const apiAlarmInput = document.getElementById('nvidia-api-alarm-input');
-    const localeSelect = document.getElementById('nvidia-locale-select');
-
-    if (enabledInput) enabledInput.checked = Boolean(cfg.enabled);
-    if (webhookInput) webhookInput.value = cfg.discordWebhookUrl || '';
-    if (soundInput) soundInput.checked = cfg.soundEnabled !== false;
-    if (autoOpenInput) autoOpenInput.checked = Boolean(cfg.autoOpenShop);
-    if (apiAlarmInput) apiAlarmInput.checked = Boolean(cfg.apiAlarmEnabled);
-    if (localeSelect && cfg.locale) localeSelect.value = cfg.locale;
+    nv.enabled.checked = Boolean(cfg.enabled);
+    nv.webhook.value = cfg.discordWebhookUrl || '';
+    nv.sound.checked = cfg.soundEnabled !== false;
+    nv.autoOpen.checked = Boolean(cfg.autoOpenShop);
+    nv.apiAlarm.checked = Boolean(cfg.apiAlarmEnabled);
+    if (cfg.locale) nv.locale.value = cfg.locale;
 
     updateNvidiaPollerBadge();
   } catch (err) {
@@ -866,25 +873,21 @@ async function loadNvidiaConfig() {
 }
 
 function updateNvidiaPollerBadge() {
-  const badge = document.getElementById('nvidia-poller-badge');
+  const badge = nv.badge;
   if (!badge) return;
 
   const isRunning = Boolean(nvidiaState.config?.enabled);
   const feed = nvidiaState.poller?.feed || {};
   const healthy = feed.connected && feed.status === 'healthy' && !nvidiaState.poller?.lastError;
 
-  badge.className = 'section-badge';
   if (isRunning) {
     badge.textContent = nvidiaFeedLabel();
     badge.title = nvidiaState.poller?.lastError || '';
-    badge.style.background = healthy ? 'var(--green-soft)' : 'var(--bg-inset)';
-    badge.style.color = healthy ? 'var(--green)' : 'var(--accent)';
-    badge.style.borderColor = healthy ? 'var(--green)' : 'var(--accent)';
+    badge.variant = healthy ? 'success' : ['offline', 'stale', 'disconnected'].includes(feed.status) ? 'danger' : 'warning';
   } else {
-    badge.textContent = '⚪ Disabled';
-    badge.style.background = 'var(--bg-inset)';
-    badge.style.color = 'var(--text-tertiary)';
-    badge.style.borderColor = 'var(--border-light)';
+    badge.textContent = 'Disabled';
+    badge.title = '';
+    badge.variant = 'neutral';
   }
 }
 
@@ -892,61 +895,55 @@ function nvidiaFeedLabel() {
   const feed = nvidiaState.poller?.feed || {};
   const pct = Number.isFinite(feed.monitorHealthPercent) ? ` ${feed.monitorHealthPercent}%` : '';
   switch (feed.status) {
-    case 'healthy': return nvidiaState.poller?.lastError ? `🟠 Live (degraded cards)` : `🟢 Live${pct}`;
-    case 'source_degraded': return `🟠 Degraded${pct}`;
-    case 'offline': return '🔴 Monitor offline';
-    case 'stale': return '🔴 Feed stale';
-    case 'disconnected': return '🔴 Reconnecting';
+    case 'healthy': return nvidiaState.poller?.lastError ? 'Live (degraded cards)' : `Live${pct}`;
+    case 'source_degraded': return `Degraded${pct}`;
+    case 'offline': return 'Monitor offline';
+    case 'stale': return 'Feed stale';
+    case 'disconnected': return 'Reconnecting';
     case 'connecting':
-    case 'waiting': return '⏳ Connecting';
-    default: return '⏳ Starting';
+    case 'waiting': return 'Connecting';
+    default: return 'Starting';
   }
 }
 
-async function saveNvidiaSettingsForm(e) {
-  if (e) e.preventDefault();
-  const enabledInput = document.getElementById('nvidia-enabled-input');
-  const webhookInput = document.getElementById('nvidia-webhook-input');
-  const soundInput = document.getElementById('nvidia-sound-input');
-  const autoOpenInput = document.getElementById('nvidia-auto-open-input');
-  const apiAlarmInput = document.getElementById('nvidia-api-alarm-input');
-  const localeSelect = document.getElementById('nvidia-locale-select');
-
-  const payload = {
-    enabled: enabledInput?.checked ?? false,
-    discordWebhookUrl: webhookInput?.value?.trim() || '',
-    soundEnabled: soundInput?.checked ?? true,
-    autoOpenShop: autoOpenInput?.checked ?? false,
-    apiAlarmEnabled: apiAlarmInput?.checked ?? false,
-    locale: localeSelect?.value || 'sv-se'
+// Webhook and browser options are saved with the drawer's "Save changes";
+// the scheduler switch, region and per-card switches apply immediately.
+function collectNvidiaSettings() {
+  return {
+    enabled: nv.enabled.checked,
+    discordWebhookUrl: inputValue(nv.webhook),
+    soundEnabled: nv.sound.checked,
+    autoOpenShop: nv.autoOpen.checked,
+    apiAlarmEnabled: nv.apiAlarm.checked,
+    locale: nv.locale.value || 'sv-se'
   };
+}
 
-  try {
-    const res = await fetchJson('/api/nvidia/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+function nvidiaSettingsDirty() {
+  const cfg = nvidiaState.config;
+  if (!cfg) return false;
+  const next = collectNvidiaSettings();
+  return next.discordWebhookUrl !== (cfg.discordWebhookUrl || '')
+    || next.soundEnabled !== (cfg.soundEnabled !== false)
+    || next.autoOpenShop !== Boolean(cfg.autoOpenShop)
+    || next.apiAlarmEnabled !== Boolean(cfg.apiAlarmEnabled);
+}
 
-    if (!res?.ok) throw new Error(res?.error || 'Failed to save settings');
-
-    nvidiaState.config = res.config;
-    updateNvidiaPollerBadge();
-    showToast('NVIDIA scheduler settings saved successfully!', 'success');
-    switchNvidiaTab('cards');
-    await refreshNvidiaCards();
-  } catch (err) {
-    showToast(`Failed to save: ${err.message}`, 'error');
-  }
+async function saveNvidiaSettings() {
+  const res = await fetchJson('/api/nvidia/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(collectNvidiaSettings())
+  });
+  if (!res?.ok) throw new Error(res?.error || 'Failed to save NVIDIA settings');
+  nvidiaState.config = res.config;
+  updateNvidiaPollerBadge();
 }
 
 async function toggleNvidiaCardMonitor(cardKey, isChecked) {
   const currentMonitored = new Set(nvidiaState.config?.monitoredCards || ['5090', '5080', '5070']);
-  if (isChecked) {
-    currentMonitored.add(cardKey);
-  } else {
-    currentMonitored.delete(cardKey);
-  }
+  if (isChecked) currentMonitored.add(cardKey);
+  else currentMonitored.delete(cardKey);
 
   const monitoredCards = Array.from(currentMonitored);
   try {
@@ -965,17 +962,16 @@ async function toggleNvidiaCardMonitor(cardKey, isChecked) {
 }
 
 function updateMonitoredCountBadge() {
-  const badge = document.getElementById('nvidia-monitored-count');
-  if (!badge) return;
+  if (!nv.monitored) return;
   const count = nvidiaState.config?.monitoredCards?.length || 0;
-  badge.textContent = `${count} monitored`;
+  nv.monitored.textContent = `${count} monitored`;
 }
 
 // The server follows one locale's feed; changing the region saves it and reconnects.
 async function changeNvidiaLocale() {
-  const localeSelect = document.getElementById('nvidia-locale-select');
-  const locale = localeSelect?.value || 'sv-se';
-  if (nvidiaState.config?.locale === locale) return refreshNvidiaCards();
+  const locale = nv.locale.value || 'sv-se';
+  if (!nvidiaState.config) return;
+  if (nvidiaState.config.locale === locale) return refreshNvidiaCards();
   try {
     const res = await fetchJson('/api/nvidia/config', {
       method: 'POST',
@@ -990,12 +986,9 @@ async function changeNvidiaLocale() {
 }
 
 async function refreshNvidiaCards({ force = false } = {}) {
-  const container = document.getElementById('nvidia-cards-container');
-  const lastCheckEl = document.getElementById('nvidia-last-check');
-  const refreshBtn = document.getElementById('nvidia-refresh-btn');
+  const container = nv.cards;
   if (!container) return;
-
-  if (refreshBtn) refreshBtn.disabled = true;
+  nv.refresh.loading = true;
 
   try {
     // Served from the server's live-feed state; force=true reconnects a dropped feed.
@@ -1008,30 +1001,24 @@ async function refreshNvidiaCards({ force = false } = {}) {
     if (res.poller) nvidiaState.poller = res.poller;
     updateNvidiaPollerBadge();
 
-    if (lastCheckEl) {
-      lastCheckEl.textContent = res.checkedAt
-        ? `Last feed packet: ${new Date(res.checkedAt).toLocaleTimeString('sv-SE')}`
-        : 'No feed data yet';
-    }
+    nv.lastCheck.textContent = res.checkedAt
+      ? `Last feed packet ${new Date(res.checkedAt).toLocaleTimeString('sv-SE')}`
+      : 'No feed data yet';
 
     updateMonitoredCountBadge();
 
     const monitoredSet = new Set(nvidiaState.config?.monitoredCards || ['5090', '5080', '5070']);
 
-    // Check for newly in-stock cards
+    // Newly in-stock monitored cards: chime, optional auto-open, toast.
     for (const card of res.cards) {
       const isMonitored = monitoredSet.has(card.cardKey);
       if (card.available && isMonitored && !nvidiaState.knownInStock.has(card.cardKey)) {
         nvidiaState.knownInStock.add(card.cardKey);
-        // Play client chime
-        if (nvidiaState.config?.soundEnabled !== false) {
-          playNvidiaChime();
-        }
-        // Auto open shop link
+        if (nvidiaState.config?.soundEnabled !== false) playNvidiaChime();
         if (nvidiaState.config?.autoOpenShop && card.product_url) {
           window.open(card.product_url, '_blank', 'noopener,noreferrer');
         }
-        showToast(`🎯 ${card.name} IS IN STOCK!`, 'success');
+        showToast(`${card.name} IS IN STOCK!`, 'success', 10000);
       } else if (!card.available) {
         nvidiaState.knownInStock.delete(card.cardKey);
       }
@@ -1040,87 +1027,56 @@ async function refreshNvidiaCards({ force = false } = {}) {
     container.innerHTML = res.cards.map(card => {
       const isAvailable = card.available;
       const isMonitored = monitoredSet.has(card.cardKey);
-      const priceStr = card.priceSek ? `${Number(card.priceSek).toLocaleString('sv-SE')} SEK` : `${Number(card.msrpSek).toLocaleString('sv-SE')} SEK`;
+      const priceStr = `${Number(card.priceSek || card.msrpSek).toLocaleString('sv-SE')} kr`;
       const buyUrl = isAvailable && card.product_url ? card.product_url : card.store_url;
-      const svgThumb = `/images/gpu/${card.cardKey.toLowerCase()}.svg`;
+      const svgThumb = `/images/gpu/${String(card.cardKey).toLowerCase()}.svg`;
+      const feedOk = Boolean(card.api_reachable);
 
       return `
-        <div class="source-card" style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--bg-page); border:1px solid ${isAvailable ? 'var(--green)' : 'var(--border-light)'}; border-radius:var(--radius-md); gap:12px; ${isAvailable ? 'box-shadow: 0 0 10px var(--green-soft);' : ''}">
-          <!-- Left: Listen Toggle + GPU Thumbnail + Name & Info -->
-          <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:0;">
-            <!-- Listen toggle switch -->
-            <label class="toggle-switch" title="${isMonitored ? 'Listening (monitored by scheduler)' : 'Muted (not monitored)'}">
-              <input type="checkbox" class="nvidia-card-toggle" data-card="${escapeHtml(card.cardKey)}" ${isMonitored ? 'checked' : ''} />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            </label>
-
-            <!-- Crisp GPU Thumbnail -->
-            <div style="width:48px; height:48px; border-radius:var(--radius-sm); background:var(--bg-surface); border:1px solid var(--border-light); display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden;">
-              <img src="${escapeHtml(svgThumb)}" alt="${escapeHtml(card.name)}" style="width:100%; height:100%; object-fit:contain; display:block;" onerror="this.src='${escapeHtml(svgThumb)}'" />
-            </div>
-
-            <!-- Details -->
-            <div style="min-width:0; flex:1;">
-              <div style="display:flex; align-items:center; gap:6px;">
-                <span style="font-weight:600; font-size:13.5px; color:var(--text-primary);">${escapeHtml(card.fullName || card.name)}</span>
-                <span class="section-badge" style="font-size:10px; padding:1px 5px;">FE</span>
-              </div>
-              <div style="font-size:11.5px; color:var(--text-tertiary); display:flex; align-items:center; gap:8px; margin-top:2px; flex-wrap:wrap;">
-                <span>SKU: <code style="font-family:monospace; font-size:11px; background:var(--bg-inset); padding:1px 4px; border-radius:3px;">${escapeHtml(card.sku || '—')}</code></span>
-                <span>MSRP: ${Number(card.msrpSek).toLocaleString('sv-SE')} SEK</span>
-                <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};" title="${card.api_reachable ? 'Live feed reports a fresh, healthy check' : escapeHtml(card.api_error || 'Feed unavailable')}">
-                  <span style="width:6px; height:6px; border-radius:50%; background:${card.api_reachable ? 'var(--green)' : 'var(--accent)'};"></span>
-                  ${card.api_reachable ? 'Live' : escapeHtml(card.api_error || 'Feed error')}
-                </span>
-              </div>
+        <div class="nv-card${isAvailable ? ' in-stock' : ''}">
+          <sl-switch class="nvidia-card-toggle" data-card="${escapeHtml(card.cardKey)}" ${isMonitored ? 'checked' : ''}
+            title="${isMonitored ? 'Listening (monitored by scheduler)' : 'Muted (not monitored)'}"
+            aria-label="Monitor ${escapeHtml(card.name)}"></sl-switch>
+          <img class="nv-thumb" src="${escapeHtml(svgThumb)}" alt="" />
+          <div class="nv-info">
+            <div class="nv-name">${escapeHtml(card.fullName || card.name)} <sl-badge variant="neutral" pill>FE</sl-badge></div>
+            <div class="nv-sub">
+              <span>SKU <code>${escapeHtml(card.sku || '—')}</code></span>
+              <span>MSRP ${Number(card.msrpSek).toLocaleString('sv-SE')} kr</span>
+              <span class="feed ${feedOk ? 'ok' : 'bad'}" title="${feedOk ? 'Live feed reports a fresh, healthy check' : escapeHtml(card.api_error || 'Feed unavailable')}">${feedOk ? 'Live' : escapeHtml(card.api_error || 'Feed error')}</span>
             </div>
           </div>
-
-          <!-- Right: Price, Stock Badge & Action -->
-          <div style="display:flex; align-items:center; gap:12px; flex-shrink:0;">
-            <div style="text-align:right;">
-              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary); font-variant-numeric:tabular-nums;">
-                ${priceStr}
-              </div>
-              <div style="margin-top:2px;">
-                ${isAvailable
-                  ? `<span class="badge badge-hot" style="font-size:10px; padding:2px 6px;">IN STOCK</span>`
-                  : `<span class="section-badge" style="font-size:10px; padding:2px 6px;">Out of stock</span>`
-                }
-              </div>
-            </div>
-
-            ${buyUrl ? `
-              <a href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" class="${isAvailable ? 'save-btn' : 'ghost-btn'}" style="text-decoration:none; padding:${isAvailable ? '6px 14px' : '5px 12px'}; font-size:12px; white-space:nowrap; display:inline-flex; align-items:center; gap:4px; ${isAvailable ? 'background:var(--green); border-radius:var(--radius-sm);' : ''}">
-                ${isAvailable ? 'Buy Now 🛒' : 'View Store ↗'}
-              </a>
-            ` : ''}
+          <div class="nv-right">
+            <span class="nv-price">${priceStr}</span>
+            ${isAvailable
+              ? '<sl-badge variant="success" pill>In stock</sl-badge>'
+              : '<sl-badge variant="neutral" pill>Out of stock</sl-badge>'}
+            ${buyUrl ? `<sl-button size="small" href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" variant="${isAvailable ? 'success' : 'default'}">
+                ${isAvailable ? '<sl-icon slot="prefix" name="cart3"></sl-icon>Buy now' : 'Store<sl-icon slot="suffix" name="box-arrow-up-right"></sl-icon>'}
+              </sl-button>` : ''}
           </div>
         </div>
       `;
     }).join('');
 
-    // Attach checkbox listeners
-    container.querySelectorAll('.nvidia-card-toggle').forEach(chk => {
-      chk.addEventListener('change', (e) => {
-        const cardKey = e.target.dataset.card;
-        toggleNvidiaCardMonitor(cardKey, e.target.checked);
+    container.querySelectorAll('.nvidia-card-toggle').forEach(sw => {
+      sw.addEventListener('sl-change', (e) => {
+        toggleNvidiaCardMonitor(e.target.dataset.card, e.target.checked);
       });
     });
-
   } catch (err) {
-    container.innerHTML = `<div style="text-align:center; padding:1.5rem; color:#ef4444;">Error checking inventory: ${escapeHtml(err.message)}</div>`;
+    container.innerHTML = `<p class="centered error-text">Error checking inventory: ${escapeHtml(err.message)}</p>`;
   } finally {
-    if (refreshBtn) refreshBtn.disabled = false;
+    nv.refresh.loading = false;
   }
 }
 
-// While the modal is open, re-read the server's feed state every 10 s.
+// While the NVIDIA tab is open, re-read the server's feed state every 10 s.
 function startNvidiaCountdown() {
   stopNvidiaCountdown();
-  const cdEl = document.getElementById('nvidia-countdown');
   const tick = () => {
-    if (cdEl) cdEl.textContent = nvidiaState.config?.enabled ? nvidiaFeedLabel() : '';
+    nv.countdown.textContent = nvidiaState.config?.enabled ? nvidiaFeedLabel() : '';
+    nv.countdown.dataset.variant = nv.badge?.variant ?? 'neutral';
   };
   tick();
   nvidiaState.countdownTimer = setInterval(async () => {
@@ -1142,67 +1098,91 @@ function renderCategoryFilter(categories) {
     state.category = '';
     savePrefs();
   }
-  const options = ['<option value="">All categories</option>']
-    .concat(categories.map(c => {
-      const selected = c.key === state.category ? ' selected' : '';
-      return `<option value="${escapeHtml(c.key)}"${selected}>${escapeHtml(c.name)} (${c.count})</option>`;
-    })).join('');
-  el.categoryFilter.innerHTML = options;
+  el.categoryFilter.innerHTML = [`<sl-option value="${ALL_OPTION}">All categories</sl-option>`]
+    .concat(categories.map(c => `<sl-option value="${escapeHtml(toOptionValue(c.key))}">${escapeHtml(c.name)} (${c.count})</sl-option>`))
+    .join('');
+  el.categoryFilter.value = toOptionValue(state.category);
 }
 
 function renderStoreFilter(sources) {
   if (!el.storeFilter || !Array.isArray(sources)) return;
-  const options = ['<option value="">All stores</option>']
+  el.storeFilter.innerHTML = [`<sl-option value="${ALL_OPTION}">All stores</sl-option>`]
     .concat(sources.map(s => {
-      const selected = s.id === state.store ? ' selected' : '';
       const count = Number.isFinite(s.count) ? ` (${s.count})` : '';
-      return `<option value="${escapeHtml(s.id)}"${selected}>${escapeHtml(s.label)}${count}</option>`;
+      return `<sl-option value="${escapeHtml(toOptionValue(s.id))}">${escapeHtml(s.label)}${count}</sl-option>`;
     })).join('');
-  el.storeFilter.innerHTML = options;
+  el.storeFilter.value = toOptionValue(state.store);
 }
 
 function renderCampaignFilter(campaigns) {
   if (!el.campaignFilter || !Array.isArray(campaigns)) return;
-  const options = ['<option value="">All conditions</option>']
-    .concat(campaigns.map(({ label, value }) => {
-      const selected = value === state.campaign ? ' selected' : '';
-      return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
-    })).join('');
-  el.campaignFilter.innerHTML = options;
+  el.campaignFilter.innerHTML = [`<sl-option value="${ALL_OPTION}">All conditions</sl-option>`]
+    .concat(campaigns.map(({ label, value }) => `<sl-option value="${escapeHtml(toOptionValue(value))}">${escapeHtml(label)}</sl-option>`))
+    .join('');
+  el.campaignFilter.value = toOptionValue(state.campaign);
   el.campaignFilterGroup?.classList.toggle('hidden', campaigns.length === 0);
 }
 
+// Active filters as removable tags under the toolbar: one tap clears one.
+const FILTER_TAG_CLEARERS = {
+  search: () => { el.searchInput.value = ''; },
+  category: () => { el.categoryFilter.value = ALL_OPTION; },
+  store: () => { el.storeFilter.value = ALL_OPTION; },
+  campaign: () => { el.campaignFilter.value = ALL_OPTION; },
+  minDiscountPercent: () => { el.minDiscountFilter.value = ''; },
+  minPriceSek: () => { el.minPriceFilter.value = ''; },
+  maxPriceSek: () => { el.maxPriceFilter.value = ''; },
+  newOnly: () => { el.newOnly.checked = false; },
+  discountedOnly: () => { el.discountedOnly.checked = false; },
+  referenceOnly: () => { el.referenceOnly.checked = false; }
+};
+
 function renderActiveFilterTags() {
   const tags = [];
-  if (state.search) tags.push(`Search: ${state.search}`);
+  if (state.search) tags.push(['search', `“${state.search}”`]);
   if (state.category) {
     const cat = state.categories.find(c => c.key === state.category);
-    tags.push(`Category: ${cat?.name ?? state.category}`);
+    tags.push(['category', cat?.name ?? state.category]);
   }
   if (state.store) {
     const store = (state.sources ?? []).find(s => s.id === state.store);
-    tags.push(`Store: ${store?.label ?? state.store}`);
+    tags.push(['store', store?.label ?? state.store]);
   }
-  if (state.minDiscountPercent) tags.push(`Min discount: ${state.minDiscountPercent}%`);
-  if (state.minPriceSek) tags.push(`Min: ${formatSek(Number(state.minPriceSek))}`);
-  if (state.maxPriceSek) tags.push(`Max: ${formatSek(Number(state.maxPriceSek))}`);
+  if (state.campaign) tags.push(['campaign', `Condition: ${state.campaign}`]);
+  if (state.minDiscountPercent) tags.push(['minDiscountPercent', `≥ ${state.minDiscountPercent}% off`]);
+  if (state.minPriceSek) tags.push(['minPriceSek', `Min ${formatSek(Number(state.minPriceSek))}`]);
+  if (state.maxPriceSek) tags.push(['maxPriceSek', `Max ${formatSek(Number(state.maxPriceSek))}`]);
+  // Presets already show these; only tag them when combined in the sheet.
+  if (state.activePreset === '') {
+    if (state.newOnly) tags.push(['newOnly', 'New only']);
+    if (state.discountedOnly) tags.push(['discountedOnly', 'Discounted']);
+    if (state.referenceOnly) tags.push(['referenceOnly', 'Matched price']);
+  }
 
-  el.activeFilterTags.innerHTML = tags.map(t => `<span class="filter-tag">${escapeHtml(t)}</span>`).join('');
+  el.activeFilterTags.innerHTML = tags
+    .map(([key, text]) => `<sl-tag size="small" pill removable data-clear="${key}">${escapeHtml(text)}</sl-tag>`)
+    .join('');
+  for (const tag of el.activeFilterTags.querySelectorAll('sl-tag')) {
+    tag.addEventListener('sl-remove', () => {
+      FILTER_TAG_CLEARERS[tag.dataset.clear]?.();
+      updateFilters();
+    });
+  }
   syncFilterBadge();
 }
 
 // ── FILTER LOGIC ────────────────────────────────────────────────
 function applyCurrentFilters() {
-  state.search = el.searchInput.value.trim();
-  state.category = el.categoryFilter.value;
-  state.store = el.storeFilter?.value ?? '';
-  state.campaign = el.campaignFilter?.value ?? '';
+  state.search = inputValue(el.searchInput);
+  state.category = fromOptionValue(el.categoryFilter.value);
+  state.store = fromOptionValue(el.storeFilter?.value);
+  state.campaign = fromOptionValue(el.campaignFilter?.value);
   state.discountedOnly = el.discountedOnly.checked;
   state.newOnly = el.newOnly.checked;
   state.referenceOnly = el.referenceOnly.checked;
-  state.minDiscountPercent = el.minDiscountFilter.value.trim();
-  state.minPriceSek = el.minPriceFilter.value.trim();
-  state.maxPriceSek = el.maxPriceFilter.value.trim();
+  state.minDiscountPercent = inputValue(el.minDiscountFilter);
+  state.minPriceSek = inputValue(el.minPriceFilter);
+  state.maxPriceSek = inputValue(el.maxPriceFilter);
 
   // Determine active preset
   const presetMap = { new: state.newOnly, hot: state.hotOnly, discounted: state.discountedOnly, matched: state.referenceOnly, wishlist: state.wishlistOnly };
@@ -1228,9 +1208,9 @@ function resetFilters() {
   state.activePreset = 'all';
 
   el.searchInput.value = '';
-  el.categoryFilter.value = '';
-  if (el.storeFilter) el.storeFilter.value = '';
-  if (el.campaignFilter) el.campaignFilter.value = '';
+  el.categoryFilter.value = ALL_OPTION;
+  if (el.storeFilter) el.storeFilter.value = ALL_OPTION;
+  if (el.campaignFilter) el.campaignFilter.value = ALL_OPTION;
   el.discountedOnly.checked = false;
   el.newOnly.checked = false;
   el.referenceOnly.checked = false;
@@ -1261,11 +1241,16 @@ function updateFilters({ debounce = false } = {}) {
 // rarely changes, so re-fetching it per keystroke just adds latency.
 async function loadProducts() {
   const query = buildProductsQuery();
-  const response = await fetchJson(`/api/outlet-products${query}`);
-  latestProducts = response;
-  if (lastStatus) renderStats(lastStatus, response);
-  renderActiveFilterTags();
-  renderProducts(response);
+  el.productGrid.classList.add('is-loading');
+  try {
+    const response = await fetchJson(`/api/outlet-products${query}`);
+    latestProducts = response;
+    if (lastStatus) renderStats(lastStatus, response);
+    renderActiveFilterTags();
+    renderProducts(response);
+  } finally {
+    el.productGrid.classList.remove('is-loading');
+  }
 }
 
 async function loadDashboard() {
@@ -1282,7 +1267,6 @@ async function loadDashboard() {
 
   if (state.category && !state.categories.some(c => c.key === state.category)) {
     state.category = '';
-    el.categoryFilter.value = '';
     savePrefs();
   }
 
@@ -1290,7 +1274,7 @@ async function loadDashboard() {
   const response = await fetchJson(`/api/outlet-products${query}`);
   latestProducts = response;
 
-  renderCategoryFilter(categories);
+  renderCategoryFilter(categories ?? []);
   renderStoreFilter(outletSources ?? []);
   renderCampaignFilter(outletCampaigns ?? []);
   renderElgigantenBlock(status.elgigantenBlock);
@@ -1300,22 +1284,32 @@ async function loadDashboard() {
   renderProducts(response);
 }
 
+// ── SHEETS: placement follows the screen size ───────────────────
+function placeSheet(drawer) {
+  drawer.placement = phoneQuery.matches ? 'bottom' : 'end';
+}
+
 // ── SETTINGS DRAWER ─────────────────────────────────────────────
-function openDrawer() {
-  el.settingsDrawer.classList.remove('hidden');
-  el.settingsOverlay.classList.remove('hidden');
-  el.settingsOverlay.setAttribute('aria-hidden', 'false');
-  document.body.style.overflow = 'hidden';
-  loadDrawerData();
-  startHotlistStatusPolling();
+async function openDrawer(tab) {
+  placeSheet(el.settingsDrawer);
+  if (tab) {
+    await el.settingsTabs.updateComplete;
+    el.settingsTabs.show(tab);
+  }
+  if (!el.settingsDrawer.open) {
+    el.settingsDrawer.show();
+    loadDrawerData();
+    startHotlistStatusPolling();
+  }
+  if (activeSettingsTab() === 'nvidia') activateNvidiaTab();
 }
 
 function closeDrawer() {
-  el.settingsDrawer.classList.add('hidden');
-  el.settingsOverlay.classList.add('hidden');
-  el.settingsOverlay.setAttribute('aria-hidden', 'true');
-  document.body.style.overflow = '';
-  stopHotlistStatusPolling();
+  el.settingsDrawer.hide();
+}
+
+function activeSettingsTab() {
+  return el.settingsTabs.querySelector('sl-tab[active]')?.panel ?? 'hotlist';
 }
 
 function loadDrawerData() {
@@ -1323,6 +1317,17 @@ function loadDrawerData() {
   // Komplett demo watcher. Both load independently; a failure hides its tab.
   loadHotlist();
   loadKomplettDemo();
+}
+
+function hideSettingsTab(name) {
+  const tab = el.settingsTabs.querySelector(`sl-tab[panel="${name}"]`);
+  const panel = el.settingsTabs.querySelector(`sl-tab-panel[name="${name}"]`);
+  if (tab) tab.hidden = true;
+  if (panel) panel.hidden = true;
+  if (activeSettingsTab() === name) {
+    const next = el.settingsTabs.querySelector('sl-tab:not([hidden])');
+    if (next) el.settingsTabs.show(next.panel);
+  }
 }
 
 // ── CHIP INPUT (hotlist categories, brands, keywords) ───────────
@@ -1334,12 +1339,12 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions, placehol
 
   function refreshChips() {
     chipList.innerHTML = items
-      .map(v => `<span class="chip" data-val="${escapeHtml(v)}">${escapeHtml(v)}<button type="button" class="chip-remove" tabindex="-1">×</button></span>`)
+      .map(v => `<sl-tag class="chip" size="medium" pill removable data-val="${escapeHtml(v)}">${escapeHtml(v)}</sl-tag>`)
       .join('');
-    chipList.querySelectorAll('.chip-remove').forEach(btn => {
-      btn.addEventListener('click', e => {
+    chipList.querySelectorAll('sl-tag').forEach(tag => {
+      tag.addEventListener('sl-remove', e => {
         e.stopPropagation();
-        const val = btn.closest('.chip').dataset.val;
+        const val = tag.dataset.val;
         const idx = items.indexOf(val);
         if (idx !== -1) items.splice(idx, 1);
         onRemove(val);
@@ -1347,6 +1352,7 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions, placehol
         if (dropdown) renderDropdown();
       });
     });
+    container.classList.toggle('has-chips', items.length > 0);
   }
 
   function addValue(val) {
@@ -1384,11 +1390,12 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions, placehol
     textInput.value = '';
   };
   if (freeText) {
-    const addBtn = document.createElement('button');
-    addBtn.type = 'button';
+    const addBtn = document.createElement('sl-button');
     addBtn.className = 'chip-add-btn';
+    addBtn.variant = 'primary';
+    addBtn.outline = true;
     addBtn.textContent = 'Add';
-    // mousedown/pointerdown + preventDefault keeps focus (and the keyboard) on the input.
+    // pointerdown + preventDefault keeps focus (and the keyboard) on the input.
     addBtn.addEventListener('pointerdown', e => e.preventDefault());
     addBtn.addEventListener('click', () => { commitTyped(); textInput.focus(); });
     textInput.insertAdjacentElement('afterend', addBtn);
@@ -1409,7 +1416,12 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions, placehol
 
   textInput.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addValue(textInput.value); if (dropdown) dropdown.classList.add('hidden'); }
-    else if (e.key === 'Escape') { if (dropdown) dropdown.classList.add('hidden'); textInput.blur(); }
+    else if (e.key === 'Escape') {
+      // Close the suggestion list without also closing the whole drawer.
+      if (dropdown && !dropdown.classList.contains('hidden')) e.stopPropagation();
+      if (dropdown) dropdown.classList.add('hidden');
+      textInput.blur();
+    }
     else if (e.key === 'Backspace' && !textInput.value && items.length) { const last = items[items.length - 1]; items.splice(items.length - 1, 1); onRemove(last); refreshChips(); }
   });
 
@@ -1432,6 +1444,8 @@ function wireChipInput({ container, items, onAdd, onRemove, allOptions, placehol
 let hotlistConfig = null;
 let hotlistCatalog = { categories: [], brands: [] };
 let hotlistStatusTimer = null;
+// Which watch groups are expanded, so a re-render keeps them open.
+const hotlistOpenGroups = new Set();
 
 function relativeTime(iso, { assumePast = false } = {}) {
   if (!iso) return null;
@@ -1448,33 +1462,37 @@ function relativeTime(iso, { assumePast = false } = {}) {
   return deltaMs >= 0 ? `in ${text}` : `${text} ago`;
 }
 
+function statusCardHtml({ stateClass, stateLabel, meta, stats, error, notes }) {
+  return `
+    <div class="status-head">
+      <span class="status-dot ${stateClass}"></span>
+      <strong>${escapeHtml(stateLabel)}</strong>
+      ${meta ? `<span class="status-meta">${escapeHtml(meta)}</span>` : ''}
+    </div>
+    <dl class="status-grid">
+      ${stats.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`).join('')}
+    </dl>
+    ${error ? `<p class="status-error">${escapeHtml(error)}</p>` : ''}
+    ${(notes ?? []).map((note) => `<p class="status-note">${escapeHtml(note)}</p>`).join('')}`;
+}
+
 function renderHotlistStatus(status) {
   if (!el.hotlistStatus) return;
   if (!status) { el.hotlistStatus.innerHTML = ''; return; }
 
-  const stateClass = status.lastError ? 'error' : status.enabled ? 'ok' : 'idle';
-  const stateLabel = status.lastError
-    ? 'Failing'
-    : !status.enabled ? 'Paused' : status.running ? 'Polling…' : 'Watching';
-
-  const stats = [
-    ['Deals tracked', status.lastCount ?? '—'],
-    ['Last poll', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
-    ['Next poll', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
-    ['Polls', status.pollCount ?? 0]
-  ];
-
-  el.hotlistStatus.innerHTML = `
-    <div class="hotlist-status-head">
-      <span class="hotlist-dot ${stateClass}"></span>
-      <strong>${escapeHtml(stateLabel)}</strong>
-      ${status.lastDurationMs != null ? `<span class="hotlist-status-meta">${status.lastDurationMs} ms/poll</span>` : ''}
-    </div>
-    <div class="hotlist-status-grid">
-      ${stats.map(([k, v]) => `<div><span>${escapeHtml(k)}</span><strong>${escapeHtml(String(v))}</strong></div>`).join('')}
-    </div>
-    ${status.lastError ? `<p class="hotlist-status-error">${escapeHtml(status.lastError)}</p>` : ''}
-    ${status.lastNewListings ? `<p class="hotlist-status-note">${status.lastNewListings} new listing(s) on the last poll.</p>` : ''}`;
+  el.hotlistStatus.innerHTML = statusCardHtml({
+    stateClass: status.lastError ? 'error' : status.enabled ? 'ok' : 'idle',
+    stateLabel: status.lastError ? 'Failing' : !status.enabled ? 'Paused' : status.running ? 'Polling…' : 'Watching',
+    meta: status.lastDurationMs != null ? `${status.lastDurationMs} ms/poll` : '',
+    stats: [
+      ['Deals tracked', status.lastCount ?? '—'],
+      ['Last poll', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
+      ['Next poll', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
+      ['Polls', status.pollCount ?? 0]
+    ],
+    error: status.lastError,
+    notes: status.lastNewListings ? [`${status.lastNewListings} new listing(s) on the last poll.`] : []
+  });
 }
 
 function createEmptyHotlistGroup() {
@@ -1494,9 +1512,30 @@ function createEmptyHotlistGroup() {
   };
 }
 
+function chipFieldHtml({ id, label, hint, placeholder }) {
+  return `
+    <div class="chip-field">
+      <span class="field-label">${escapeHtml(label)} <span class="field-hint-inline">${escapeHtml(hint)}</span></span>
+      <div class="chip-input-wrap" id="${id}">
+        <div class="chip-list"></div>
+        <div class="chip-entry"><input type="text" class="chip-text-input" placeholder="${escapeHtml(placeholder)}" autocomplete="off" autocapitalize="off" /></div>
+        <ul class="kw-cat-dropdown hidden"></ul>
+      </div>
+    </div>`;
+}
+
+function hotlistGroupSummary(group) {
+  const parts = [];
+  if (group.keywords.length) parts.push(`${group.keywords.length} keyword${group.keywords.length === 1 ? '' : 's'}`);
+  if (group.taxonomyNames.length) parts.push(`${group.taxonomyNames.length} categor${group.taxonomyNames.length === 1 ? 'y' : 'ies'}`);
+  if (group.brands.length) parts.push(`${group.brands.length} brand${group.brands.length === 1 ? '' : 's'}`);
+  return parts.join(' · ') || 'Nothing to match yet';
+}
+
 function createHotlistGroupElement(group) {
-  const li = document.createElement('li');
-  li.className = `rule-card hotlist-card${group.enabled ? '' : ' rule-disabled'}`;
+  const details = document.createElement('sl-details');
+  details.className = `watch${group.enabled ? '' : ' is-disabled'}`;
+  details.open = hotlistOpenGroups.has(group.id);
   const numeric = (value) => (value != null ? value : '');
   // Amazon.se was archived on 2026-10-31, so Elgiganten is the only store left.
   // A watch saved as Amazon-only would silently never run; say so and offer
@@ -1504,75 +1543,64 @@ function createHotlistGroupElement(group) {
   const storesKnown = Array.isArray(group.stores) && group.stores.length > 0;
   const watchesElgiganten = !storesKnown || group.stores.includes('elgiganten-hotlist') || group.stores.includes('all');
 
-  li.innerHTML = `
-    <div class="rule-header">
-      <label class="toggle-switch" title="${group.enabled ? 'Enabled' : 'Disabled'}">
-        <input type="checkbox" class="hl-enabled-cb" ${group.enabled ? 'checked' : ''} />
-        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-      </label>
-      <input type="text" class="rule-label-input hl-label-input" placeholder="Watch name (e.g. GPU flips)" value="${escapeHtml(group.label)}" />
-      <button type="button" class="rule-delete-btn hl-delete-btn" title="Delete">✕</button>
+  details.innerHTML = `
+    <div slot="summary" class="watch-summary">
+      <span class="watch-title">
+        <span class="watch-name"></span>
+        <sl-badge class="watch-off" variant="neutral" pill>Off</sl-badge>
+      </span>
+      <span class="watch-meta"></span>
     </div>
-    <div class="rule-body">
-      ${watchesElgiganten ? '' : '<p class="hl-legacy-note">This watch only targeted Amazon.se, which is no longer polled. <button type="button" class="ghost-btn hl-use-elgiganten">Watch on Elgiganten</button></p>'}
-      <div class="rule-row rule-row-two-col">
-        <div class="rule-field">
-          <label class="rule-field-label">Categories <span class="rule-hint">e.g. GPU, Laptop, SSD</span></label>
-          <div class="chip-input-wrap" id="hl-cat-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="Search categories…" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
-        </div>
-        <div class="rule-field">
-          <label class="rule-field-label">Brands <span class="rule-hint">e.g. Apple, Asus, Sony</span></label>
-          <div class="chip-input-wrap" id="hl-brand-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. Apple" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
-        </div>
+    <div class="watch-body">
+      ${watchesElgiganten ? '' : '<sl-alert variant="warning" open class="legacy-note">This watch only targeted Amazon.se, which is no longer polled. <sl-button size="small" class="hl-use-elgiganten">Watch on Elgiganten</sl-button></sl-alert>'}
+      <div class="watch-top">
+        <sl-switch class="hl-enabled-cb" ${group.enabled ? 'checked' : ''}>Enabled</sl-switch>
+        <sl-button class="hl-delete-btn" variant="danger" outline size="small"><sl-icon slot="prefix" name="trash3"></sl-icon>Delete</sl-button>
       </div>
-      <div class="rule-row">
-        <div class="rule-field">
-          <label class="rule-field-label">Keywords <span class="rule-hint">type, then tap Add (or comma/Enter)</span></label>
-          <div class="chip-input-wrap" id="hl-kw-${group.id}"><div class="chip-list"></div><input type="text" class="chip-text-input" placeholder="e.g. RTX 5090, MacBook M3, 990 PRO" autocomplete="off" /><ul class="kw-cat-dropdown hidden"></ul></div>
-          <label class="toggle-switch hl-strict-toggle" title="Require the keyword to appear in the product title">
-            <input type="checkbox" class="hl-strict-cb" ${group.strictKeywordMatch !== false ? 'checked' : ''} />
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            <span class="toggle-label">Exact title match</span>
-          </label>
-        </div>
+      <sl-input class="hl-label-input" label="Watch name" placeholder="e.g. GPU flips" value="${escapeHtml(group.label)}"></sl-input>
+      ${chipFieldHtml({ id: `hl-kw-${group.id}`, label: 'Keywords', hint: 'type, then tap Add (or comma/Enter)', placeholder: 'e.g. RTX 5090, MacBook M3' })}
+      <sl-switch class="hl-strict-cb" ${group.strictKeywordMatch !== false ? 'checked' : ''} help-text="Require the keyword to appear in the product title.">Exact title match</sl-switch>
+      ${chipFieldHtml({ id: `hl-cat-${group.id}`, label: 'Categories', hint: 'e.g. GPU, Laptop, SSD', placeholder: 'Search categories…' })}
+      ${chipFieldHtml({ id: `hl-brand-${group.id}`, label: 'Brands', hint: 'e.g. Apple, Asus, Sony', placeholder: 'e.g. Apple' })}
+      <div class="form-grid-3">
+        <sl-input class="hl-mindiscount" label="Min off %" type="number" inputmode="numeric" placeholder="default" min="0" max="99" step="1" value="${numeric(group.minDiscountPct)}"></sl-input>
+        <sl-input class="hl-minprice" label="Min price" type="number" inputmode="numeric" placeholder="any" min="0" step="100" value="${numeric(group.minPriceSek)}"></sl-input>
+        <sl-input class="hl-maxprice" label="Max price" type="number" inputmode="numeric" placeholder="any" min="0" step="100" value="${numeric(group.maxPriceSek)}"></sl-input>
       </div>
-      <div class="rule-row rule-row-three-col">
-        <div class="rule-field">
-          <label class="rule-field-label">Min discount %</label>
-          <input type="number" class="modal-input hl-mindiscount" placeholder="default" min="0" max="99" step="1" value="${numeric(group.minDiscountPct)}" />
-        </div>
-        <div class="rule-field">
-          <label class="rule-field-label">Min price</label>
-          <input type="number" class="modal-input hl-minprice" placeholder="any" min="0" step="100" value="${numeric(group.minPriceSek)}" />
-        </div>
-        <div class="rule-field">
-          <label class="rule-field-label">Max price</label>
-          <input type="number" class="modal-input hl-maxprice" placeholder="any" min="0" step="100" value="${numeric(group.maxPriceSek)}" />
-        </div>
-      </div>
-      ${group.taxonomyIds?.length ? `<p class="hl-legacy-note">Also matching legacy category ${group.taxonomyIds.map(escapeHtml).join(', ')}</p>` : ''}
+      ${group.taxonomyIds?.length ? `<p class="muted small">Also matching legacy category ${group.taxonomyIds.map(escapeHtml).join(', ')}</p>` : ''}
     </div>`;
 
-  li.querySelector('.hl-use-elgiganten')?.addEventListener('click', () => {
+  const syncSummary = () => {
+    details.querySelector('.watch-name').textContent = group.label || 'Untitled watch';
+    details.querySelector('.watch-meta').textContent = hotlistGroupSummary(group);
+    details.classList.toggle('is-disabled', !group.enabled);
+  };
+  syncSummary();
+
+  details.addEventListener('sl-show', (e) => { if (e.target === details) hotlistOpenGroups.add(group.id); });
+  details.addEventListener('sl-hide', (e) => { if (e.target === details) hotlistOpenGroups.delete(group.id); });
+
+  details.querySelector('.hl-use-elgiganten')?.addEventListener('click', () => {
     group.stores = [...new Set([...(group.stores ?? []), 'elgiganten-hotlist'])];
     renderHotlistGroups();
   });
 
-  li.querySelector('.hl-enabled-cb').addEventListener('change', (e) => {
+  details.querySelector('.hl-enabled-cb').addEventListener('sl-change', (e) => {
     group.enabled = e.target.checked;
-    li.classList.toggle('rule-disabled', !group.enabled);
+    syncSummary();
     renderHotlistCount();
   });
-  li.querySelector('.hl-label-input').addEventListener('input', (e) => { group.label = e.target.value; });
-  li.querySelector('.hl-strict-cb').addEventListener('change', (e) => { group.strictKeywordMatch = e.target.checked; });
-  li.querySelector('.hl-delete-btn').addEventListener('click', () => {
+  details.querySelector('.hl-label-input').addEventListener('sl-input', (e) => { group.label = e.target.value; syncSummary(); });
+  details.querySelector('.hl-strict-cb').addEventListener('sl-change', (e) => { group.strictKeywordMatch = e.target.checked; });
+  details.querySelector('.hl-delete-btn').addEventListener('click', () => {
     hotlistConfig.groups = hotlistConfig.groups.filter((g) => g.id !== group.id);
+    hotlistOpenGroups.delete(group.id);
     renderHotlistGroups();
   });
 
   const numberField = (selector, key) => {
-    li.querySelector(selector).addEventListener('input', (e) => {
-      const raw = e.target.value.trim();
+    details.querySelector(selector).addEventListener('sl-input', (e) => {
+      const raw = String(e.target.value ?? '').trim();
       const parsed = Number(raw);
       group[key] = raw === '' || !Number.isFinite(parsed) ? null : parsed;
     });
@@ -1582,25 +1610,26 @@ function createHotlistGroupElement(group) {
   numberField('.hl-maxprice', 'maxPriceSek');
 
   wireChipInput({
-    container: li.querySelector(`#hl-cat-${group.id}`),
+    container: details.querySelector(`#hl-cat-${group.id}`),
     items: group.taxonomyNames,
-    onAdd: () => {}, onRemove: () => {},
+    onAdd: syncSummary, onRemove: syncSummary,
     allOptions: hotlistCatalog.categories
   });
   wireChipInput({
-    container: li.querySelector(`#hl-brand-${group.id}`),
+    container: details.querySelector(`#hl-brand-${group.id}`),
     items: group.brands,
-    onAdd: () => {}, onRemove: () => {},
+    onAdd: syncSummary, onRemove: syncSummary,
     allOptions: hotlistCatalog.brands
   });
   wireChipInput({
-    container: li.querySelector(`#hl-kw-${group.id}`),
+    container: details.querySelector(`#hl-kw-${group.id}`),
     items: group.keywords,
-    onAdd: () => renderHotlistCount(), onRemove: () => renderHotlistCount(),
+    onAdd: () => { syncSummary(); renderHotlistCount(); },
+    onRemove: () => { syncSummary(); renderHotlistCount(); },
     allOptions: null
   });
 
-  return li;
+  return details;
 }
 
 function renderHotlistCount() {
@@ -1619,7 +1648,7 @@ function renderHotlistGroups() {
   renderHotlistCount();
 
   if (!hotlistConfig.groups.length) {
-    el.hotlistGroups.innerHTML = '<li class="rules-empty-state"><div class="rules-empty-icon">⚡</div><p class="rules-empty-title">Nothing on the hotlist</p><p class="rules-empty-sub">Add a watch to poll Elgiganten continuously for a category, brand or keyword.</p></li>';
+    el.hotlistGroups.innerHTML = '<div class="empty-mini"><sl-icon name="lightning-charge"></sl-icon><strong>Nothing on the hotlist</strong><span>Add a watch to poll Elgiganten continuously for a category, brand or keyword.</span></div>';
     return;
   }
   for (const group of hotlistConfig.groups) {
@@ -1630,9 +1659,9 @@ function renderHotlistGroups() {
 function renderHotlistForm() {
   if (!hotlistConfig) return;
   el.hotlistEnabled.checked = hotlistConfig.enabled !== false;
-  el.hotlistInterval.value = hotlistConfig.intervalSeconds;
-  el.hotlistJitter.value = hotlistConfig.jitterPct;
-  el.hotlistMinDiscount.value = hotlistConfig.minDiscountPct;
+  el.hotlistInterval.value = String(hotlistConfig.intervalSeconds ?? '');
+  el.hotlistJitter.value = String(hotlistConfig.jitterPct ?? '');
+  el.hotlistMinDiscount.value = String(hotlistConfig.minDiscountPct ?? '');
   if (el.hotlistWebhook) el.hotlistWebhook.value = hotlistConfig.webhookUrl ?? '';
   if (el.hotlistNotifyDrops) el.hotlistNotifyDrops.checked = hotlistConfig.notifyPriceDrops !== false;
   renderHotlistGroups();
@@ -1653,7 +1682,6 @@ async function loadHotlistCatalog() {
 }
 
 async function loadHotlist() {
-  const hotlistTab = document.querySelector('[data-tab="hotlist"]');
   try {
     const payload = await fetchJson('/api/hotlist');
     hotlistConfig = payload.config;
@@ -1662,8 +1690,7 @@ async function loadHotlist() {
     renderHotlistForm();
   } catch {
     // No hotlist source configured — hide the tab rather than show a dead one.
-    hotlistTab?.classList.add('hidden');
-    document.getElementById('tab-hotlist')?.classList.add('hidden');
+    hideSettingsTab('hotlist');
   }
 }
 
@@ -1689,15 +1716,16 @@ function stopHotlistStatusPolling() {
 
 function collectHotlistConfig() {
   const toNumber = (input, fallback) => {
-    const parsed = Number(input.value);
-    return Number.isFinite(parsed) ? parsed : fallback;
+    const raw = inputValue(input);
+    const parsed = Number(raw);
+    return raw !== '' && Number.isFinite(parsed) ? parsed : fallback;
   };
   return {
     enabled: el.hotlistEnabled.checked,
     intervalSeconds: toNumber(el.hotlistInterval, hotlistConfig.intervalSeconds),
     jitterPct: toNumber(el.hotlistJitter, hotlistConfig.jitterPct),
     minDiscountPct: toNumber(el.hotlistMinDiscount, hotlistConfig.minDiscountPct),
-    webhookUrl: el.hotlistWebhook ? el.hotlistWebhook.value.trim() : (hotlistConfig.webhookUrl ?? ''),
+    webhookUrl: el.hotlistWebhook ? inputValue(el.hotlistWebhook) : (hotlistConfig.webhookUrl ?? ''),
     notifyPriceDrops: el.hotlistNotifyDrops ? el.hotlistNotifyDrops.checked : hotlistConfig.notifyPriceDrops !== false,
     // `sources` (the per-store switches) is left out: the server merges over the
     // saved config, so the stored value is kept as is.
@@ -1710,8 +1738,11 @@ function collectHotlistConfig() {
 // the status line shows this month's Apify spend against the cap.
 
 let komplettDemo = null; // { config, catalog, limits, lastStatus }
+// Which category groups are expanded (null = not decided yet: open the ones in use).
+let kdOpenGroups = null;
 
 const KD_REASON_LABELS = { 'new': 'New', 'price-drop': 'Price drop', 'back-in-stock': 'Back in stock' };
+const KD_REASON_VARIANTS = { 'new': 'success', 'price-drop': 'primary', 'back-in-stock': 'warning' };
 
 function formatUsd(value, digits = 3) {
   return Number.isFinite(value) ? `$${value.toFixed(digits)}` : '—';
@@ -1723,20 +1754,6 @@ function renderKomplettDemoStatus(status) {
   if (komplettDemo) komplettDemo.lastStatus = status;
 
   const guard = status.costGuard ?? {};
-  const stateClass = status.lastError ? 'error' : status.enabled ? 'ok' : 'idle';
-  const stateLabel = status.lastError
-    ? 'Failing'
-    : !status.enabled ? 'Paused'
-      : status.running ? 'Checking…'
-        : guard.exhausted ? 'Monthly cap reached' : 'Watching';
-
-  const stats = [
-    ['Last check', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
-    ['Next check', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
-    ['Apify this month', `${formatUsd(guard.spentUsd)} / ${formatUsd(guard.maxMonthlyUsd, 2)}`],
-    ['Projected', `${formatUsd(guard.projectedMonthUsd, 2)}`]
-  ];
-
   const notes = [];
   if (guard.stretched && !guard.exhausted) {
     notes.push(`Cost guard: checking every ~${Math.round(status.effectiveIntervalMinutes)} min to stay under ${formatUsd(guard.maxMonthlyUsd, 2)} this month.`);
@@ -1746,17 +1763,23 @@ function renderKomplettDemoStatus(status) {
   if (status.lastAlertCount) notes.push(`${status.lastAlertCount} alert(s) on the last check.`);
   if (status.pendingAlerts) notes.push(`${status.pendingAlerts} Discord alert(s) waiting to be retried.`);
 
-  el.kdStatus.innerHTML = `
-    <div class="hotlist-status-head">
-      <span class="hotlist-dot ${stateClass}"></span>
-      <strong>${escapeHtml(stateLabel)}</strong>
-      <span class="hotlist-status-meta">${escapeHtml(`${status.categories?.length ?? 0} categories · ${status.trackedProducts ?? 0} tracked · ${status.pollCount ?? 0} checks`)}</span>
-    </div>
-    <div class="hotlist-status-grid">
-      ${stats.map(([k, v]) => `<div><span>${escapeHtml(k)}</span><strong>${escapeHtml(String(v))}</strong></div>`).join('')}
-    </div>
-    ${status.lastError ? `<p class="hotlist-status-error">${escapeHtml(status.lastError)}</p>` : ''}
-    ${notes.map((note) => `<p class="hotlist-status-note">${escapeHtml(note)}</p>`).join('')}`;
+  el.kdStatus.innerHTML = statusCardHtml({
+    stateClass: status.lastError ? 'error' : status.enabled ? 'ok' : 'idle',
+    stateLabel: status.lastError
+      ? 'Failing'
+      : !status.enabled ? 'Paused'
+        : status.running ? 'Checking…'
+          : guard.exhausted ? 'Monthly cap reached' : 'Watching',
+    meta: `${status.categories?.length ?? 0} categories · ${status.trackedProducts ?? 0} tracked · ${status.pollCount ?? 0} checks`,
+    stats: [
+      ['Last check', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
+      ['Next check', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
+      ['Apify this month', `${formatUsd(guard.spentUsd)} / ${formatUsd(guard.maxMonthlyUsd, 2)}`],
+      ['Projected', `${formatUsd(guard.projectedMonthUsd, 2)}`]
+    ],
+    error: status.lastError,
+    notes
+  });
 
   renderKomplettDemoFinds(status);
   renderKomplettDemoCategoryMeta(status);
@@ -1768,15 +1791,15 @@ function kdFindItem(entry, { reason = null } = {}) {
     ? `${formatSek(entry.priceSek)} <s>${formatSek(entry.previousPriceSek)}</s>`
     : formatSek(entry.priceSek);
   const tags = [
-    reason ? `<span class="kd-tag kd-tag-${escapeHtml(reason)}">${escapeHtml(KD_REASON_LABELS[reason] ?? reason)}</span>` : '',
-    reason && entry.delivered === false ? `<span class="kd-tag kd-tag-muted" title="${escapeHtml(entry.note ?? '')}">not sent</span>` : ''
+    reason ? `<sl-badge variant="${KD_REASON_VARIANTS[reason] ?? 'neutral'}" pill>${escapeHtml(KD_REASON_LABELS[reason] ?? reason)}</sl-badge>` : '',
+    reason && entry.delivered === false ? `<sl-badge variant="neutral" pill title="${escapeHtml(entry.note ?? '')}">not sent</sl-badge>` : ''
   ].join('');
   return `
-    <li class="kd-find">
-      ${entry.imageUrl ? `<img src="${escapeHtml(entry.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="kd-find-noimg"></span>'}
-      <div class="kd-find-body">
+    <li class="find">
+      ${entry.imageUrl ? `<img src="${escapeHtml(entry.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="find-noimg"></span>'}
+      <div class="find-body">
         <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.title)}</a>
-        <div class="kd-find-meta">
+        <div class="find-meta">
           <strong>${priceLine}</strong>
           <span>${escapeHtml(entry.categoryLabel ?? '')}</span>
           ${when ? `<span>${escapeHtml(when)}</span>` : ''}
@@ -1794,7 +1817,10 @@ function renderKomplettDemoFinds(status) {
   el.kdAlerts.classList.toggle('hidden', alerts.length === 0);
   el.kdFinds.innerHTML = finds.length
     ? finds.map((entry) => kdFindItem(entry)).join('')
-    : `<li class="kd-empty">${status?.categories?.length ? 'Nothing recorded yet. The first check records what is listed now, without alerts.' : 'Pick at least one category above.'}</li>`;
+    : `<li class="find-empty">${status?.categories?.length ? 'Nothing recorded yet. The first check records what is listed now, without alerts.' : 'Pick at least one category above.'}</li>`;
+  // Images from Komplett that fail (offline, moved) just disappear.
+  for (const img of el.kdAlerts.querySelectorAll('img')) img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'find-noimg' })), { once: true });
+  for (const img of el.kdFinds.querySelectorAll('img')) img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'find-noimg' })), { once: true });
 }
 
 function renderKomplettDemoCount() {
@@ -1810,8 +1836,9 @@ function renderKomplettDemoCategoryMeta(status) {
   const byId = new Map((status?.categories ?? []).map((c) => [c.id, c]));
   for (const meta of el.kdCategories.querySelectorAll('[data-kd-meta]')) {
     const info = byId.get(meta.dataset.kdMeta);
-    if (!info) { meta.textContent = ''; meta.title = ''; continue; }
+    if (!info) { meta.textContent = ''; meta.title = ''; meta.className = 'kd-cat-meta'; continue; }
     meta.textContent = info.lastError ? '⚠' : Number.isFinite(info.total) ? `${info.total}` : (info.seeded ? '' : 'new');
+    meta.className = `kd-cat-meta${info.lastError ? ' warn' : ''}`;
     meta.title = info.lastError
       ? info.lastError
       : Number.isFinite(info.total) ? `${info.total} demo products listed` : (info.seeded ? '' : 'Recorded silently on the next check');
@@ -1821,11 +1848,17 @@ function renderKomplettDemoCategoryMeta(status) {
 function syncKomplettDemoGroupBoxes() {
   if (!el.kdCategories || !komplettDemo) return;
   const selected = new Set(komplettDemo.config.categories);
-  for (const groupBox of el.kdCategories.querySelectorAll('input[data-kd-group]')) {
+  for (const groupBox of el.kdCategories.querySelectorAll('sl-checkbox[data-kd-group]')) {
     const group = komplettDemo.catalog.find((g) => g.group === groupBox.dataset.kdGroup);
     const picked = group ? group.categories.filter((c) => selected.has(c.id)).length : 0;
-    groupBox.checked = group ? picked === group.categories.length : false;
-    groupBox.indeterminate = picked > 0 && group && picked < group.categories.length;
+    const total = group?.categories.length ?? 0;
+    groupBox.checked = group ? picked === total : false;
+    groupBox.indeterminate = picked > 0 && picked < total;
+    const badge = el.kdCategories.querySelector(`[data-kd-group-count="${CSS.escape(groupBox.dataset.kdGroup)}"]`);
+    if (badge) {
+      badge.textContent = `${picked}/${total}`;
+      badge.variant = picked > 0 ? 'primary' : 'neutral';
+    }
   }
   renderKomplettDemoCount();
 }
@@ -1833,21 +1866,31 @@ function syncKomplettDemoGroupBoxes() {
 function renderKomplettDemoCategories() {
   if (!el.kdCategories || !komplettDemo) return;
   const selected = new Set(komplettDemo.config.categories);
+  if (!kdOpenGroups) {
+    kdOpenGroups = new Set(komplettDemo.catalog
+      .filter((g) => g.categories.some((c) => selected.has(c.id)))
+      .map((g) => g.group));
+  }
   el.kdCategories.innerHTML = komplettDemo.catalog.map((group) => `
-    <fieldset class="kd-group">
-      <legend class="kd-group-head">
-        <label><input type="checkbox" data-kd-group="${escapeHtml(group.group)}" /> ${escapeHtml(group.label)}</label>
-      </legend>
-      <div class="kd-cat-grid">
-        ${group.categories.map((category) => `
-          <label class="kd-cat">
-            <input type="checkbox" data-kd-cat="${escapeHtml(category.id)}" ${selected.has(category.id) ? 'checked' : ''} />
-            <span>${escapeHtml(category.label)}</span>
-            <a class="kd-cat-link" href="${escapeHtml(category.url)}" target="_blank" rel="noopener noreferrer" title="Open on Komplett">↗</a>
-            <span class="kd-cat-meta" data-kd-meta="${escapeHtml(category.id)}"></span>
-          </label>`).join('')}
+    <sl-details class="kd-group" data-kd-details="${escapeHtml(group.group)}" ${kdOpenGroups.has(group.group) ? 'open' : ''}>
+      <div slot="summary" class="kd-summary">
+        <span>${escapeHtml(group.label)}</span>
+        <sl-badge variant="neutral" pill data-kd-group-count="${escapeHtml(group.group)}"></sl-badge>
       </div>
-    </fieldset>`).join('');
+      ${group.categories.length > 1 ? `<sl-checkbox class="kd-all" data-kd-group="${escapeHtml(group.group)}">Select all</sl-checkbox>` : `<sl-checkbox class="kd-all hidden" data-kd-group="${escapeHtml(group.group)}"></sl-checkbox>`}
+      <div class="kd-cat-list">
+        ${group.categories.map((category) => `
+          <div class="kd-cat">
+            <sl-checkbox data-kd-cat="${escapeHtml(category.id)}" ${selected.has(category.id) ? 'checked' : ''}>${escapeHtml(category.label)}</sl-checkbox>
+            <span class="kd-cat-meta" data-kd-meta="${escapeHtml(category.id)}"></span>
+            <a class="kd-cat-link" href="${escapeHtml(category.url)}" target="_blank" rel="noopener noreferrer" title="Open on Komplett" aria-label="Open ${escapeHtml(category.label)} on Komplett"><sl-icon name="box-arrow-up-right"></sl-icon></a>
+          </div>`).join('')}
+      </div>
+    </sl-details>`).join('');
+  for (const details of el.kdCategories.querySelectorAll('sl-details')) {
+    details.addEventListener('sl-show', (e) => { if (e.target === details) kdOpenGroups.add(details.dataset.kdDetails); });
+    details.addEventListener('sl-hide', (e) => { if (e.target === details) kdOpenGroups.delete(details.dataset.kdDetails); });
+  }
   syncKomplettDemoGroupBoxes();
   renderKomplettDemoCategoryMeta(komplettDemo.lastStatus);
 }
@@ -1862,14 +1905,14 @@ function setKomplettDemoCategories(ids) {
 
 function onKomplettDemoCategoryChange(event) {
   const target = event.target;
-  if (!(target instanceof HTMLInputElement) || !komplettDemo) return;
+  if (target?.tagName !== 'SL-CHECKBOX' || !komplettDemo) return;
   const selected = new Set(komplettDemo.config.categories);
   if (target.dataset.kdGroup) {
     const group = komplettDemo.catalog.find((g) => g.group === target.dataset.kdGroup);
     for (const category of group?.categories ?? []) {
       if (target.checked) selected.add(category.id); else selected.delete(category.id);
     }
-    for (const box of el.kdCategories.querySelectorAll('input[data-kd-cat]')) {
+    for (const box of el.kdCategories.querySelectorAll('sl-checkbox[data-kd-cat]')) {
       if (group?.categories.some((c) => c.id === box.dataset.kdCat)) box.checked = target.checked;
     }
   } else if (target.dataset.kdCat) {
@@ -1885,25 +1928,23 @@ function renderKomplettDemoForm() {
   if (!komplettDemo) return;
   const cfg = komplettDemo.config;
   el.kdEnabled.checked = cfg.enabled === true;
-  el.kdInterval.value = cfg.intervalMinutes;
-  el.kdJitter.value = cfg.jitterPct;
-  el.kdMaxUsd.value = cfg.maxMonthlyUsd;
-  el.kdDropPct.value = cfg.notifyPriceDropPercent;
+  el.kdInterval.value = String(cfg.intervalMinutes ?? '');
+  el.kdJitter.value = String(cfg.jitterPct ?? '');
+  el.kdMaxUsd.value = String(cfg.maxMonthlyUsd ?? '');
+  el.kdDropPct.value = String(cfg.notifyPriceDropPercent ?? '');
   el.kdBackInStock.checked = cfg.notifyBackInStock !== false;
   el.kdWebhook.value = cfg.discordWebhookUrl ?? '';
   renderKomplettDemoCategories();
 }
 
 async function loadKomplettDemo() {
-  const tab = document.querySelector('[data-tab="komplett-demo"]');
   try {
     const payload = await fetchJson('/api/komplett-demo');
     komplettDemo = { config: payload.config, catalog: payload.catalog ?? [], limits: payload.limits ?? {}, lastStatus: payload.status };
     renderKomplettDemoForm();
     renderKomplettDemoStatus(payload.status);
   } catch {
-    tab?.classList.add('hidden');
-    document.getElementById('tab-komplett-demo')?.classList.add('hidden');
+    hideSettingsTab('komplett-demo');
   }
 }
 
@@ -1917,7 +1958,7 @@ async function refreshKomplettDemoStatus() {
 function collectKomplettDemoConfig() {
   const cfg = komplettDemo.config;
   const toNumber = (input, fallback) => {
-    const raw = String(input?.value ?? '').trim();
+    const raw = inputValue(input);
     const parsed = Number(raw);
     return raw !== '' && Number.isFinite(parsed) ? parsed : fallback;
   };
@@ -1929,14 +1970,15 @@ function collectKomplettDemoConfig() {
     maxMonthlyUsd: toNumber(el.kdMaxUsd, cfg.maxMonthlyUsd),
     notifyPriceDropPercent: toNumber(el.kdDropPct, cfg.notifyPriceDropPercent),
     notifyBackInStock: el.kdBackInStock.checked,
-    discordWebhookUrl: el.kdWebhook.value.trim()
+    discordWebhookUrl: inputValue(el.kdWebhook)
   };
 }
 
 // ── SAVE SETTINGS ───────────────────────────────────────────────
 async function saveAllSettings() {
-  el.saveSettingsBtn.disabled = true;
+  el.saveSettingsBtn.loading = true;
   el.drawerSaveStatus.textContent = 'Saving…';
+  el.drawerSaveStatus.className = 'save-status';
 
   try {
     // Save hotlist
@@ -1963,39 +2005,46 @@ async function saveAllSettings() {
       renderKomplettDemoStatus(payload.status);
     }
 
+    // NVIDIA webhook / browser options, only when changed
+    if (nvidiaSettingsDirty()) await saveNvidiaSettings();
+
     el.drawerSaveStatus.textContent = '✓ Saved';
+    el.drawerSaveStatus.className = 'save-status ok';
     setTimeout(() => { el.drawerSaveStatus.textContent = ''; }, 2500);
     // A deselected Komplett category leaves the listing straight away.
     loadDashboard().catch(() => {});
   } catch (err) {
-    el.drawerSaveStatus.textContent = `Error: ${err.message}`;
+    el.drawerSaveStatus.textContent = 'Save failed';
+    el.drawerSaveStatus.className = 'save-status error';
     showToast(`Save failed: ${err.message}`, 'error');
   } finally {
-    el.saveSettingsBtn.disabled = false;
+    el.saveSettingsBtn.loading = false;
   }
 }
 
 // ── EVENT LISTENERS ─────────────────────────────────────────────
 function bindEvents() {
-  // Search
-  el.searchInput.addEventListener('input', () => {
-    updateFilters({ debounce: true });
+  // Search (Shoelace fires sl-input on typing and on the clear button)
+  el.searchInput.addEventListener('sl-input', () => updateFilters({ debounce: true }));
+  el.searchInput.addEventListener('keydown', (e) => {
+    // The phone "Search" key: apply now and drop the keyboard.
+    if (e.key === 'Enter') { updateFilters(); el.searchInput.blur(); }
   });
 
   // Filter selects
-  el.categoryFilter.addEventListener('change', () => updateFilters());
-  el.storeFilter?.addEventListener('change', () => updateFilters());
-  el.campaignFilter?.addEventListener('change', () => updateFilters());
+  el.categoryFilter.addEventListener('sl-change', () => updateFilters());
+  el.storeFilter?.addEventListener('sl-change', () => updateFilters());
+  el.campaignFilter?.addEventListener('sl-change', () => updateFilters());
 
   // Filter checkboxes
-  el.newOnly.addEventListener('change', () => updateFilters());
-  el.discountedOnly.addEventListener('change', () => updateFilters());
-  el.referenceOnly.addEventListener('change', () => updateFilters());
+  el.newOnly.addEventListener('sl-change', () => updateFilters());
+  el.discountedOnly.addEventListener('sl-change', () => updateFilters());
+  el.referenceOnly.addEventListener('sl-change', () => updateFilters());
 
   // Filter inputs
-  el.minDiscountFilter.addEventListener('input', () => updateFilters({ debounce: true }));
-  el.minPriceFilter.addEventListener('input', () => updateFilters({ debounce: true }));
-  el.maxPriceFilter.addEventListener('input', () => updateFilters({ debounce: true }));
+  el.minDiscountFilter.addEventListener('sl-input', () => updateFilters({ debounce: true }));
+  el.minPriceFilter.addEventListener('sl-input', () => updateFilters({ debounce: true }));
+  el.maxPriceFilter.addEventListener('sl-input', () => updateFilters({ debounce: true }));
 
   // Clear filters
   el.clearFiltersBtn.addEventListener('click', () => { resetFilters(); loadProducts().catch(err => showToast(err.message, 'error')); });
@@ -2017,17 +2066,13 @@ function bindEvents() {
     });
   }
 
-  // Filter panel toggle
-  el.filterExpandBtn.addEventListener('click', () => {
-    state.filterPanelOpen = !state.filterPanelOpen;
-    el.filterPanel.classList.toggle('hidden', !state.filterPanelOpen);
-    el.filterExpandBtn.classList.toggle('active', state.filterPanelOpen);
-    document.getElementById('filter-bar').classList.toggle('panel-open', state.filterPanelOpen);
-  });
+  // Filters sheet
+  el.filterExpandBtn.addEventListener('click', () => { placeSheet(el.filterDrawer); el.filterDrawer.show(); });
+  el.filterDoneBtn.addEventListener('click', () => el.filterDrawer.hide());
 
   // Sort
-  el.sortSelect.addEventListener('change', () => {
-    const [col, dir] = el.sortSelect.value.split('-');
+  el.sortSelect.addEventListener('sl-change', () => {
+    const [col, dir] = String(el.sortSelect.value).split('-');
     state.sortBy = col;
     state.sortDirection = dir;
     state.currentPage = 1;
@@ -2040,21 +2085,20 @@ function bindEvents() {
   el.viewList.addEventListener('click', () => { state.viewMode = 'list'; syncViewMode(); savePrefs(); });
 
   // Settings drawer
-  el.settingsBtn.addEventListener('click', openDrawer);
-  el.drawerClose.addEventListener('click', closeDrawer);
-  el.settingsOverlay.addEventListener('click', closeDrawer);
-
-  // Drawer tabs
-  for (const tab of el.drawerTabs) {
-    tab.addEventListener('click', () => {
-      el.drawerTabs.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
-      tab.classList.add('active');
-      tab.setAttribute('aria-selected', 'true');
-      $$('#settings-drawer .drawer-tab-content').forEach(c => c.classList.add('hidden'));
-      const target = $(`#tab-${tab.dataset.tab}`);
-      if (target) target.classList.remove('hidden');
-    });
-  }
+  el.settingsBtn.addEventListener('click', () => openDrawer());
+  el.settingsDrawer.addEventListener('sl-after-hide', (e) => {
+    // Nested selects/details emit their own sl-*-hide events; only react to the drawer's.
+    if (e.target !== el.settingsDrawer) return;
+    stopHotlistStatusPolling();
+    deactivateNvidiaTab();
+  });
+  el.settingsTabs.addEventListener('sl-tab-show', (e) => {
+    // Each tab starts at its top, not wherever the previous one was scrolled to.
+    const body = el.settingsTabs.shadowRoot?.querySelector('.tab-group__body');
+    if (body) body.scrollTop = 0;
+    if (e.detail?.name === 'nvidia') { if (el.settingsDrawer.open) activateNvidiaTab(); }
+    else deactivateNvidiaTab();
+  });
 
   // Save settings
   el.saveSettingsBtn.addEventListener('click', saveAllSettings);
@@ -2062,13 +2106,15 @@ function bindEvents() {
   // Hotlist
   el.hotlistAddGroup?.addEventListener('click', () => {
     if (!hotlistConfig) return;
-    hotlistConfig.groups.push(createEmptyHotlistGroup());
+    const group = createEmptyHotlistGroup();
+    hotlistOpenGroups.add(group.id);
+    hotlistConfig.groups.push(group);
     renderHotlistGroups();
+    el.hotlistGroups.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
 
   el.hotlistPollNow?.addEventListener('click', async () => {
-    el.hotlistPollNow.disabled = true;
-    el.hotlistPollNow.textContent = 'Polling…';
+    el.hotlistPollNow.loading = true;
     try {
       const res = await fetchJson('/api/hotlist/poll', { method: 'POST' });
       renderHotlistStatus(res.status);
@@ -2078,21 +2124,19 @@ function bindEvents() {
       showToast(`Elgiganten Hotlist poll failed: ${err.message}`, 'error');
       refreshHotlistStatus();
     } finally {
-      el.hotlistPollNow.disabled = false;
-      el.hotlistPollNow.textContent = 'Poll now';
+      el.hotlistPollNow.loading = false;
     }
   });
 
   // Komplett demo watcher
-  el.kdCategories?.addEventListener('change', onKomplettDemoCategoryChange);
+  el.kdCategories?.addEventListener('sl-change', onKomplettDemoCategoryChange);
   el.kdPollNow?.addEventListener('click', async () => {
     if (!komplettDemo) return;
     if (!komplettDemo.config.categories.length) {
       showToast('Pick at least one Komplett demo category and save first.', 'error');
       return;
     }
-    el.kdPollNow.disabled = true;
-    el.kdPollNow.textContent = 'Checking…';
+    el.kdPollNow.loading = true;
     try {
       const res = await fetchJson('/api/komplett-demo/poll', { method: 'POST' });
       renderKomplettDemoStatus(res.status);
@@ -2103,15 +2147,13 @@ function bindEvents() {
       showToast(`Komplett demo check failed: ${err.message}`, 'error');
       refreshKomplettDemoStatus();
     } finally {
-      el.kdPollNow.disabled = false;
-      el.kdPollNow.textContent = 'Check now';
+      el.kdPollNow.loading = false;
     }
   });
 
   // Clear the Elgiganten cooldown after the user changes their egress IP.
   el.elgigantenBlockRetry?.addEventListener('click', async () => {
-    el.elgigantenBlockRetry.disabled = true;
-    el.elgigantenBlockRetry.textContent = 'Retrying…';
+    el.elgigantenBlockRetry.loading = true;
     try {
       const res = await fetchJson('/api/elgiganten/retry', { method: 'POST' });
       // Only hide the banner if the IP is actually unblocked now.
@@ -2121,43 +2163,25 @@ function bindEvents() {
     } catch (err) {
       showToast(`Retry failed: ${err.message}`, 'error');
     } finally {
-      el.elgigantenBlockRetry.disabled = false;
-      el.elgigantenBlockRetry.textContent = 'Retry now';
+      el.elgigantenBlockRetry.loading = false;
     }
   });
 
-  // Keyboard shortcuts
+  // "/" focuses search (Escape is handled by the Shoelace drawers/dialogs).
   document.addEventListener('keydown', e => {
-    if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+    const tag = document.activeElement?.tagName ?? '';
+    if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SL-INPUT', 'SL-TEXTAREA', 'SL-SELECT'].includes(tag)) {
       e.preventDefault();
       el.searchInput.focus();
     }
-    if (e.key === 'Escape') {
-      const phModal = document.getElementById('price-history-modal');
-      if (phModal && !phModal.classList.contains('hidden')) { closePriceHistoryModal(); return; }
-      const nvModal = document.getElementById('nvidia-modal');
-      if (nvModal && !nvModal.classList.contains('hidden')) { closeNvidiaModal(); return; }
-      if (!el.settingsDrawer.classList.contains('hidden')) closeDrawer();
-      else if (state.filterPanelOpen) { state.filterPanelOpen = false; el.filterPanel.classList.add('hidden'); el.filterExpandBtn.classList.remove('active'); document.getElementById('filter-bar').classList.remove('panel-open'); }
-    }
   });
 
-  // Price history modal
-  document.getElementById('ph-modal-close')?.addEventListener('click', closePriceHistoryModal);
-  document.getElementById('price-history-modal')?.addEventListener('click', (e) => {
-    if (e.target.id === 'price-history-modal') closePriceHistoryModal();
-  });
+  // NVIDIA FE (tab in the settings drawer)
+  document.getElementById('nvidia-open-btn')?.addEventListener('click', () => openDrawer('nvidia'));
+  nv.refresh.addEventListener('click', () => refreshNvidiaCards({ force: true }));
+  nv.locale.addEventListener('sl-change', changeNvidiaLocale);
 
-  // NVIDIA FE modal
-  document.getElementById('nvidia-open-btn')?.addEventListener('click', openNvidiaModal);
-  document.getElementById('nvidia-modal-close')?.addEventListener('click', closeNvidiaModal);
-  document.getElementById('nvidia-refresh-btn')?.addEventListener('click', () => refreshNvidiaCards({ force: true }));
-  document.getElementById('nvidia-locale-select')?.addEventListener('change', changeNvidiaLocale);
-  document.getElementById('nvidia-tab-cards')?.addEventListener('click', () => switchNvidiaTab('cards'));
-  document.getElementById('nvidia-tab-settings')?.addEventListener('click', () => switchNvidiaTab('settings'));
-  document.getElementById('nvidia-settings-form')?.addEventListener('submit', saveNvidiaSettingsForm);
-
-  document.getElementById('nvidia-enabled-input')?.addEventListener('change', async (e) => {
+  nv.enabled.addEventListener('sl-change', async (e) => {
     const isEnabled = e.target.checked;
     try {
       const res = await fetchJson('/api/nvidia/config', {
@@ -2168,7 +2192,7 @@ function bindEvents() {
       if (res?.ok) {
         nvidiaState.config = res.config;
         updateNvidiaPollerBadge();
-        showToast(isEnabled ? 'Scheduler enabled!' : 'Scheduler disabled', 'info');
+        showToast(isEnabled ? 'NVIDIA scheduler enabled' : 'NVIDIA scheduler disabled', 'info');
       }
     } catch (err) {
       showToast(`Failed to update scheduler: ${err.message}`, 'error');
@@ -2176,12 +2200,9 @@ function bindEvents() {
     }
   });
 
-  document.getElementById('nvidia-test-webhook-btn')?.addEventListener('click', async () => {
-    const btn = document.getElementById('nvidia-test-webhook-btn');
-    const input = document.getElementById('nvidia-webhook-input');
-    const webhookUrl = input?.value?.trim();
-    if (btn) btn.disabled = true;
-
+  nv.testWebhook.addEventListener('click', async () => {
+    const webhookUrl = inputValue(nv.webhook);
+    nv.testWebhook.loading = true;
     try {
       const res = await fetchJson('/api/nvidia/test-webhook', {
         method: 'POST',
@@ -2189,22 +2210,18 @@ function bindEvents() {
         body: JSON.stringify({ webhookUrl })
       });
       if (!res?.ok) throw new Error(res?.error || 'Failed to send test alert');
-      showToast('Discord test notification sent successfully!', 'success');
+      showToast('Discord test notification sent', 'success');
       playNvidiaChime();
     } catch (err) {
       showToast(`Webhook test failed: ${err.message}`, 'error');
     } finally {
-      if (btn) btn.disabled = false;
+      nv.testWebhook.loading = false;
     }
   });
 
-  document.getElementById('nvidia-test-sound-btn')?.addEventListener('click', () => {
+  nv.testSound.addEventListener('click', () => {
     playNvidiaChime();
-    showToast('🔊 Played test audio chime', 'info');
-  });
-
-  document.getElementById('nvidia-modal')?.addEventListener('click', (e) => {
-    if (e.target.id === 'nvidia-modal') closeNvidiaModal();
+    showToast('Played the test chime', 'info');
   });
 }
 
@@ -2292,9 +2309,9 @@ async function refreshPurchasePanel() {
     setPurchaseStatus('');
 
     document.getElementById('purchase-mode').value = data.mode;
-    document.getElementById('purchase-max-price').value = data.maxPriceSek;
-    document.getElementById('purchase-ttl').value = data.defaultTtlMinutes;
-    document.getElementById('purchase-rate').value = data.maxStagesPerHour;
+    document.getElementById('purchase-max-price').value = String(data.maxPriceSek ?? '');
+    document.getElementById('purchase-ttl').value = String(data.defaultTtlMinutes ?? '');
+    document.getElementById('purchase-rate').value = String(data.maxStagesPerHour ?? '');
 
     const caps = document.getElementById('purchase-capabilities');
     if (caps) {
@@ -2313,7 +2330,7 @@ function renderArmedList(armed) {
   const node = document.getElementById('purchase-armed');
   if (!node) return;
   if (!armed.length) {
-    node.innerHTML = '<p class="purchase-empty">Nothing armed. Use the ⚡ button on any Elgiganten card.</p>';
+    node.innerHTML = '<p class="muted small">Nothing armed. Use the ⚡ button on any Elgiganten card.</p>';
     return;
   }
   node.innerHTML = armed.map((arm) => `
@@ -2326,8 +2343,8 @@ function renderArmedList(armed) {
         </span>
       </div>
       <div class="purchase-row-actions">
-        <button type="button" class="ghost-btn accent" data-stage-key="${escapeHtml(arm.listingKey)}">Stage cart</button>
-        <button type="button" class="ghost-btn" data-disarm-key="${escapeHtml(arm.listingKey)}">Disarm</button>
+        <sl-button size="small" variant="primary" outline data-stage-key="${escapeHtml(arm.listingKey)}">Stage cart</sl-button>
+        <sl-button size="small" data-disarm-key="${escapeHtml(arm.listingKey)}">Disarm</sl-button>
       </div>
     </div>
   `).join('');
@@ -2343,8 +2360,7 @@ function renderArmedList(armed) {
   }
   for (const btn of node.querySelectorAll('[data-stage-key]')) {
     btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      btn.textContent = 'Staging…';
+      btn.loading = true;
       setPurchaseStatus('Staging cart — this opens a real browser session and takes ~20s.', 'info');
       try {
         const result = await purchaseFetch(`/api/purchase/stage/${encodeURIComponent(btn.dataset.stageKey)}`, { method: 'POST' });
@@ -2362,7 +2378,7 @@ function renderAttempts(attempts) {
   const node = document.getElementById('purchase-attempts');
   if (!node) return;
   if (!attempts.length) {
-    node.innerHTML = '<p class="purchase-empty">No staging attempts yet.</p>';
+    node.innerHTML = '<p class="muted small">No staging attempts yet.</p>';
     return;
   }
   const icon = { staged: '✅', refused: '⛔', failed: '⚠️' };
@@ -2391,39 +2407,34 @@ async function toggleArm(listingKey, button) {
         body: JSON.stringify({}),
       });
     }
-    button?.classList.toggle('active', !armed);
+    if (button) {
+      button.classList.toggle('active', !armed);
+      button.name = armed ? 'lightning-charge' : 'lightning-charge-fill';
+      button.label = armed ? 'Arm for checkout staging' : 'Disarm checkout staging';
+    }
     await refreshPurchasePanel();
   } catch (error) {
-    alert(error.message);
+    showToast(error.message, 'error');
   }
 }
 
 function initPurchaseControls() {
   const modal = document.getElementById('purchase-modal');
   const openBtn = document.getElementById('purchase-open-btn');
-  const closeBtn = document.getElementById('purchase-close');
   const tokenInput = document.getElementById('purchase-token');
   if (!modal || !openBtn) return;
 
   tokenInput.value = purchaseToken();
-  tokenInput.addEventListener('change', async () => {
-    localStorage.setItem(PURCHASE_TOKEN_KEY, tokenInput.value.trim());
+  tokenInput.addEventListener('sl-change', async () => {
+    localStorage.setItem(PURCHASE_TOKEN_KEY, inputValue(tokenInput));
     await refreshPurchasePanel();
   });
 
   openBtn.addEventListener('click', async () => {
-    modal.classList.remove('hidden');
-    modal.setAttribute('aria-hidden', 'false');
+    modal.show();
     if (purchaseToken()) await refreshPurchasePanel();
     else setPurchaseStatus('Enter your admin API token to unlock buy controls.', 'info');
   });
-
-  const close = () => {
-    modal.classList.add('hidden');
-    modal.setAttribute('aria-hidden', 'true');
-  };
-  closeBtn?.addEventListener('click', close);
-  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
 
   document.getElementById('purchase-save')?.addEventListener('click', async () => {
     try {

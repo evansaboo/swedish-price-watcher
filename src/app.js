@@ -184,6 +184,16 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
   try {
     await app.register(fastifyStatic, { root: config.publicDir, index: false });
 
+    // Shoelace web components, vendored from node_modules so the dashboard
+    // needs no CDN at runtime. The version is pinned in package.json: entry
+    // files here are not content-hashed, so upgrade it deliberately.
+    await app.register(fastifyStatic, {
+      root: path.join(ROOT_DIR, 'node_modules/@shoelace-style/shoelace/cdn'),
+      prefix: '/vendor/shoelace/',
+      decorateReply: false,
+      index: false
+    });
+
     // Served ahead of the static wildcard so the markup always references the
     // current build of the assets, never a cached one from a previous deploy.
     const buildIndexHtml = createIndexHtmlBuilder(config.publicDir);
