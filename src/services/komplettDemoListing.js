@@ -1,3 +1,4 @@
+import { komplettThumbnailUrl } from '../sources/komplett.js';
 /**
  * Mirrors the Komplett demo watcher's tracked products into the main listing.
  *
@@ -67,7 +68,8 @@ export function komplettDemoRecordToObservation(record, source = {}) {
     referencePriceSek: null,
     articleNumber: String(record.id),
     availability: record.inStock === false ? 'out_of_stock' : 'in_stock',
-    imageUrl: record.imageUrl ?? null,
+    // Thumbnail from the id, so records saved with the full-size URL get it too.
+    imageUrl: komplettThumbnailUrl(record.id) ?? record.imageUrl ?? null,
     notes: record.availabilityText ?? null,
     seenAt: record.lastSeenAt ?? record.firstSeenAt ?? new Date().toISOString()
   };

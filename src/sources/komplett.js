@@ -18,6 +18,16 @@ export function komplettProductUrl(product) {
 }
 
 /** First product image as an absolute URL, or null. */
+/**
+ * Komplett's resized product image (verified 2026-11-03): `/img/p/<size>/<id>.jpg`.
+ * Size 400 is ~23 KB, versus 1+ MB for the original under `product-media/…`,
+ * and Komplett serves it without a referer check, so it can be hotlinked.
+ */
+export function komplettThumbnailUrl(materialNumber, size = 400) {
+  const id = String(materialNumber ?? '').trim();
+  return /^\d+$/.test(id) ? `${KOMPLETT_ORIGIN}/img/p/${size}/${id}.jpg` : null;
+}
+
 export function komplettImageUrl(product) {
   const imageFile = product?.productImages?.[0];
   if (!imageFile?.url || !imageFile?.fileName) return null;
@@ -146,7 +156,7 @@ export function mapKomplettDemoProduct(product, categoryId = null) {
     id,
     title,
     url,
-    imageUrl: komplettImageUrl(product),
+    imageUrl: komplettThumbnailUrl(id) ?? komplettImageUrl(product),
     priceSek,
     inStock: isKomplettInStock(product.stock),
     availabilityText: product.stock?.availabilityText ?? product.stock?.availabilityStatus ?? null,

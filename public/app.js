@@ -494,7 +494,7 @@ function renderProducts(response) {
     if (condition) badges.push(`<sl-badge variant="neutral" pill>${escapeHtml(condition)}</sl-badge>`);
 
     const imageHtml = product.imageUrl
-      ? `<img src="${escapeHtml(product.imageUrl)}" alt="" loading="lazy" decoding="async" />`
+      ? `<img src="${escapeHtml(product.imageUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
       : PLACEHOLDER_IMG;
 
     const url = product.url ? escapeHtml(`/api/out/${encodeURIComponent(product.listingKey)}`) : '';

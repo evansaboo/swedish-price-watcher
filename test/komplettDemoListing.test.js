@@ -88,7 +88,7 @@ test('a watcher record becomes a listing observation with source, category, pric
   assert.equal(obs.category, 'Grafikkort');
   assert.equal(obs.priceSek, 7224);
   assert.equal(obs.availability, 'in_stock');
-  assert.equal(obs.imageUrl, 'https://www.komplett.se/product-media/b2c/en-us/70.jpg');
+  assert.equal(obs.imageUrl, 'https://www.komplett.se/img/p/400/70.jpg');
   assert.equal(obs.condition, 'outlet');
   assert.equal(obs.conditionLabel, KOMPLETT_DEMO_CONDITION_LABEL);
   assert.match(obs.conditionLabel, /B-grade/);
@@ -149,7 +149,7 @@ test('Komplett demo products join the listing next to hotlist items, searchable 
   assert.equal(gpu.currentPriceSek, 7224);
   assert.equal(gpu.availability, 'in_stock');
   assert.equal(gpu.conditionLabel, 'B-grade / demo');
-  assert.equal(gpu.imageUrl, record(70).imageUrl);
+  assert.equal(gpu.imageUrl, 'https://www.komplett.se/img/p/400/70.jpg');
   assert.equal(gpu.url, record(70).url);
   assert.equal(komplett.items.find((p) => p.listingKey === 'komplett-demo:80').availability, 'out_of_stock');
 

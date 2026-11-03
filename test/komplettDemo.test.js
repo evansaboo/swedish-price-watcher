@@ -90,7 +90,7 @@ test('mapKomplettDemoProduct maps the embedded listing JSON', () => {
 
   assert.equal(mapped.id, '1345640');
   assert.equal(mapped.url, 'https://www.komplett.se/product/1345640/demovaror/datorutrustning/demo-headset/jbl-live-680nc');
-  assert.equal(mapped.imageUrl, 'https://www.komplett.se/product-media/b2c/en-us/1345640.jpg');
+  assert.equal(mapped.imageUrl, 'https://www.komplett.se/img/p/400/1345640.jpg');
   assert.equal(mapped.priceSek, 1032);
   assert.equal(mapped.inStock, true);
   assert.equal(mapped.availabilityText, '1 st i lager (1-3 dagar leveranstid)');
