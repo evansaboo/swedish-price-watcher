@@ -236,3 +236,62 @@ export async function fetchApifyRunUsage({ runId, token = resolveApifyToken(), A
   const run = await client.run(runId).get();
   return Number.isFinite(run?.usageTotalUsd) ? run.usageTotalUsd : null;
 }
+
+
+/**
+ * Fetch product thumbnails through Apify, for Discord attachments.
+ *
+ * Discord's image proxy can't load komplett.se (Akamai blocks it, like the
+ * Pi's IP; verified 2026-11-03), so an embed image URL renders blank. Alerts
+ * instead attach the image bytes, fetched here from Apify's IPs. Best effort:
+ * on any failure the caller sends the alert without a picture.
+ *
+ * Returns { images: { [materialNumber]: { data: Buffer, contentType } }, runId }.
+ */
+const KOMPLETT_IMAGE_PAGE_FUNCTION = /* js */ `
+async function pageFunction(context) {
+  const body = context.body;
+  const buf = Buffer.isBuffer(body) ? body : Buffer.from(String(body ?? ''), 'binary');
+  const type = String((context.response && context.response.headers && context.response.headers['content-type']) || '');
+  if (!/^image\\//.test(type) || !buf.length || buf.length > 400000) {
+    return { id: context.request.userData.id, ok: false, type, size: buf.length };
+  }
+  return { id: context.request.userData.id, ok: true, type, data: buf.toString('base64') };
+}
+`;
+
+export async function fetchKomplettImages({
+  ids,
+  token = resolveApifyToken(),
+  ApifyClientClass = ApifyClient,
+  size = 400,
+  memoryMbytes = 256,
+  timeoutSecs = 90,
+}) {
+  const unique = [...new Set((ids ?? []).map((id) => String(id)).filter((id) => /^\d+$/.test(id)))].slice(0, 10);
+  if (!token || !unique.length) return { images: {}, runId: null };
+  const client = new ApifyClientClass({ token });
+  const run = await client.actor('apify/cheerio-scraper').call({
+    startUrls: unique.map((id) => ({
+      url: komplettThumbnailUrl(id, size),
+      userData: { id },
+      // JPEG: Discord can't render AVIF, which Komplett sends when it's accepted.
+      headers: { accept: 'image/jpeg,image/png,image/*;q=0.5' },
+    })),
+    pageFunction: KOMPLETT_IMAGE_PAGE_FUNCTION,
+    additionalMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'],
+    proxyConfiguration: { useApifyProxy: true },
+    maxRequestsPerCrawl: unique.length + 2,
+    maxRequestRetries: 1,
+  }, { memory: memoryMbytes, timeout: timeoutSecs });
+  const images = {};
+  if (run?.defaultDatasetId) {
+    const { items } = await client.dataset(run.defaultDatasetId).listItems();
+    for (const item of items ?? []) {
+      if (item?.ok && item.data && item.id) {
+        images[String(item.id)] = { data: Buffer.from(item.data, 'base64'), contentType: item.type.split(';')[0] };
+      }
+    }
+  }
+  return { images, runId: run?.id ?? null };
+}

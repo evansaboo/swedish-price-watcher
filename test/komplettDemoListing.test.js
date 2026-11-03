@@ -368,3 +368,20 @@ test('older products that come into view (more pages) do not alert as new', asyn
   assert.deepEqual(alerted.filter((id) => ['50', '40'].includes(id)), []);
   assert.ok(alerted.includes('111'), `expected 111 to alert, got ${JSON.stringify(alerted)}`);
 });
+
+test('Komplett alerts attach the fetched image and reference it from the embed', async () => {
+  const { DiscordNotifier } = await import('../src/services/notifier.js');
+  const realFetch = globalThis.fetch;
+  let captured = null;
+  globalThis.fetch = async (url, init) => { captured = init; return new Response('{}', { status: 200 }); };
+  try {
+    const n = new DiscordNotifier({ webhookUrl: 'https://discord.com/api/webhooks/1/x', cooldownHours: 0 });
+    const images = { '42': { data: Buffer.from([0xff, 0xd8, 0xff]), contentType: 'image/jpeg' } };
+    const res = await n.notifyKomplettDemo({ images, alerts: [{ reason: 'new', categoryId: '10072', product: { id: '42', title: 'GPU', url: 'https://www.komplett.se/product/42/x', priceSek: 1000, imageUrl: 'https://www.komplett.se/img/p/400/42.jpg' } }] });
+    assert.equal(res.sent, 1);
+    assert.ok(captured.body instanceof FormData);
+    const payload = JSON.parse(captured.body.get('payload_json'));
+    assert.equal(payload.embeds[0].image.url, 'attachment://komplett-42.jpg');
+    assert.equal(captured.body.get('files[0]').name, 'komplett-42.jpg');
+  } finally { globalThis.fetch = realFetch; }
+});

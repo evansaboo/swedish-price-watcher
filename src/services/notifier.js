@@ -63,6 +63,12 @@ function parseRetryDelayMs(response) {
   return null;
 }
 
+/** File name for a Komplett alert image attachment (extension from its type). */
+function komplettAttachmentName(id, image) {
+  const ext = /png/.test(image?.contentType ?? '') ? 'png' : /webp/.test(image?.contentType ?? '') ? 'webp' : 'jpg';
+  return `komplett-${String(id).replace(/[^0-9a-z-]/gi, '')}.${ext}`;
+}
+
 export class DiscordNotifier {
   constructor({ webhookUrl, cooldownHours, webhookMaxRetries = 3, webhookRetryBaseMs = 1500, webhookRetryCapMs = 15000 }) {
     this.webhookUrl = webhookUrl;
@@ -169,7 +175,7 @@ export class DiscordNotifier {
    *
    * @returns {{ sent, failed, skipped, errors, delivered: boolean[], reason? }}
    */
-  async notifyKomplettDemo({ alerts = [], webhookUrl } = {}) {
+  async notifyKomplettDemo({ alerts = [], webhookUrl, images = {} } = {}) {
     const delivered = alerts.map(() => false);
     const webhook = normalizeWebhookUrl(webhookUrl) || this.webhookUrl;
     if (!webhook) {
@@ -206,7 +212,11 @@ export class DiscordNotifier {
         description: ['Komplett demovaror', reasonLine].filter(Boolean).join('\n'),
         color: meta.color,
         fields,
-        image: product.imageUrl ? { url: product.imageUrl } : undefined,
+        // An attached file (see `images`) renders; a komplett.se URL doesn't,
+        // because Discord's image proxy is blocked by Komplett.
+        image: images[String(product.id)]
+          ? { url: `attachment://${komplettAttachmentName(product.id, images[String(product.id)])}` }
+          : (product.imageUrl ? { url: product.imageUrl } : undefined),
         footer: { text: `Komplett demo · B-grade${product.id ? ` · ${product.id}` : ''}` },
         timestamp: new Date().toISOString()
       };
@@ -221,12 +231,20 @@ export class DiscordNotifier {
         ? `${first.emoji} **Komplett demo** — ${batch[0].reason === 'price-drop' ? `${first.text} ${formatPercent(batch[0].dropPercent)}` : first.text}`
         : `${first.emoji} **Komplett demo** — ${batch.length} updates`;
       try {
+        const files = batch
+          .map((alert) => {
+            const id = String(alert.product?.id ?? '');
+            const image = images[id];
+            return image ? { name: komplettAttachmentName(id, image), data: image.data, contentType: image.contentType } : null;
+          })
+          .filter(Boolean)
+          .filter((file, index, all) => all.findIndex((other) => other.name === file.name) === index);
         await this.#postWebhook({
           username: 'Price Watcher',
           content,
           allowed_mentions: { parse: [] },
           embeds: batch.map(buildEmbed)
-        }, webhook);
+        }, webhook, files);
         batch.forEach((_, offset) => { delivered[start + offset] = true; });
         sent += batch.length;
       } catch (error) {
@@ -362,16 +380,27 @@ export class DiscordNotifier {
     return Math.min(this.webhookRetryCapMs, exponentialDelay);
   }
 
-  async #postWebhook(payload, webhookUrl = this.webhookUrl) {
+  async #postWebhook(payload, webhookUrl = this.webhookUrl, files = []) {
     for (let attempt = 0; attempt <= this.webhookMaxRetries; attempt += 1) {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify(payload),
-        redirect: 'error'
-      });
+      let init;
+      if (files.length) {
+        // multipart/form-data with payload_json plus files[n]; embeds refer to
+        // them as attachment://<name>. Rebuilt per attempt (a body is single-use).
+        const form = new FormData();
+        form.append('payload_json', JSON.stringify(payload));
+        files.forEach((file, index) => {
+          form.append(`files[${index}]`, new Blob([file.data], { type: file.contentType || 'application/octet-stream' }), file.name);
+        });
+        init = { method: 'POST', body: form, redirect: 'error' };
+      } else {
+        init = {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+          redirect: 'error'
+        };
+      }
+      const response = await fetch(webhookUrl, init);
 
       if (response.ok) {
         return;

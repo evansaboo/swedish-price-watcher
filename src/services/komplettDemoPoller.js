@@ -20,6 +20,7 @@
  */
 
 import {
+  fetchKomplettImages,
   komplettDemoPagesFor,
   KOMPLETT_DEMO_SORT,
   buildKomplettDemoUrl,
@@ -478,6 +479,8 @@ export function createKomplettDemoPoller({
   onStateChange = null,
   fetchPages = fetchKomplettDemoPages,
   fetchRunUsage = fetchApifyRunUsage,
+  // Thumbnails for alerts, fetched via Apify (Discord can't load komplett.se).
+  fetchImages = fetchKomplettImages,
   logger = console,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
@@ -587,10 +590,25 @@ export function createKomplettDemoPoller({
 
     let result = { sent: 0, failed: 0, skipped: toSend.length, delivered: toSend.map(() => false), reason: 'no-notifier' };
     if (notifier?.notifyKomplettDemo && toSend.length) {
+      let images = {};
+      if (fetchImages) {
+        try {
+          const fetched = await fetchImages({ ids: toSend.map((entry) => entry.alert?.product?.id) });
+          images = fetched?.images ?? {};
+          if (fetched?.runId) {
+            // Count the extra run's cost; settled later like the poll runs.
+            const usd = await fetchRunUsage({ runId: fetched.runId }).catch(() => null);
+            state.usage.usd += Number.isFinite(usd) ? usd : 0.0003;
+          }
+        } catch (error) {
+          logger.warn?.(`[komplett-demo] Alert images unavailable: ${error.message}`);
+        }
+      }
       try {
         result = await notifier.notifyKomplettDemo({
           alerts: toSend.map((entry) => entry.alert),
           webhookUrl: config.discordWebhookUrl,
+          images,
         });
       } catch (error) {
         result = { sent: 0, failed: toSend.length, skipped: 0, delivered: toSend.map(() => false), errors: [error.message] };
