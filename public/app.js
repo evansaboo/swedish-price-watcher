@@ -1656,11 +1656,33 @@ function renderHotlistGroups() {
   }
 }
 
+// Live "checks every X–Y s" hint for the hotlist interval and jitter fields.
+// Mirrors the server: 30 s floor and 3600 s cap (hotlistConfig.js), jitter up to 50%.
+const HOTLIST_MIN_INTERVAL_S = 30;
+function renderHotlistIntervalHint() {
+  const hint = document.getElementById('hotlist-interval-hint');
+  if (!hint) return;
+  const raw = Number(el.hotlistInterval.value);
+  const base = Math.min(3600, Math.max(HOTLIST_MIN_INTERVAL_S, Number.isFinite(raw) && raw > 0 ? raw : HOTLIST_MIN_INTERVAL_S));
+  const jitter = Math.min(50, Math.max(0, Number(el.hotlistJitter.value) || 0));
+  const lo = Math.round(base * (1 - jitter / 100));
+  const hi = Math.round(base * (1 + jitter / 100));
+  const clamped = Number.isFinite(raw) && raw > 0 && raw < HOTLIST_MIN_INTERVAL_S ? ` (raised to the ${HOTLIST_MIN_INTERVAL_S} s minimum)` : '';
+  hint.textContent = jitter
+    ? `Checks Elgiganten at random every ${lo}–${hi} s (~${base} s)${clamped}. Minimum ${HOTLIST_MIN_INTERVAL_S} s, to keep your IP safe.`
+    : `Checks Elgiganten every ${base} s${clamped}. Add jitter so checks don't follow a fixed rhythm. Minimum ${HOTLIST_MIN_INTERVAL_S} s.`;
+}
+for (const input of [el.hotlistInterval, el.hotlistJitter]) {
+  input?.addEventListener('sl-input', renderHotlistIntervalHint);
+  input?.addEventListener('input', renderHotlistIntervalHint);
+}
+
 function renderHotlistForm() {
   if (!hotlistConfig) return;
   el.hotlistEnabled.checked = hotlistConfig.enabled !== false;
   el.hotlistInterval.value = String(hotlistConfig.intervalSeconds ?? '');
   el.hotlistJitter.value = String(hotlistConfig.jitterPct ?? '');
+  renderHotlistIntervalHint();
   el.hotlistMinDiscount.value = String(hotlistConfig.minDiscountPct ?? '');
   if (el.hotlistWebhook) el.hotlistWebhook.value = hotlistConfig.webhookUrl ?? '';
   if (el.hotlistNotifyDrops) el.hotlistNotifyDrops.checked = hotlistConfig.notifyPriceDrops !== false;
