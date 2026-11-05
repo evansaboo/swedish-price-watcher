@@ -123,6 +123,23 @@ const el = {
   kdCategories: $('#kd-categories'),
   kdAlerts: $('#kd-alerts'),
   kdFinds: $('#kd-finds'),
+  inetStatus: $('#inet-status'),
+  inetEnabled: $('#inet-enabled'),
+  inetFeedDeals: $('#inet-feed-deals'),
+  inetFeedOutlet: $('#inet-feed-outlet'),
+  inetInterval: $('#inet-interval'),
+  inetJitter: $('#inet-jitter'),
+  inetMaxUsd: $('#inet-max-usd'),
+  inetIntervalHint: $('#inet-interval-hint'),
+  inetDropPct: $('#inet-drop-pct'),
+  inetBackInStock: $('#inet-back-in-stock'),
+  inetWebhook: $('#inet-webhook'),
+  inetCountLabel: $('#inet-count-label'),
+  inetPollNow: $('#inet-poll-now'),
+  inetAddGroup: $('#inet-add-group'),
+  inetGroups: $('#inet-groups'),
+  inetAlerts: $('#inet-alerts'),
+  inetFinds: $('#inet-finds'),
   saveSettingsBtn: $('#save-settings-btn'),
   drawerSaveStatus: $('#drawer-save-status'),
   themeToggle: $('#theme-toggle')
@@ -1314,9 +1331,11 @@ function activeSettingsTab() {
 
 function loadDrawerData() {
   // Hotlist config, status and the Elgiganten category catalogue, plus the
-  // Komplett demo watcher. Both load independently; a failure hides its tab.
+  // Komplett demo and Inet watchers. Each loads independently; a failure
+  // hides its tab.
   loadHotlist();
   loadKomplettDemo();
+  loadInet();
 }
 
 function hideSettingsTab(name) {
@@ -1728,6 +1747,7 @@ function startHotlistStatusPolling() {
   hotlistStatusTimer = setInterval(() => {
     refreshHotlistStatus();
     refreshKomplettDemoStatus();
+    refreshInetStatus();
   }, 10_000);
 }
 
@@ -1996,6 +2016,357 @@ function collectKomplettDemoConfig() {
   };
 }
 
+// ── INET (campaign deals + Fyndhörnan outlet watcher) ───────────
+// Like the Komplett watcher: one Apify run per check, with the month's
+// spend shown against the cap. What to alert on comes from watch groups
+// (keywords, Inet categories, filters), like the Elgiganten hotlist.
+
+let inetData = null; // { config, catalog, limits, lastStatus }
+const inetOpenGroups = new Set();
+const INET_FEED_LABELS = { deals: 'Kampanj', outlet: 'Fyndhörnan' };
+const INET_GROUP_FEEDS = { both: 'Deals and outlet', deals: 'Campaign deals only', outlet: 'Outlet only' };
+const INET_MIN_INTERVAL_MIN = 10;
+
+// Catalog names ↔ template ids. A duplicate name gets its id appended so
+// every chip maps back to exactly one category.
+function inetCatalogMaps() {
+  const catalog = inetData?.catalog ?? [];
+  const counts = new Map();
+  for (const entry of catalog) counts.set(entry.name, (counts.get(entry.name) ?? 0) + 1);
+  const idToName = new Map();
+  const nameToId = new Map();
+  for (const entry of catalog) {
+    const name = counts.get(entry.name) > 1 ? `${entry.name} (#${entry.id})` : entry.name;
+    idToName.set(String(entry.id), name);
+    nameToId.set(name, String(entry.id));
+  }
+  return { idToName, nameToId, names: [...nameToId.keys()] };
+}
+
+function inetCategoryLabel(id, maps = inetCatalogMaps()) {
+  return maps.idToName.get(String(id)) ?? `#${id}`;
+}
+
+function createEmptyInetGroup() {
+  return {
+    id: `ig-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+    name: '',
+    enabled: true,
+    feeds: 'both',
+    keywords: [],
+    strictKeywordMatch: true,
+    categories: [],
+    minDiscountPct: null,
+    maxPriceSek: null,
+    inStockOnly: false,
+    priceDropPct: null
+  };
+}
+
+function inetGroupIsActive(group) {
+  return Boolean(group.enabled && (group.keywords.length || group.categories.length || (group.minDiscountPct ?? 0) > 0));
+}
+
+function inetGroupSummary(group) {
+  const parts = [];
+  if (group.keywords.length) parts.push(`${group.keywords.length} keyword${group.keywords.length === 1 ? '' : 's'}`);
+  if (group.categories.length) parts.push(`${group.categories.length} categor${group.categories.length === 1 ? 'y' : 'ies'}`);
+  if ((group.minDiscountPct ?? 0) > 0) parts.push(`≥${group.minDiscountPct}% off`);
+  if (group.feeds !== 'both') parts.push(group.feeds === 'deals' ? 'deals' : 'outlet');
+  const info = (inetData?.lastStatus?.groups ?? []).find((g) => g.id === group.id);
+  if (info?.active && Number.isFinite(info.matches)) parts.push(`${info.matches} match${info.matches === 1 ? '' : 'es'} now`);
+  return parts.join(' · ') || 'Add a keyword, category or min discount';
+}
+
+function createInetGroupElement(group) {
+  const details = document.createElement('sl-details');
+  details.className = `watch${group.enabled ? '' : ' is-disabled'}`;
+  details.open = inetOpenGroups.has(group.id);
+  const numeric = (value) => (value != null ? value : '');
+  const maps = inetCatalogMaps();
+  const categoryChips = group.categories.map((id) => inetCategoryLabel(id, maps));
+
+  details.innerHTML = `
+    <div slot="summary" class="watch-summary">
+      <span class="watch-title">
+        <span class="watch-name"></span>
+        <sl-badge class="watch-off" variant="neutral" pill>Off</sl-badge>
+      </span>
+      <span class="watch-meta"></span>
+    </div>
+    <div class="watch-body">
+      <div class="watch-top">
+        <sl-switch class="ig-enabled" ${group.enabled ? 'checked' : ''}>Enabled</sl-switch>
+        <sl-button class="ig-delete" variant="danger" outline size="small"><sl-icon slot="prefix" name="trash3"></sl-icon>Delete</sl-button>
+      </div>
+      <sl-input class="ig-name" label="Group name" placeholder="e.g. Monitors" value="${escapeHtml(group.name)}"></sl-input>
+      <sl-select class="ig-feeds" label="Feeds" value="${escapeHtml(group.feeds)}">
+        ${Object.entries(INET_GROUP_FEEDS).map(([value, label]) => `<sl-option value="${value}">${escapeHtml(label)}</sl-option>`).join('')}
+      </sl-select>
+      ${chipFieldHtml({ id: `ig-kw-${group.id}`, label: 'Keywords', hint: 'any one matches; type, then tap Add', placeholder: 'e.g. RTX 5090, OLED' })}
+      <sl-switch class="ig-strict" ${group.strictKeywordMatch !== false ? 'checked' : ''} help-text="On: every word must be a whole word of the title. Off: also matches inside words (5090 → 5090D).">Exact title match</sl-switch>
+      ${chipFieldHtml({ id: `ig-cat-${group.id}`, label: 'Categories', hint: 'any one matches', placeholder: maps.names.length ? 'Search Inet categories…' : 'No categories loaded yet' })}
+      ${maps.names.length ? '' : '<p class="ig-cat-hint muted small">Inet’s categories load with the first check. Keywords work without them.</p>'}
+      <div class="form-grid-3">
+        <sl-input class="ig-mindiscount" label="Min off %" type="number" inputmode="numeric" placeholder="any" min="0" max="99" step="1" value="${numeric(group.minDiscountPct)}"></sl-input>
+        <sl-input class="ig-maxprice" label="Max price" type="number" inputmode="numeric" placeholder="any" min="0" step="100" value="${numeric(group.maxPriceSek)}"></sl-input>
+        <sl-input class="ig-droppct" label="Drop alert %" type="number" inputmode="numeric" placeholder="global" min="0" max="90" step="1" value="${numeric(group.priceDropPct)}"></sl-input>
+      </div>
+      <sl-switch class="ig-instock" ${group.inStockOnly ? 'checked' : ''} help-text="Web or store stock. Outlet units are held in a store.">In stock only</sl-switch>
+    </div>`;
+
+  const syncSummary = () => {
+    details.querySelector('.watch-name').textContent = group.name || 'Untitled group';
+    details.querySelector('.watch-meta').textContent = inetGroupSummary(group);
+    details.classList.toggle('is-disabled', !group.enabled);
+    renderInetCount();
+  };
+  syncSummary();
+
+  details.addEventListener('sl-show', (e) => { if (e.target === details) inetOpenGroups.add(group.id); });
+  details.addEventListener('sl-hide', (e) => { if (e.target === details) inetOpenGroups.delete(group.id); });
+  details.querySelector('.ig-enabled').addEventListener('sl-change', (e) => { group.enabled = e.target.checked; syncSummary(); });
+  details.querySelector('.ig-name').addEventListener('sl-input', (e) => { group.name = e.target.value; syncSummary(); });
+  details.querySelector('.ig-feeds').addEventListener('sl-change', (e) => { group.feeds = e.target.value || 'both'; syncSummary(); });
+  details.querySelector('.ig-strict').addEventListener('sl-change', (e) => { group.strictKeywordMatch = e.target.checked; });
+  details.querySelector('.ig-instock').addEventListener('sl-change', (e) => { group.inStockOnly = e.target.checked; });
+  details.querySelector('.ig-delete').addEventListener('click', () => {
+    inetData.config.groups = inetData.config.groups.filter((g) => g.id !== group.id);
+    inetOpenGroups.delete(group.id);
+    renderInetGroups();
+  });
+  const numberField = (selector, key) => {
+    details.querySelector(selector).addEventListener('sl-input', (e) => {
+      const raw = String(e.target.value ?? '').trim();
+      const parsed = Number(raw);
+      group[key] = raw === '' || !Number.isFinite(parsed) ? null : parsed;
+      syncSummary();
+    });
+  };
+  numberField('.ig-mindiscount', 'minDiscountPct');
+  numberField('.ig-maxprice', 'maxPriceSek');
+  numberField('.ig-droppct', 'priceDropPct');
+
+  wireChipInput({
+    container: details.querySelector(`#ig-kw-${group.id}`),
+    items: group.keywords,
+    onAdd: syncSummary, onRemove: syncSummary,
+    allOptions: null
+  });
+  wireChipInput({
+    container: details.querySelector(`#ig-cat-${group.id}`),
+    items: categoryChips,
+    onAdd: (name) => {
+      const id = maps.nameToId.get(name);
+      if (!id) {
+        // Only catalog categories can be picked (the list comes from Inet).
+        categoryChips.splice(categoryChips.indexOf(name), 1);
+        showToast(maps.names.length ? `“${name}” is not an Inet category. Pick one from the list.` : 'Inet’s categories load with the first check.', 'warning');
+        return;
+      }
+      if (!group.categories.includes(id)) group.categories.push(id);
+      syncSummary();
+    },
+    onRemove: (name) => {
+      const id = maps.nameToId.get(name) ?? (name.match(/^#(\d+)$/)?.[1] ?? null);
+      group.categories = group.categories.filter((c) => c !== id);
+      syncSummary();
+    },
+    allOptions: maps.names
+  });
+
+  return details;
+}
+
+function renderInetCount() {
+  if (!el.inetCountLabel || !inetData) return;
+  const groups = inetData.config.groups ?? [];
+  const active = groups.filter(inetGroupIsActive).length;
+  el.inetCountLabel.textContent = groups.length ? `${active}/${groups.length} active · 1 Apify run per check` : 'No watch groups';
+}
+
+function renderInetGroups() {
+  if (!el.inetGroups || !inetData) return;
+  el.inetGroups.innerHTML = '';
+  renderInetCount();
+  if (!inetData.config.groups.length) {
+    el.inetGroups.innerHTML = '<div class="empty-mini"><sl-icon name="bell"></sl-icon><strong>No watch groups yet</strong><span>Add a group with keywords or categories to get Discord alerts. Without groups, Inet items still appear in the listing.</span></div>';
+    return;
+  }
+  for (const group of inetData.config.groups) el.inetGroups.appendChild(createInetGroupElement(group));
+}
+
+function renderInetIntervalHint() {
+  if (!el.inetIntervalHint) return;
+  const raw = Number(el.inetInterval.value);
+  const base = Math.min(240, Math.max(INET_MIN_INTERVAL_MIN, Number.isFinite(raw) && raw > 0 ? raw : INET_MIN_INTERVAL_MIN));
+  const jitter = Math.min(50, Math.max(0, Number(el.inetJitter.value) || 0));
+  const lo = Math.max(INET_MIN_INTERVAL_MIN, Math.round(base * (1 - jitter / 100)));
+  const hi = Math.round(base * (1 + jitter / 100));
+  const runUsd = inetData?.lastStatus?.costGuard?.estimatedRunUsd;
+  const monthly = Number.isFinite(runUsd) ? ` About ${formatUsd(runUsd * (30 * 24 * 60) / base, 2)}/month at this rate, before the cost guard.` : '';
+  el.inetIntervalHint.textContent = (jitter
+    ? `Checks Inet at random every ${lo}–${hi} min (~${base} min).`
+    : `Checks Inet every ${base} min.`) + ` Minimum ${INET_MIN_INTERVAL_MIN} min.${monthly}`;
+}
+for (const input of [el.inetInterval, el.inetJitter]) {
+  input?.addEventListener('sl-input', renderInetIntervalHint);
+  input?.addEventListener('input', renderInetIntervalHint);
+}
+
+function renderInetStatus(status) {
+  if (!el.inetStatus) return;
+  if (!status) { el.inetStatus.innerHTML = ''; return; }
+  if (inetData) inetData.lastStatus = status;
+  const guard = status.costGuard ?? {};
+  const feeds = status.feeds ?? [];
+  const notes = [];
+  if (guard.stretched && !guard.exhausted) {
+    notes.push(`Cost guard: checking every ~${Math.round(status.effectiveIntervalMinutes)} min to stay under ${formatUsd(guard.maxMonthlyUsd, 2)} this month.`);
+  }
+  if (guard.exhausted) notes.push('This month\'s Apify cap is used up; automatic checks resume next month.');
+  if (status.lastWarning) notes.push(status.lastWarning);
+  for (const feed of feeds) if (feed.enabled && feed.lastError) notes.push(`${feed.label}: ${feed.lastError}`);
+  if (status.lastAlertCount) notes.push(`${status.lastAlertCount} alert(s) on the last check.`);
+  if (status.pendingAlerts) notes.push(`${status.pendingAlerts} Discord alert(s) waiting to be retried.`);
+  const feedStat = (id) => {
+    const feed = feeds.find((f) => f.id === id);
+    if (!feed?.enabled) return 'off';
+    if (!feed.seeded && !feed.tracked) return 'not yet';
+    return `${feed.tracked} items · ${feed.inStock} in stock`;
+  };
+  const activeGroups = (status.groups ?? []).filter((g) => g.active).length;
+
+  el.inetStatus.innerHTML = statusCardHtml({
+    stateClass: status.lastError ? 'error' : status.enabled ? 'ok' : 'idle',
+    stateLabel: status.lastError
+      ? 'Failing'
+      : !status.enabled ? 'Paused'
+        : status.running ? 'Checking…'
+          : guard.exhausted ? 'Monthly cap reached'
+            : guard.stretched ? 'Watching (slowed by cost guard)' : 'Watching',
+    meta: `${status.trackedProducts ?? 0} items · ${activeGroups} active group${activeGroups === 1 ? '' : 's'} · ${status.pollCount ?? 0} checks`,
+    stats: [
+      ['Last check', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
+      ['Next check', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
+      ['Apify this month', `${formatUsd(guard.spentUsd)} / ${formatUsd(guard.maxMonthlyUsd, 2)}`],
+      ['Projected', formatUsd(guard.projectedMonthUsd, 2)],
+      ['Kampanj', feedStat('deals')],
+      ['Fyndhörnan', feedStat('outlet')]
+    ],
+    error: status.lastError,
+    notes
+  });
+
+  renderInetFinds(status);
+  renderInetIntervalHint();
+  // Refresh the group summaries' match counts without rebuilding the editors.
+  if (el.inetGroups && inetData) {
+    const metas = el.inetGroups.querySelectorAll('sl-details.watch .watch-meta');
+    inetData.config.groups.forEach((group, index) => { if (metas[index]) metas[index].textContent = inetGroupSummary(group); });
+  }
+}
+
+function inetFindItem(entry, { reason = null } = {}) {
+  const when = reason ? timeAgo(entry.at) : timeAgo(entry.firstSeenAt);
+  const was = reason === 'price-drop' && Number.isFinite(entry.previousPriceSek)
+    ? entry.previousPriceSek
+    : (Number.isFinite(entry.listPriceSek) && entry.listPriceSek > entry.priceSek ? entry.listPriceSek : null);
+  const priceLine = was ? `${formatSek(entry.priceSek)} <s>${formatSek(was)}</s>` : formatSek(entry.priceSek);
+  const off = Number.isFinite(entry.discountPct) && entry.discountPct > 0 ? `−${entry.discountPct}%` : '';
+  const tags = [
+    `<sl-badge variant="neutral" pill>${escapeHtml(INET_FEED_LABELS[entry.feed] ?? entry.feed ?? '')}</sl-badge>`,
+    reason ? `<sl-badge variant="${KD_REASON_VARIANTS[reason] ?? 'neutral'}" pill>${escapeHtml(KD_REASON_LABELS[reason] ?? reason)}</sl-badge>` : '',
+    reason && entry.delivered === false ? `<sl-badge variant="neutral" pill title="${escapeHtml(entry.note ?? '')}">not sent</sl-badge>` : '',
+    entry.inStock === false ? '<sl-badge variant="neutral" pill>out of stock</sl-badge>' : ''
+  ].join('');
+  const groups = (entry.groupNames ?? []).join(', ');
+  return `
+    <li class="find">
+      ${entry.imageUrl ? `<img src="${escapeHtml(entry.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="find-noimg"></span>'}
+      <div class="find-body">
+        <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.title)}</a>
+        <div class="find-meta">
+          <strong>${priceLine}</strong>
+          ${off ? `<span>${escapeHtml(off)}</span>` : ''}
+          ${entry.categoryLabel ? `<span>${escapeHtml(entry.categoryLabel)}</span>` : ''}
+          ${groups ? `<span>${escapeHtml(groups)}</span>` : ''}
+          ${when ? `<span>${escapeHtml(when)}</span>` : ''}
+          ${tags}
+        </div>
+      </div>
+    </li>`;
+}
+
+function renderInetFinds(status) {
+  if (!el.inetAlerts || !el.inetFinds) return;
+  const alerts = (status?.recentAlerts ?? []).slice(0, 10);
+  const finds = status?.latestFinds ?? [];
+  el.inetAlerts.innerHTML = alerts.map((entry) => inetFindItem(entry, { reason: entry.reason })).join('');
+  el.inetAlerts.classList.toggle('hidden', alerts.length === 0);
+  const anyFeed = (status?.feeds ?? []).some((f) => f.enabled);
+  el.inetFinds.innerHTML = finds.length
+    ? finds.map((entry) => inetFindItem(entry)).join('')
+    : `<li class="find-empty">${!anyFeed ? 'Switch on at least one feed above.' : (status?.trackedProducts ? 'No current item matches your watch groups.' : 'Nothing recorded yet. The first check records what is listed now, without alerts.')}</li>`;
+  for (const img of [...el.inetAlerts.querySelectorAll('img'), ...el.inetFinds.querySelectorAll('img')]) {
+    img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'find-noimg' })), { once: true });
+  }
+}
+
+function renderInetForm() {
+  if (!inetData) return;
+  const cfg = inetData.config;
+  el.inetEnabled.checked = cfg.enabled === true;
+  el.inetFeedDeals.checked = cfg.feeds?.deals !== false;
+  el.inetFeedOutlet.checked = cfg.feeds?.outlet !== false;
+  el.inetInterval.value = String(cfg.intervalMinutes ?? '');
+  el.inetJitter.value = String(cfg.jitterPct ?? '');
+  el.inetMaxUsd.value = String(cfg.maxMonthlyUsd ?? '');
+  el.inetDropPct.value = String(cfg.notifyPriceDropPercent ?? '');
+  el.inetBackInStock.checked = cfg.notifyBackInStock !== false;
+  el.inetWebhook.value = cfg.discordWebhookUrl ?? '';
+  renderInetIntervalHint();
+  renderInetGroups();
+}
+
+async function loadInet() {
+  try {
+    const payload = await fetchJson('/api/inet');
+    inetData = { config: payload.config, catalog: payload.catalog ?? [], limits: payload.limits ?? {}, lastStatus: payload.status };
+    renderInetForm();
+    renderInetStatus(payload.status);
+  } catch {
+    hideSettingsTab('inet');
+  }
+}
+
+async function refreshInetStatus() {
+  if (!inetData) return;
+  try {
+    renderInetStatus(await fetchJson('/api/inet/status'));
+  } catch { /* the next tick retries */ }
+}
+
+function collectInetConfig() {
+  const cfg = inetData.config;
+  const toNumber = (input, fallback) => {
+    const raw = inputValue(input);
+    const parsed = Number(raw);
+    return raw !== '' && Number.isFinite(parsed) ? parsed : fallback;
+  };
+  return {
+    enabled: el.inetEnabled.checked,
+    feeds: { deals: el.inetFeedDeals.checked, outlet: el.inetFeedOutlet.checked },
+    intervalMinutes: toNumber(el.inetInterval, cfg.intervalMinutes),
+    jitterPct: toNumber(el.inetJitter, cfg.jitterPct),
+    maxMonthlyUsd: toNumber(el.inetMaxUsd, cfg.maxMonthlyUsd),
+    notifyPriceDropPercent: toNumber(el.inetDropPct, cfg.notifyPriceDropPercent),
+    notifyBackInStock: el.inetBackInStock.checked,
+    discordWebhookUrl: inputValue(el.inetWebhook),
+    groups: cfg.groups
+  };
+}
+
 // ── SAVE SETTINGS ───────────────────────────────────────────────
 async function saveAllSettings() {
   el.saveSettingsBtn.loading = true;
@@ -2025,6 +2396,18 @@ async function saveAllSettings() {
       komplettDemo.config = payload.config;
       renderKomplettDemoForm();
       renderKomplettDemoStatus(payload.status);
+    }
+
+    // Save the Inet watcher
+    if (inetData) {
+      const payload = await fetchJson('/api/inet/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(collectInetConfig())
+      });
+      inetData.config = payload.config;
+      renderInetForm();
+      renderInetStatus(payload.status);
     }
 
     // NVIDIA webhook / browser options, only when changed
@@ -2170,6 +2553,38 @@ function bindEvents() {
       refreshKomplettDemoStatus();
     } finally {
       el.kdPollNow.loading = false;
+    }
+  });
+
+  // Inet watcher
+  el.inetAddGroup?.addEventListener('click', () => {
+    if (!inetData) return;
+    const group = createEmptyInetGroup();
+    inetOpenGroups.add(group.id);
+    inetData.config.groups.push(group);
+    renderInetGroups();
+    el.inetGroups.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  el.inetPollNow?.addEventListener('click', async () => {
+    if (!inetData) return;
+    if (!el.inetFeedDeals.checked && !el.inetFeedOutlet.checked) {
+      showToast('Switch on at least one Inet feed and save first.', 'error');
+      return;
+    }
+    el.inetPollNow.loading = true;
+    try {
+      const res = await fetchJson('/api/inet/poll', { method: 'POST' });
+      renderInetStatus(res.status);
+      const r = res.result ?? {};
+      showToast(`Inet: ${r.count ?? 0} item(s), ${r.alertCount ?? 0} alert(s).`, 'success');
+      // The first check fills the category list.
+      fetchJson('/api/inet/catalog').then((catalog) => { inetData.catalog = catalog; renderInetGroups(); }).catch(() => {});
+      loadDashboard().catch(() => {});
+    } catch (err) {
+      showToast(`Inet check failed: ${err.message}`, 'error');
+      refreshInetStatus();
+    } finally {
+      el.inetPollNow.loading = false;
     }
   });
 

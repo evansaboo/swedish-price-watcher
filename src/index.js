@@ -14,12 +14,15 @@ import { createNvidiaPoller } from './services/nvidiaPoller.js';
 import { ensureKomplettDemoConfig, normalizeKomplettDemoConfig } from './services/komplettDemoConfig.js';
 import { createKomplettDemoPoller } from './services/komplettDemoPoller.js';
 import { KOMPLETT_DEMO_SOURCE_ID, KOMPLETT_DEMO_SOURCE_LABEL, syncKomplettDemoListing } from './services/komplettDemoListing.js';
+import { ensureInetConfig, normalizeInetConfig, enabledFeedIds as inetEnabledFeedIds } from './services/inetConfig.js';
+import { createInetPoller } from './services/inetPoller.js';
+import { INET_LISTING_SOURCES, syncInetListing } from './services/inetListing.js';
 import { ProductCache } from './services/productCache.js';
 import { DiscordNotifier } from './services/notifier.js';
 import { decorateAffiliateLink } from './services/affiliateLinks.js';
 
-// The app runs three features: the Elgiganten hotlist, the Komplett demo
-// watcher and the NVIDIA FE stock tracker, each on its own loop. The old
+// The app runs four features: the Elgiganten hotlist, the Komplett demo
+// watcher, the Inet watcher and the NVIDIA FE stock tracker, each on its own loop. The old
 // multi-source scan, its scheduler and the daily digest were retired on
 // 2026-10-31; the scrapers are in archive/scrapers/.
 
@@ -54,7 +57,16 @@ console.log(`[startup] store loaded at ${process.uptime().toFixed(1)}s`);
 // dashboard, deals and product cache.
 const komplettDemoSource = config.sources.find((entry) => entry.id === KOMPLETT_DEMO_SOURCE_ID)
   ?? { id: KOMPLETT_DEMO_SOURCE_ID, label: KOMPLETT_DEMO_SOURCE_LABEL, type: 'komplett-demo' };
-const activeSourceIds = new Set([...config.sources.map((entry) => entry.id), komplettDemoSource.id]);
+// The Inet watcher's two listing feeds (campaign deals, Fyndhörnan outlet).
+const inetSources = Object.fromEntries(Object.entries(INET_LISTING_SOURCES).map(([feed, fallback]) => {
+  const configured = config.sources.find((entry) => entry.id === fallback.id);
+  return [feed, { ...fallback, ...(configured ?? {}), label: configured?.label || fallback.label }];
+}));
+const activeSourceIds = new Set([
+  ...config.sources.map((entry) => entry.id),
+  komplettDemoSource.id,
+  ...Object.values(inetSources).map((source) => source.id)
+]);
 {
   const { hiddenItems, hiddenSourceIds } = reconcileStateWithSources(store.getState(), activeSourceIds);
   if (hiddenItems) {
@@ -69,6 +81,7 @@ state.deals = computeDeals(state, config.thresholds);
 const productCache = new ProductCache();
 const sourceLabelMap = new Map([
   [komplettDemoSource.id, komplettDemoSource.label || KOMPLETT_DEMO_SOURCE_LABEL],
+  ...Object.values(inetSources).map((source) => [source.id, source.label]),
   ...config.sources.map(s => [s.id, s.label || s.id])
 ]);
 const sourceById = new Map(config.sources.map(s => [s.id, s]));
@@ -91,6 +104,7 @@ state.preferences = state.preferences ?? {};
 if (hotlistSource) ensureHotlistConfig(state.preferences, hotlistSource);
 ensureNvidiaConfig(state.preferences);
 ensureKomplettDemoConfig(state.preferences);
+ensureInetConfig(state.preferences);
 
 // Metadata and preferences only: items are written incrementally through
 // flushItems(), and a full item sync of the whole table isn't needed here.
@@ -374,6 +388,64 @@ async function updateKomplettDemoConfig(nextConfig) {
   console.log(`[komplett-demo] Listing: ${listed} demo product(s) from the watcher's saved state (${newKeys.length} added, ${deletedKeys.length} removed).`);
 }
 
+// ── Inet watcher (campaign deals + Fyndhörnan outlet) ──────────
+// Same pattern as the Komplett watcher: its own randomised loop, one Apify
+// run per check (Inet is never contacted from this machine), state in its
+// own SQLite record, and every tracked item mirrored into the listing.
+const INET_RECORD = 'inet';
+const inetPersistence = typeof store.loadRecord === 'function'
+  ? {
+      load: () => store.loadRecord(INET_RECORD),
+      save: (value) => store.saveRecord(INET_RECORD, value)
+    }
+  : {
+      load: () => state.stats.inet ?? null,
+      save: async (value) => {
+        state.stats.inet = value;
+        await commitExclusive(() => store.save({ skipItems: true }));
+      }
+    };
+
+function syncInetIntoListing(watcherState = inetPoller.getState()) {
+  return commitExclusive(async () => {
+    const result = syncInetListing({
+      state,
+      watcherState,
+      config: normalizeInetConfig(state.preferences?.inet ?? {}),
+      sources: inetSources,
+      maxHistoryEntries: config.maxHistoryEntries,
+      getItemHistory: (key) => store.getItemHistory?.(key) ?? []
+    });
+    store.flushItems(result.changedKeys, result.deletedKeys);
+    state.deals = computeDeals(state, config.thresholds);
+    productCache.rebuild(state, sourceLabelMap);
+    if (result.deletedKeys.length) await store.save({ skipItems: true });
+    return result;
+  });
+}
+
+const inetPoller = createInetPoller({
+  getConfig: () => state.preferences?.inet ?? {},
+  notifier,
+  persistence: inetPersistence,
+  onStateChange: (watcherState) => syncInetIntoListing(watcherState)
+});
+
+async function updateInetConfig(nextConfig) {
+  const updated = normalizeInetConfig(nextConfig, state.preferences?.inet ?? {});
+  state.preferences = { ...(state.preferences ?? {}), inet: updated };
+  await (store.savePreferences ?? store.save).call(store);
+  inetPoller.reschedule();
+  // A switched-off feed's items leave the listing straight away.
+  await syncInetIntoListing().catch((error) => console.error('[inet] Listing update failed:', error.message));
+  return updated;
+}
+
+{
+  const { listed, newKeys, deletedKeys } = await syncInetIntoListing();
+  console.log(`[inet] Listing: ${listed} item(s) from the watcher's saved state (${newKeys.length} added, ${deletedKeys.length} removed).`);
+}
+
 const app = await buildApp({
   config,
   store,
@@ -404,6 +476,13 @@ const app = await buildApp({
     update: updateKomplettDemoConfig,
     getStatus: () => komplettDemoPoller.getStatus(),
     pollNow: () => komplettDemoPoller.pollNow()
+  },
+  inet: {
+    getConfig: () => state.preferences?.inet ?? {},
+    update: updateInetConfig,
+    getStatus: () => inetPoller.getStatus(),
+    getCatalog: () => inetPoller.getCatalog(),
+    pollNow: () => inetPoller.pollNow()
   }
 });
 
@@ -430,6 +509,16 @@ komplettDemoPoller.start();
   );
 }
 
+inetPoller.start();
+{
+  const pref = normalizeInetConfig(state.preferences?.inet ?? {});
+  console.log(
+    `[inet] Watcher ${pref.enabled ? 'started' : 'configured (disabled)'} — ` +
+    `every ~${pref.intervalMinutes} min ±${pref.jitterPct}%, feeds: ${inetEnabledFeedIds(pref).join(', ') || 'none'}, ` +
+    `${pref.groups.filter((g) => g.enabled).length} watch group(s).`
+  );
+}
+
 nvidiaPoller.start();
 const nvidiaPref = normalizeNvidiaConfig(state.preferences?.nvidiaFe ?? {});
 if (nvidiaPref.enabled) {
@@ -441,6 +530,7 @@ if (nvidiaPref.enabled) {
 async function shutdown(signal) {
   hotlistPoller.stop();
   komplettDemoPoller.stop();
+  inetPoller.stop();
   nvidiaPoller.stop();
   await app.close();
   console.log(`${signal} received, shutting down.`);

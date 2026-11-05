@@ -49,6 +49,20 @@ import {
   publicKomplettDemoConfig
 } from './services/komplettDemoConfig.js';
 import { buildKomplettDemoUrl } from './sources/komplett.js';
+import {
+  DEFAULT_INET_CONFIG,
+  MAX_CATEGORIES_PER_GROUP as INET_MAX_CATEGORIES_PER_GROUP,
+  MAX_GROUPS as INET_MAX_GROUPS,
+  MAX_INTERVAL_MINUTES as INET_MAX_INTERVAL_MINUTES,
+  MAX_JITTER_PCT as INET_MAX_JITTER_PCT,
+  MAX_KEYWORDS_PER_GROUP as INET_MAX_KEYWORDS_PER_GROUP,
+  MAX_MONTHLY_USD_LIMIT as INET_MAX_MONTHLY_USD,
+  MIN_INTERVAL_MINUTES as INET_MIN_INTERVAL_MINUTES,
+  MIN_MONTHLY_USD as INET_MIN_MONTHLY_USD,
+  normalizeInetConfig,
+  publicInetConfig,
+  validateInetConfigPatch
+} from './services/inetConfig.js';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -145,7 +159,7 @@ async function probeElgigantenReachability(timeoutMs = 8000) {
 
 // ── Route builder ──────────────────────────────────────────────
 
-export async function buildApp({ config, store, productCache, hotlist, fetcher, notifier, nvidia, komplettDemo }) {
+export async function buildApp({ config, store, productCache, hotlist, fetcher, notifier, nvidia, komplettDemo, inet }) {
   const app = Fastify({ logger: false });
   const sourceById = new Map((config.sources ?? []).map((source) => [source.id, source]));
   let preferencesSaveQueue = Promise.resolve();
@@ -662,6 +676,98 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
     } catch (error) {
       reply.code(502);
       return { ok: false, message: error.message, status: komplettDemo.getStatus() };
+    }
+  });
+
+  // ── Inet watcher (campaign deals + Fyndhörnan outlet) ──────────
+  // Same auth level as the Komplett demo routes (dashboard, behind Cloudflare
+  // Access). The webhook token is never echoed back; see publicInetConfig.
+  function requireInet(reply) {
+    if (!inet) {
+      reply.code(404);
+      return { message: 'The Inet watcher is not configured.' };
+    }
+    return null;
+  }
+
+  const inetLimits = {
+    minIntervalMinutes: INET_MIN_INTERVAL_MINUTES,
+    maxIntervalMinutes: INET_MAX_INTERVAL_MINUTES,
+    maxJitterPct: INET_MAX_JITTER_PCT,
+    minMonthlyUsd: INET_MIN_MONTHLY_USD,
+    maxMonthlyUsd: INET_MAX_MONTHLY_USD,
+    maxGroups: INET_MAX_GROUPS,
+    maxKeywordsPerGroup: INET_MAX_KEYWORDS_PER_GROUP,
+    maxCategoriesPerGroup: INET_MAX_CATEGORIES_PER_GROUP,
+    defaults: DEFAULT_INET_CONFIG
+  };
+  const inetCatalog = () => (typeof inet?.getCatalog === 'function' ? inet.getCatalog() : []);
+
+  app.get('/api/inet', async (_, reply) => {
+    const missing = requireInet(reply);
+    if (missing) return missing;
+    return {
+      config: publicInetConfig(inet.getConfig()),
+      status: inet.getStatus(),
+      catalog: inetCatalog(),
+      limits: inetLimits
+    };
+  });
+
+  app.get('/api/inet/config', async (_, reply) => {
+    const missing = requireInet(reply);
+    if (missing) return missing;
+    return { config: publicInetConfig(inet.getConfig()), limits: inetLimits };
+  });
+
+  async function updateInet(request, reply) {
+    const missing = requireInet(reply);
+    if (missing) return missing;
+    const body = request.body ?? {};
+    const problem = validateInetConfigPatch(body);
+    if (problem) {
+      reply.code(400);
+      return { message: problem };
+    }
+    const patch = { ...body };
+    if (Object.hasOwn(patch, 'discordWebhookUrl')) {
+      const raw = String(patch.discordWebhookUrl ?? '').trim();
+      if (isMaskedWebhookUrl(raw)) {
+        delete patch.discordWebhookUrl;
+      } else if (raw && !normalizeWebhookUrl(raw)) {
+        reply.code(400);
+        return { message: 'Expected a Discord webhook URL (https://discord.com/api/webhooks/…).' };
+      }
+    }
+    const current = normalizeInetConfig(inet.getConfig());
+    const updated = await inet.update(normalizeInetConfig(patch, current));
+    return { config: publicInetConfig(updated), status: inet.getStatus() };
+  }
+
+  app.post('/api/inet/config', updateInet);
+  app.put('/api/inet', updateInet);
+
+  app.get('/api/inet/status', async (_, reply) => {
+    const missing = requireInet(reply);
+    if (missing) return missing;
+    return inet.getStatus();
+  });
+
+  app.get('/api/inet/catalog', async (_, reply) => {
+    const missing = requireInet(reply);
+    if (missing) return missing;
+    return inetCatalog();
+  });
+
+  app.post('/api/inet/poll', async (_, reply) => {
+    const missing = requireInet(reply);
+    if (missing) return missing;
+    try {
+      const result = await inet.pollNow();
+      return { ok: true, result, status: inet.getStatus() };
+    } catch (error) {
+      reply.code(502);
+      return { ok: false, message: error.message, status: inet.getStatus() };
     }
   });
 

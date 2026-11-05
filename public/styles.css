@@ -744,13 +744,13 @@ sl-dialog.dialog { --width: min(640px, 100vw); }
 sl-dialog.dialog::part(panel) { background: var(--app-bg); border-radius: 16px; }
 sl-dialog.dialog::part(title) { font-size: 1.0625rem; font-weight: 700; }
 
-/* Short tab names ("Hotlist", "Komplett") on narrow phones so all three fit. */
+/* Short tab names ("Hotlist", "Komplett") on narrow phones so all four fit. */
 @media (max-width: 419px) {
   .tab-long { display: none; }
 }
 
 @media (max-width: 639px) {
-  /* Three tabs fit side by side down to 360 px. */
+  /* Four tabs fit side by side down to 360 px. */
   #settings-tabs sl-tab::part(base) { padding: 0 8px; font-size: 0.8125rem; }
   sl-dialog.dialog::part(panel) { max-height: calc(100dvh - 24px); }
 }
@@ -1083,7 +1083,11 @@ sl-tag::part(remove-button__base) { padding: 4px; }
   .kd-cat-list { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
 }
 
-/* Latest finds (Komplett) */
+/* Inet watch groups */
+.ig-cat-hint { margin: -10px 0 0; }
+.ig-matches { margin: 0; }
+
+/* Latest finds (Komplett, Inet) */
 .find-list {
   list-style: none;
   margin: 0 0 10px;

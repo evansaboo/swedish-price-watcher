@@ -114,15 +114,15 @@ export function rollUsageMonth(usage, nowMs) {
   return usage;
 }
 
-function modelRunUsd(urlCount) {
-  return COST_MODEL.perRunUsd + COST_MODEL.perUrlUsd * Math.max(urlCount, 0);
+function modelRunUsd(urlCount, model = COST_MODEL) {
+  return model.perRunUsd + model.perUrlUsd * Math.max(urlCount, 0);
 }
 
 /** Expected cost of one run with `urlCount` URLs, calibrated on this month's real runs. */
-export function estimateRunUsd(usage, urlCount) {
-  const model = modelRunUsd(urlCount);
+export function estimateRunUsd(usage, urlCount, costModel = COST_MODEL) {
+  const model = modelRunUsd(urlCount, costModel);
   if (!usage || usage.runs < 3 || !(usage.usd > 0)) return model;
-  const modelled = usage.runs * COST_MODEL.perRunUsd + usage.urls * COST_MODEL.perUrlUsd;
+  const modelled = usage.runs * costModel.perRunUsd + usage.urls * costModel.perUrlUsd;
   if (!(modelled > 0)) return model;
   // Bounded so one odd run can't swing the guard wildly.
   const scale = Math.min(Math.max(usage.usd / modelled, 0.25), 4);
@@ -133,12 +133,12 @@ export function estimateRunUsd(usage, urlCount) {
  * How long the interval must be for the rest of the month to fit the budget.
  * `intervalMs` is never shorter than the configured base interval.
  */
-export function computeCostGuard({ usage, config, urlCount, nowMs }) {
+export function computeCostGuard({ usage, config, urlCount, nowMs, costModel = COST_MODEL }) {
   const current = usage?.month === monthKey(nowMs) ? usage : { month: monthKey(nowMs), usd: 0, runs: 0, urls: 0 };
   const baseIntervalMs = config.intervalMinutes * 60 * 1000;
   const maxUsd = config.maxMonthlyUsd;
   const spentUsd = current.usd;
-  const estimatedRunUsd = estimateRunUsd(current, urlCount);
+  const estimatedRunUsd = estimateRunUsd(current, urlCount, costModel);
   const remainingMs = msUntilMonthEnd(nowMs);
   const budgetLeftUsd = maxUsd - spentUsd;
 
@@ -185,12 +185,19 @@ export function computeCostGuard({ usage, config, urlCount, nowMs }) {
  * backoff after failures, ±jitter, never below MIN_DELAY_MS, and backoff
  * never above MAX_BACKOFF_MS unless the cost guard asks for longer.
  */
-export function computeNextDelayMs({ config, consecutiveFailures = 0, costGuardIntervalMs = 0, random = Math.random }) {
-  const base = Math.max(config.intervalMinutes * 60 * 1000, costGuardIntervalMs || 0, MIN_DELAY_MS);
-  const ceiling = Math.max(MAX_BACKOFF_MS, base);
+export function computeNextDelayMs({
+  config,
+  consecutiveFailures = 0,
+  costGuardIntervalMs = 0,
+  random = Math.random,
+  minDelayMs = MIN_DELAY_MS,
+  maxBackoffMs = MAX_BACKOFF_MS,
+}) {
+  const base = Math.max(config.intervalMinutes * 60 * 1000, costGuardIntervalMs || 0, minDelayMs);
+  const ceiling = Math.max(maxBackoffMs, base);
   let delay = base;
   if (consecutiveFailures > 0) {
-    delay = Math.max(base, Math.min(base * 2 ** Math.min(consecutiveFailures, 8), MAX_BACKOFF_MS));
+    delay = Math.max(base, Math.min(base * 2 ** Math.min(consecutiveFailures, 8), maxBackoffMs));
   }
   const jitterPct = Math.min(Math.max(Number(config.jitterPct) || 0, 0), 50);
   if (jitterPct) {
@@ -198,7 +205,7 @@ export function computeNextDelayMs({ config, consecutiveFailures = 0, costGuardI
     delay = delay - spread + random() * spread * 2;
   }
   if (consecutiveFailures > 0) delay = Math.min(delay, ceiling);
-  return Math.round(Math.max(MIN_DELAY_MS, delay));
+  return Math.round(Math.max(minDelayMs, delay));
 }
 
 // ── Diffing ────────────────────────────────────────────────────
