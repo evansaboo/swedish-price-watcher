@@ -61,6 +61,20 @@ import {
   publicInetConfig,
   validateInetConfigPatch
 } from './services/inetConfig.js';
+import {
+  DEFAULT_WEBHALLEN_CONFIG,
+  MAX_CATEGORIES_PER_GROUP as WEBHALLEN_MAX_CATEGORIES_PER_GROUP,
+  MAX_GROUPS as WEBHALLEN_MAX_GROUPS,
+  MAX_INTERVAL_MINUTES as WEBHALLEN_MAX_INTERVAL_MINUTES,
+  MAX_JITTER_PCT as WEBHALLEN_MAX_JITTER_PCT,
+  MAX_KEYWORDS_PER_GROUP as WEBHALLEN_MAX_KEYWORDS_PER_GROUP,
+  MAX_MONTHLY_USD_LIMIT as WEBHALLEN_MAX_MONTHLY_USD,
+  MIN_INTERVAL_MINUTES as WEBHALLEN_MIN_INTERVAL_MINUTES,
+  MIN_MONTHLY_USD as WEBHALLEN_MIN_MONTHLY_USD,
+  normalizeWebhallenConfig,
+  publicWebhallenConfig,
+  validateWebhallenConfigPatch
+} from './services/webhallenConfig.js';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -157,7 +171,7 @@ async function probeElgigantenReachability(timeoutMs = 8000) {
 
 // ── Route builder ──────────────────────────────────────────────
 
-export async function buildApp({ config, store, productCache, hotlist, fetcher, notifier, komplettDemo, inet }) {
+export async function buildApp({ config, store, productCache, hotlist, fetcher, notifier, komplettDemo, inet, webhallen }) {
   const app = Fastify({ logger: false });
   const sourceById = new Map((config.sources ?? []).map((source) => [source.id, source]));
   let preferencesSaveQueue = Promise.resolve();
@@ -766,6 +780,99 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
     } catch (error) {
       reply.code(502);
       return { ok: false, message: error.message, status: inet.getStatus() };
+    }
+  });
+
+  // ── Webhallen watcher (campaign deals + Fyndvaror outlet) ──────
+  // Same auth level as the Inet and Komplett demo routes (dashboard, behind
+  // Cloudflare Access). The webhook token is never echoed back; see
+  // publicWebhallenConfig.
+  function requireWebhallen(reply) {
+    if (!webhallen) {
+      reply.code(404);
+      return { message: 'The Webhallen watcher is not configured.' };
+    }
+    return null;
+  }
+
+  const webhallenLimits = {
+    minIntervalMinutes: WEBHALLEN_MIN_INTERVAL_MINUTES,
+    maxIntervalMinutes: WEBHALLEN_MAX_INTERVAL_MINUTES,
+    maxJitterPct: WEBHALLEN_MAX_JITTER_PCT,
+    minMonthlyUsd: WEBHALLEN_MIN_MONTHLY_USD,
+    maxMonthlyUsd: WEBHALLEN_MAX_MONTHLY_USD,
+    maxGroups: WEBHALLEN_MAX_GROUPS,
+    maxKeywordsPerGroup: WEBHALLEN_MAX_KEYWORDS_PER_GROUP,
+    maxCategoriesPerGroup: WEBHALLEN_MAX_CATEGORIES_PER_GROUP,
+    defaults: DEFAULT_WEBHALLEN_CONFIG
+  };
+  const webhallenCatalog = () => (typeof webhallen?.getCatalog === 'function' ? webhallen.getCatalog() : []);
+
+  app.get('/api/webhallen', async (_, reply) => {
+    const missing = requireWebhallen(reply);
+    if (missing) return missing;
+    return {
+      config: publicWebhallenConfig(webhallen.getConfig()),
+      status: webhallen.getStatus(),
+      catalog: webhallenCatalog(),
+      limits: webhallenLimits
+    };
+  });
+
+  app.get('/api/webhallen/config', async (_, reply) => {
+    const missing = requireWebhallen(reply);
+    if (missing) return missing;
+    return { config: publicWebhallenConfig(webhallen.getConfig()), limits: webhallenLimits };
+  });
+
+  async function updateWebhallen(request, reply) {
+    const missing = requireWebhallen(reply);
+    if (missing) return missing;
+    const body = request.body ?? {};
+    const problem = validateWebhallenConfigPatch(body);
+    if (problem) {
+      reply.code(400);
+      return { message: problem };
+    }
+    const patch = { ...body };
+    if (Object.hasOwn(patch, 'discordWebhookUrl')) {
+      const raw = String(patch.discordWebhookUrl ?? '').trim();
+      if (isMaskedWebhookUrl(raw)) {
+        delete patch.discordWebhookUrl;
+      } else if (raw && !normalizeWebhookUrl(raw)) {
+        reply.code(400);
+        return { message: 'Expected a Discord webhook URL (https://discord.com/api/webhooks/…).' };
+      }
+    }
+    const current = normalizeWebhallenConfig(webhallen.getConfig());
+    const updated = await webhallen.update(normalizeWebhallenConfig(patch, current));
+    return { config: publicWebhallenConfig(updated), status: webhallen.getStatus() };
+  }
+
+  app.post('/api/webhallen/config', updateWebhallen);
+  app.put('/api/webhallen', updateWebhallen);
+
+  app.get('/api/webhallen/status', async (_, reply) => {
+    const missing = requireWebhallen(reply);
+    if (missing) return missing;
+    return webhallen.getStatus();
+  });
+
+  app.get('/api/webhallen/catalog', async (_, reply) => {
+    const missing = requireWebhallen(reply);
+    if (missing) return missing;
+    return webhallenCatalog();
+  });
+
+  app.post('/api/webhallen/poll', async (_, reply) => {
+    const missing = requireWebhallen(reply);
+    if (missing) return missing;
+    try {
+      const result = await webhallen.pollNow();
+      return { ok: true, result, status: webhallen.getStatus() };
+    } catch (error) {
+      reply.code(502);
+      return { ok: false, message: error.message, status: webhallen.getStatus() };
     }
   });
 

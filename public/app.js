@@ -140,6 +140,23 @@ const el = {
   inetGroups: $('#inet-groups'),
   inetAlerts: $('#inet-alerts'),
   inetFinds: $('#inet-finds'),
+  whStatus: $('#wh-status'),
+  whEnabled: $('#wh-enabled'),
+  whFeedDeals: $('#wh-feed-deals'),
+  whFeedOutlet: $('#wh-feed-outlet'),
+  whInterval: $('#wh-interval'),
+  whJitter: $('#wh-jitter'),
+  whMaxUsd: $('#wh-max-usd'),
+  whIntervalHint: $('#wh-interval-hint'),
+  whDropPct: $('#wh-drop-pct'),
+  whBackInStock: $('#wh-back-in-stock'),
+  whWebhook: $('#wh-webhook'),
+  whCountLabel: $('#wh-count-label'),
+  whPollNow: $('#wh-poll-now'),
+  whAddGroup: $('#wh-add-group'),
+  whGroups: $('#wh-groups'),
+  whAlerts: $('#wh-alerts'),
+  whFinds: $('#wh-finds'),
   saveSettingsBtn: $('#save-settings-btn'),
   drawerSaveStatus: $('#drawer-save-status'),
   themeToggle: $('#theme-toggle')
@@ -1013,11 +1030,12 @@ function activeSettingsTab() {
 
 function loadDrawerData() {
   // Hotlist config, status and the Elgiganten category catalogue, plus the
-  // Komplett demo and Inet watchers. Each loads independently; a failure
-  // hides its tab.
+  // Komplett demo, Inet and Webhallen watchers. Each loads independently; a
+  // failure hides its tab.
   loadHotlist();
   loadKomplettDemo();
   loadInet();
+  loadWebhallen();
 }
 
 function hideSettingsTab(name) {
@@ -1430,6 +1448,7 @@ function startHotlistStatusPolling() {
     refreshHotlistStatus();
     refreshKomplettDemoStatus();
     refreshInetStatus();
+    refreshWebhallenStatus();
   }, 10_000);
 }
 
@@ -2049,6 +2068,352 @@ function collectInetConfig() {
   };
 }
 
+// ── WEBHALLEN (campaign deals + Fyndvaror outlet watcher) ───────
+// Same architecture and configurable settings as the Inet watcher: one Apify
+// run per check sweeping both feeds, monthly spend cap, and watch groups.
+
+let webhallenData = null; // { config, catalog, limits, lastStatus }
+const webhallenOpenGroups = new Set();
+const WEBHALLEN_FEED_LABELS = { deals: 'Kampanjer', outlet: 'Fyndvaror' };
+const WEBHALLEN_GROUP_FEEDS = { both: 'Deals and outlet', deals: 'Campaign deals only', outlet: 'Outlet only' };
+const WEBHALLEN_MIN_INTERVAL_MIN = 10;
+
+function webhallenCatalogMaps() {
+  const catalog = webhallenData?.catalog ?? [];
+  const counts = new Map();
+  for (const entry of catalog) counts.set(entry.name, (counts.get(entry.name) ?? 0) + 1);
+  const idToName = new Map();
+  const nameToId = new Map();
+  for (const entry of catalog) {
+    const name = counts.get(entry.name) > 1 ? `${entry.name} (${entry.id})` : entry.name;
+    idToName.set(String(entry.id), name);
+    nameToId.set(name, String(entry.id));
+  }
+  return { idToName, nameToId, names: [...nameToId.keys()] };
+}
+
+function webhallenCategoryLabel(id, maps = webhallenCatalogMaps()) {
+  return maps.idToName.get(String(id)) ?? String(id);
+}
+
+function createEmptyWebhallenGroup() {
+  return {
+    id: `wg-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+    name: '',
+    enabled: true,
+    feeds: 'both',
+    keywords: [],
+    strictKeywordMatch: true,
+    categories: [],
+    minDiscountPct: null,
+    maxPriceSek: null,
+    inStockOnly: false,
+    priceDropPct: null
+  };
+}
+
+function webhallenGroupIsActive(group) {
+  return Boolean(group.enabled && (group.keywords.length || group.categories.length || (group.minDiscountPct ?? 0) > 0));
+}
+
+function webhallenGroupSummary(group) {
+  const parts = [];
+  if (group.keywords.length) parts.push(`${group.keywords.length} keyword${group.keywords.length === 1 ? '' : 's'}`);
+  if (group.categories.length) parts.push(`${group.categories.length} categor${group.categories.length === 1 ? 'y' : 'ies'}`);
+  if ((group.minDiscountPct ?? 0) > 0) parts.push(`≥${group.minDiscountPct}% off`);
+  if (group.feeds !== 'both') parts.push(group.feeds === 'deals' ? 'deals' : 'outlet');
+  const info = (webhallenData?.lastStatus?.groups ?? []).find((g) => g.id === group.id);
+  if (info?.active && Number.isFinite(info.matches)) parts.push(`${info.matches} match${info.matches === 1 ? '' : 'es'} now`);
+  return parts.join(' · ') || 'Add a keyword, category or min discount';
+}
+
+function createWebhallenGroupElement(group) {
+  const details = document.createElement('sl-details');
+  details.className = `watch${group.enabled ? '' : ' is-disabled'}`;
+  details.open = webhallenOpenGroups.has(group.id);
+  const numeric = (value) => (value != null ? value : '');
+  const maps = webhallenCatalogMaps();
+  const categoryChips = group.categories.map((id) => webhallenCategoryLabel(id, maps));
+
+  details.innerHTML = `
+    <div slot="summary" class="watch-summary">
+      <span class="watch-title">
+        <span class="watch-name"></span>
+        <sl-badge class="watch-off" variant="neutral" pill>Off</sl-badge>
+      </span>
+      <span class="watch-meta"></span>
+    </div>
+    <div class="watch-body">
+      <div class="watch-top">
+        <sl-switch class="wg-enabled" ${group.enabled ? 'checked' : ''}>Enabled</sl-switch>
+        <sl-button class="wg-delete" variant="danger" outline size="small"><sl-icon slot="prefix" name="trash3"></sl-icon>Delete</sl-button>
+      </div>
+      <sl-input class="wg-name" label="Group name" placeholder="e.g. Monitors" value="${escapeHtml(group.name)}"></sl-input>
+      <sl-select class="wg-feeds" label="Feeds" value="${escapeHtml(group.feeds)}">
+        ${Object.entries(WEBHALLEN_GROUP_FEEDS).map(([value, label]) => `<sl-option value="${value}">${escapeHtml(label)}</sl-option>`).join('')}
+      </sl-select>
+      ${chipFieldHtml({ id: `wg-kw-${group.id}`, label: 'Keywords', hint: 'any one matches; type, then tap Add', placeholder: 'e.g. RTX 5090, OLED' })}
+      <sl-switch class="wg-strict" ${group.strictKeywordMatch !== false ? 'checked' : ''} help-text="On: every word must be a whole word of the title. Off: also matches inside words (5090 → 5090D).">Exact title match</sl-switch>
+      ${chipFieldHtml({ id: `wg-cat-${group.id}`, label: 'Categories', hint: 'any one matches', placeholder: maps.names.length ? 'Search Webhallen categories…' : 'No categories loaded yet' })}
+      ${maps.names.length ? '' : '<p class="wg-cat-hint muted small">Webhallen’s categories load with the first check. Keywords work without them.</p>'}
+      <div class="form-grid-3">
+        <sl-input class="wg-mindiscount" label="Min off %" type="number" inputmode="numeric" placeholder="any" min="0" max="99" step="1" value="${numeric(group.minDiscountPct)}"></sl-input>
+        <sl-input class="wg-maxprice" label="Max price" type="number" inputmode="numeric" placeholder="any" min="0" step="100" value="${numeric(group.maxPriceSek)}"></sl-input>
+        <sl-input class="wg-droppct" label="Drop alert %" type="number" inputmode="numeric" placeholder="global" min="0" max="90" step="1" value="${numeric(group.priceDropPct)}"></sl-input>
+      </div>
+      <sl-switch class="wg-instock" ${group.inStockOnly ? 'checked' : ''} help-text="Web or store stock. Some Fyndvaror are held in a store.">In stock only</sl-switch>
+    </div>`;
+
+  const syncSummary = () => {
+    details.querySelector('.watch-name').textContent = group.name || 'Untitled group';
+    details.querySelector('.watch-meta').textContent = webhallenGroupSummary(group);
+    details.classList.toggle('is-disabled', !group.enabled);
+    renderWebhallenCount();
+  };
+  syncSummary();
+
+  details.addEventListener('sl-show', (e) => { if (e.target === details) webhallenOpenGroups.add(group.id); });
+  details.addEventListener('sl-hide', (e) => { if (e.target === details) webhallenOpenGroups.delete(group.id); });
+  details.querySelector('.wg-enabled').addEventListener('sl-change', (e) => { group.enabled = e.target.checked; syncSummary(); });
+  details.querySelector('.wg-name').addEventListener('sl-input', (e) => { group.name = e.target.value; syncSummary(); });
+  details.querySelector('.wg-feeds').addEventListener('sl-change', (e) => { group.feeds = e.target.value || 'both'; syncSummary(); });
+  details.querySelector('.wg-strict').addEventListener('sl-change', (e) => { group.strictKeywordMatch = e.target.checked; });
+  details.querySelector('.wg-instock').addEventListener('sl-change', (e) => { group.inStockOnly = e.target.checked; });
+  details.querySelector('.wg-delete').addEventListener('click', () => {
+    webhallenData.config.groups = webhallenData.config.groups.filter((g) => g.id !== group.id);
+    webhallenOpenGroups.delete(group.id);
+    renderWebhallenGroups();
+  });
+  const numberField = (selector, key) => {
+    details.querySelector(selector).addEventListener('sl-input', (e) => {
+      const raw = String(e.target.value ?? '').trim();
+      const parsed = Number(raw);
+      group[key] = raw === '' || !Number.isFinite(parsed) ? null : parsed;
+      syncSummary();
+    });
+  };
+  numberField('.wg-mindiscount', 'minDiscountPct');
+  numberField('.wg-maxprice', 'maxPriceSek');
+  numberField('.wg-droppct', 'priceDropPct');
+
+  wireChipInput({
+    container: details.querySelector(`#wg-kw-${group.id}`),
+    items: group.keywords,
+    onAdd: syncSummary, onRemove: syncSummary,
+    allOptions: null
+  });
+  wireChipInput({
+    container: details.querySelector(`#wg-cat-${group.id}`),
+    items: categoryChips,
+    onAdd: (name) => {
+      const id = maps.nameToId.get(name);
+      if (!id) {
+        categoryChips.splice(categoryChips.indexOf(name), 1);
+        showToast(maps.names.length ? `“${name}” is not a Webhallen category. Pick one from the list.` : 'Webhallen’s categories load with the first check.', 'warning');
+        return;
+      }
+      if (!group.categories.includes(id)) group.categories.push(id);
+      syncSummary();
+    },
+    onRemove: (name) => {
+      const id = maps.nameToId.get(name) ?? name;
+      group.categories = group.categories.filter((c) => c !== id);
+      syncSummary();
+    },
+    allOptions: maps.names
+  });
+
+  return details;
+}
+
+function renderWebhallenCount() {
+  if (!el.whCountLabel || !webhallenData) return;
+  const groups = webhallenData.config.groups ?? [];
+  const active = groups.filter(webhallenGroupIsActive).length;
+  el.whCountLabel.textContent = groups.length ? `${active}/${groups.length} active · 1 Apify run per check` : 'No watch groups';
+}
+
+function renderWebhallenGroups() {
+  if (!el.whGroups || !webhallenData) return;
+  el.whGroups.innerHTML = '';
+  renderWebhallenCount();
+  if (!webhallenData.config.groups.length) {
+    el.whGroups.innerHTML = '<div class="empty-mini"><sl-icon name="bell"></sl-icon><strong>No watch groups yet</strong><span>Add a group with keywords or categories to get Discord alerts. Without groups, Webhallen items still appear in the listing.</span></div>';
+    return;
+  }
+  for (const group of webhallenData.config.groups) el.whGroups.appendChild(createWebhallenGroupElement(group));
+}
+
+function renderWebhallenIntervalHint() {
+  if (!el.whIntervalHint) return;
+  const raw = Number(el.whInterval.value);
+  const base = Math.min(240, Math.max(WEBHALLEN_MIN_INTERVAL_MIN, Number.isFinite(raw) && raw > 0 ? raw : WEBHALLEN_MIN_INTERVAL_MIN));
+  const jitter = Math.min(50, Math.max(0, Number(el.whJitter.value) || 0));
+  const lo = Math.max(WEBHALLEN_MIN_INTERVAL_MIN, Math.round(base * (1 - jitter / 100)));
+  const hi = Math.round(base * (1 + jitter / 100));
+  const runUsd = webhallenData?.lastStatus?.costGuard?.estimatedRunUsd;
+  const monthly = Number.isFinite(runUsd) ? ` About ${formatUsd(runUsd * (30 * 24 * 60) / base, 2)}/month at this rate, before the cost guard.` : '';
+  el.whIntervalHint.textContent = (jitter
+    ? `Checks Webhallen at random every ${lo}–${hi} min (~${base} min).`
+    : `Checks Webhallen every ${base} min.`) + ` Minimum ${WEBHALLEN_MIN_INTERVAL_MIN} min.${monthly}`;
+}
+for (const input of [el.whInterval, el.whJitter]) {
+  input?.addEventListener('sl-input', renderWebhallenIntervalHint);
+  input?.addEventListener('input', renderWebhallenIntervalHint);
+}
+
+function renderWebhallenStatus(status) {
+  if (!el.whStatus) return;
+  if (!status) { el.whStatus.innerHTML = ''; return; }
+  if (webhallenData) webhallenData.lastStatus = status;
+  const guard = status.costGuard ?? {};
+  const feeds = status.feeds ?? [];
+  const notes = [];
+  if (guard.stretched && !guard.exhausted) {
+    notes.push(`Cost guard: checking every ~${Math.round(status.effectiveIntervalMinutes)} min to stay under ${formatUsd(guard.maxMonthlyUsd, 2)} this month.`);
+  }
+  if (guard.exhausted) notes.push('This month\'s Apify cap is used up; automatic checks resume next month.');
+  if (status.lastWarning) notes.push(status.lastWarning);
+  for (const feed of feeds) if (feed.enabled && feed.lastError) notes.push(`${feed.label}: ${feed.lastError}`);
+  if (status.lastAlertCount) notes.push(`${status.lastAlertCount} alert(s) on the last check.`);
+  if (status.pendingAlerts) notes.push(`${status.pendingAlerts} Discord alert(s) waiting to be retried.`);
+  const feedStat = (id) => {
+    const feed = feeds.find((f) => f.id === id);
+    if (!feed?.enabled) return 'off';
+    if (!feed.seeded && !feed.tracked) return 'not yet';
+    return `${feed.tracked} items · ${feed.inStock} in stock`;
+  };
+  const activeGroups = (status.groups ?? []).filter((g) => g.active).length;
+
+  el.whStatus.innerHTML = statusCardHtml({
+    stateClass: status.lastError ? 'error' : status.enabled ? 'ok' : 'idle',
+    stateLabel: status.lastError
+      ? 'Failing'
+      : !status.enabled ? 'Paused'
+        : status.running ? 'Checking…'
+          : guard.exhausted ? 'Monthly cap reached'
+            : guard.stretched ? 'Watching (slowed by cost guard)' : 'Watching',
+    meta: `${status.trackedProducts ?? 0} items · ${activeGroups} active group${activeGroups === 1 ? '' : 's'} · ${status.pollCount ?? 0} checks`,
+    stats: [
+      ['Last check', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
+      ['Next check', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
+      ['Apify this month', `${formatUsd(guard.spentUsd)} / ${formatUsd(guard.maxMonthlyUsd, 2)}`],
+      ['Projected', formatUsd(guard.projectedMonthUsd, 2)],
+      ['Kampanjer', feedStat('deals')],
+      ['Fyndvaror', feedStat('outlet')]
+    ],
+    error: status.lastError,
+    notes
+  });
+
+  renderWebhallenFinds(status);
+  renderWebhallenIntervalHint();
+  if (el.whGroups && webhallenData) {
+    const metas = el.whGroups.querySelectorAll('sl-details.watch .watch-meta');
+    webhallenData.config.groups.forEach((group, index) => { if (metas[index]) metas[index].textContent = webhallenGroupSummary(group); });
+  }
+}
+
+function webhallenFindItem(entry, { reason = null } = {}) {
+  const when = reason ? timeAgo(entry.at) : timeAgo(entry.firstSeenAt);
+  const was = reason === 'price-drop' && Number.isFinite(entry.previousPriceSek)
+    ? entry.previousPriceSek
+    : (Number.isFinite(entry.listPriceSek) && entry.listPriceSek > entry.priceSek ? entry.listPriceSek : null);
+  const priceLine = was ? `${formatSek(entry.priceSek)} <s>${formatSek(was)}</s>` : formatSek(entry.priceSek);
+  const off = Number.isFinite(entry.discountPct) && entry.discountPct > 0 ? `−${entry.discountPct}%` : '';
+  const tags = [
+    `<sl-badge variant="neutral" pill>${escapeHtml(WEBHALLEN_FEED_LABELS[entry.feed] ?? entry.feed ?? '')}</sl-badge>`,
+    reason ? `<sl-badge variant="${KD_REASON_VARIANTS[reason] ?? 'neutral'}" pill>${escapeHtml(KD_REASON_LABELS[reason] ?? reason)}</sl-badge>` : '',
+    reason && entry.delivered === false ? `<sl-badge variant="neutral" pill title="${escapeHtml(entry.note ?? '')}">not sent</sl-badge>` : '',
+    entry.inStock === false ? '<sl-badge variant="neutral" pill>out of stock</sl-badge>' : ''
+  ].join('');
+  const groups = (entry.groupNames ?? []).join(', ');
+  return `
+    <li class="find">
+      ${entry.imageUrl ? `<img src="${escapeHtml(entry.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="find-noimg"></span>'}
+      <div class="find-body">
+        <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.title)}</a>
+        <div class="find-meta">
+          <strong>${priceLine}</strong>
+          ${off ? `<span>${escapeHtml(off)}</span>` : ''}
+          ${entry.categoryLabel ? `<span>${escapeHtml(entry.categoryLabel)}</span>` : ''}
+          ${groups ? `<span>${escapeHtml(groups)}</span>` : ''}
+          ${when ? `<span>${escapeHtml(when)}</span>` : ''}
+          ${tags}
+        </div>
+      </div>
+    </li>`;
+}
+
+function renderWebhallenFinds(status) {
+  if (!el.whAlerts || !el.whFinds) return;
+  const alerts = (status?.recentAlerts ?? []).slice(0, 10);
+  const finds = status?.latestFinds ?? [];
+  el.whAlerts.innerHTML = alerts.map((entry) => webhallenFindItem(entry, { reason: entry.reason })).join('');
+  el.whAlerts.classList.toggle('hidden', alerts.length === 0);
+  const anyFeed = (status?.feeds ?? []).some((f) => f.enabled);
+  el.whFinds.innerHTML = finds.length
+    ? finds.map((entry) => webhallenFindItem(entry)).join('')
+    : `<li class="find-empty">${!anyFeed ? 'Switch on at least one feed above.' : (status?.trackedProducts ? 'No current item matches your watch groups.' : 'Nothing recorded yet. The first check records what is listed now, without alerts.')}</li>`;
+  for (const img of [...el.whAlerts.querySelectorAll('img'), ...el.whFinds.querySelectorAll('img')]) {
+    img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'find-noimg' })), { once: true });
+  }
+}
+
+function renderWebhallenForm() {
+  if (!webhallenData) return;
+  const cfg = webhallenData.config;
+  el.whEnabled.checked = cfg.enabled === true;
+  el.whFeedDeals.checked = cfg.feeds?.deals !== false;
+  el.whFeedOutlet.checked = cfg.feeds?.outlet !== false;
+  el.whInterval.value = String(cfg.intervalMinutes ?? '');
+  el.whJitter.value = String(cfg.jitterPct ?? '');
+  el.whMaxUsd.value = String(cfg.maxMonthlyUsd ?? '');
+  el.whDropPct.value = String(cfg.notifyPriceDropPercent ?? '');
+  el.whBackInStock.checked = cfg.notifyBackInStock !== false;
+  el.whWebhook.value = cfg.discordWebhookUrl ?? '';
+  renderWebhallenIntervalHint();
+  renderWebhallenGroups();
+}
+
+async function loadWebhallen() {
+  try {
+    const payload = await fetchJson('/api/webhallen');
+    webhallenData = { config: payload.config, catalog: payload.catalog ?? [], limits: payload.limits ?? {}, lastStatus: payload.status };
+    renderWebhallenForm();
+    renderWebhallenStatus(payload.status);
+  } catch {
+    hideSettingsTab('webhallen');
+  }
+}
+
+async function refreshWebhallenStatus() {
+  if (!webhallenData) return;
+  try {
+    renderWebhallenStatus(await fetchJson('/api/webhallen/status'));
+  } catch { /* the next tick retries */ }
+}
+
+function collectWebhallenConfig() {
+  const cfg = webhallenData.config;
+  const toNumber = (input, fallback) => {
+    const raw = inputValue(input);
+    const parsed = Number(raw);
+    return raw !== '' && Number.isFinite(parsed) ? parsed : fallback;
+  };
+  return {
+    enabled: el.whEnabled.checked,
+    feeds: { deals: el.whFeedDeals.checked, outlet: el.whFeedOutlet.checked },
+    intervalMinutes: toNumber(el.whInterval, cfg.intervalMinutes),
+    jitterPct: toNumber(el.whJitter, cfg.jitterPct),
+    maxMonthlyUsd: toNumber(el.whMaxUsd, cfg.maxMonthlyUsd),
+    notifyPriceDropPercent: toNumber(el.whDropPct, cfg.notifyPriceDropPercent),
+    notifyBackInStock: el.whBackInStock.checked,
+    discordWebhookUrl: inputValue(el.whWebhook),
+    groups: cfg.groups
+  };
+}
+
 // ── SAVE SETTINGS ───────────────────────────────────────────────
 async function saveAllSettings() {
   el.saveSettingsBtn.loading = true;
@@ -2090,6 +2455,18 @@ async function saveAllSettings() {
       inetData.config = payload.config;
       renderInetForm();
       renderInetStatus(payload.status);
+    }
+
+    // Save the Webhallen watcher
+    if (webhallenData) {
+      const payload = await fetchJson('/api/webhallen/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(collectWebhallenConfig())
+      });
+      webhallenData.config = payload.config;
+      renderWebhallenForm();
+      renderWebhallenStatus(payload.status);
     }
 
     el.drawerSaveStatus.textContent = '✓ Saved';
@@ -2261,6 +2638,38 @@ function bindEvents() {
       refreshInetStatus();
     } finally {
       el.inetPollNow.loading = false;
+    }
+  });
+
+  // Webhallen watcher
+  el.whAddGroup?.addEventListener('click', () => {
+    if (!webhallenData) return;
+    const group = createEmptyWebhallenGroup();
+    webhallenOpenGroups.add(group.id);
+    webhallenData.config.groups.push(group);
+    renderWebhallenGroups();
+    el.whGroups.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  el.whPollNow?.addEventListener('click', async () => {
+    if (!webhallenData) return;
+    if (!el.whFeedDeals.checked && !el.whFeedOutlet.checked) {
+      showToast('Switch on at least one Webhallen feed and save first.', 'error');
+      return;
+    }
+    el.whPollNow.loading = true;
+    try {
+      const res = await fetchJson('/api/webhallen/poll', { method: 'POST' });
+      renderWebhallenStatus(res.status);
+      const r = res.result ?? {};
+      showToast(`Webhallen: ${r.count ?? 0} item(s), ${r.alertCount ?? 0} alert(s).`, 'success');
+      // The first check fills the category list.
+      fetchJson('/api/webhallen/catalog').then((catalog) => { webhallenData.catalog = catalog; renderWebhallenGroups(); }).catch(() => {});
+      loadDashboard().catch(() => {});
+    } catch (err) {
+      showToast(`Webhallen check failed: ${err.message}`, 'error');
+      refreshWebhallenStatus();
+    } finally {
+      el.whPollNow.loading = false;
     }
   });
 

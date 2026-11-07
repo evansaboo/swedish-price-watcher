@@ -352,6 +352,99 @@ export class DiscordNotifier {
   }
 
   /**
+   * Webhallen watcher alerts (see services/webhallenPoller.js): campaign deals
+   * and Fyndvaror outlet items matching the user's watch groups.
+   *
+   * @returns {{ sent, failed, skipped, errors, delivered: boolean[], reason? }}
+   */
+  async notifyWebhallen({ alerts = [], webhookUrl, catalog = {} } = {}) {
+    const delivered = alerts.map(() => false);
+    const webhook = normalizeWebhookUrl(webhookUrl) || this.webhookUrl;
+    if (!webhook) {
+      return { sent: 0, failed: 0, skipped: alerts.length, errors: [], delivered, reason: 'no-webhook' };
+    }
+
+    const reasonMeta = {
+      'new': { emoji: '🆕', text: 'new find', color: 0x22c55e },
+      'price-drop': { emoji: '📉', text: 'price drop', color: 0xf59e0b },
+      'back-in-stock': { emoji: '🔁', text: 'back in stock', color: 0x3b82f6 }
+    };
+    const feedLabel = (feed) => (feed === 'outlet' ? 'Webhallen outlet' : 'Webhallen deal');
+
+    const buildEmbed = (alert) => {
+      const meta = reasonMeta[alert.reason] ?? reasonMeta.new;
+      const product = alert.product ?? {};
+      const isOutlet = alert.feed === 'outlet';
+      const reasonLine = alert.reason === 'price-drop'
+        ? `📉 Price drop ${formatPercent(alert.dropPercent)} (was ${formatSek(alert.previousPriceSek)})`
+        : alert.reason === 'back-in-stock' ? '🔁 Back in stock' : null;
+      const category = product.categoryName ?? catalog?.[String(product.categoryId ?? '')]?.name ?? null;
+      const ordinary = Number.isFinite(product.listPriceSek) && product.listPriceSek > product.priceSek
+        ? `${formatSek(product.listPriceSek)} (−${product.discountPct ?? Math.round((1 - product.priceSek / product.listPriceSek) * 100)}%)`
+        : '—';
+      const stock = product.inWebStock
+        ? `${Number.isFinite(product.webQty) ? product.webQty : 'In'} in web stock`
+        : product.storeQty > 0
+          ? `None online · ${product.storeQty} in store`
+          : 'Out of stock';
+      const fields = [
+        { name: 'Price', value: formatSek(product.priceSek), inline: true },
+        { name: 'Ordinary', value: ordinary, inline: true },
+        { name: 'Feed', value: isOutlet ? 'Fyndvaror' : 'Kampanjer', inline: true }
+      ];
+      if (isOutlet && product.sellingPoint) {
+        fields.push({ name: 'Condition', value: String(product.sellingPoint).slice(0, 1024), inline: false });
+      }
+      fields.push({ name: 'Stock', value: stock, inline: true });
+      if (category) fields.push({ name: 'Category', value: category.slice(0, 1024), inline: true });
+      if (alert.groupNames?.length) {
+        fields.push({
+          name: alert.groupNames.length === 1 ? 'Watch group' : 'Watch groups',
+          value: alert.groupNames.join(', ').slice(0, 1024),
+          inline: false
+        });
+      }
+      return {
+        title: String(product.title ?? 'Webhallen product').slice(0, 256),
+        url: product.url,
+        description: [isOutlet ? 'Webhallen Fyndvaror' : 'Webhallen kampanj', reasonLine].filter(Boolean).join('\n'),
+        color: meta.color,
+        fields,
+        image: product.imageUrl ? { url: product.imageUrl } : undefined,
+        footer: { text: `${feedLabel(alert.feed)}${product.id ? ` · ${product.id}` : ''}` },
+        timestamp: new Date().toISOString()
+      };
+    };
+
+    let sent = 0, failed = 0;
+    const errors = [];
+    for (let start = 0; start < alerts.length; start += 10) {
+      const batch = alerts.slice(start, start + 10);
+      const first = reasonMeta[batch[0].reason] ?? reasonMeta.new;
+      const feeds = new Set(batch.map((alert) => alert.feed));
+      const label = feeds.size === 1 ? feedLabel(batch[0].feed) : 'Webhallen';
+      const content = batch.length === 1
+        ? `${first.emoji} **${label}** — ${batch[0].reason === 'price-drop' ? `${first.text} ${formatPercent(batch[0].dropPercent)}` : first.text}`
+        : `${first.emoji} **${label}** — ${batch.length} updates`;
+      try {
+        await this.#postWebhook({
+          username: 'Price Watcher',
+          content,
+          allowed_mentions: { parse: [] },
+          embeds: batch.map(buildEmbed)
+        }, webhook);
+        batch.forEach((_, offset) => { delivered[start + offset] = true; });
+        sent += batch.length;
+      } catch (error) {
+        failed += batch.length;
+        this.#recordError(errors, error);
+      }
+    }
+
+    return { sent, failed, skipped: 0, errors, delivered };
+  }
+
+  /**
    * Work out the purchase line (if any) to add to an alert's embed.
    *
    * `deep-link`     → nothing extra.

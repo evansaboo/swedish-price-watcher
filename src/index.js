@@ -15,13 +15,16 @@ import { KOMPLETT_DEMO_SOURCE_ID, KOMPLETT_DEMO_SOURCE_LABEL, syncKomplettDemoLi
 import { ensureInetConfig, normalizeInetConfig, enabledFeedIds as inetEnabledFeedIds } from './services/inetConfig.js';
 import { createInetPoller } from './services/inetPoller.js';
 import { INET_LISTING_SOURCES, syncInetListing } from './services/inetListing.js';
+import { ensureWebhallenConfig, normalizeWebhallenConfig, enabledFeedIds as webhallenEnabledFeedIds } from './services/webhallenConfig.js';
+import { createWebhallenPoller } from './services/webhallenPoller.js';
+import { WEBHALLEN_LISTING_SOURCES, syncWebhallenListing } from './services/webhallenListing.js';
 import { ProductCache } from './services/productCache.js';
 import { DiscordNotifier } from './services/notifier.js';
 import { decorateAffiliateLink } from './services/affiliateLinks.js';
 
-// The app runs three features: the Elgiganten hotlist, the Komplett demo
-// watcher and the Inet watcher, each on its own loop. The NVIDIA FE stock
-// tracker was removed on 2026-11-07. The old
+// The app runs four features: the Elgiganten hotlist, the Komplett demo
+// watcher, the Inet watcher and the Webhallen watcher, each on its own loop.
+// The NVIDIA FE stock tracker was removed on 2026-11-07. The old
 // multi-source scan, its scheduler and the daily digest were retired on
 // 2026-10-31; the scrapers are in archive/scrapers/.
 
@@ -61,10 +64,16 @@ const inetSources = Object.fromEntries(Object.entries(INET_LISTING_SOURCES).map(
   const configured = config.sources.find((entry) => entry.id === fallback.id);
   return [feed, { ...fallback, ...(configured ?? {}), label: configured?.label || fallback.label }];
 }));
+// The Webhallen watcher's two listing feeds (Kampanjer deals, Fyndvaror outlet).
+const webhallenSources = Object.fromEntries(Object.entries(WEBHALLEN_LISTING_SOURCES).map(([feed, fallback]) => {
+  const configured = config.sources.find((entry) => entry.id === fallback.id);
+  return [feed, { ...fallback, ...(configured ?? {}), label: configured?.label || fallback.label }];
+}));
 const activeSourceIds = new Set([
   ...config.sources.map((entry) => entry.id),
   komplettDemoSource.id,
-  ...Object.values(inetSources).map((source) => source.id)
+  ...Object.values(inetSources).map((source) => source.id),
+  ...Object.values(webhallenSources).map((source) => source.id)
 ]);
 {
   const { hiddenItems, hiddenSourceIds } = reconcileStateWithSources(store.getState(), activeSourceIds);
@@ -81,6 +90,7 @@ const productCache = new ProductCache();
 const sourceLabelMap = new Map([
   [komplettDemoSource.id, komplettDemoSource.label || KOMPLETT_DEMO_SOURCE_LABEL],
   ...Object.values(inetSources).map((source) => [source.id, source.label]),
+  ...Object.values(webhallenSources).map((source) => [source.id, source.label]),
   ...config.sources.map(s => [s.id, s.label || s.id])
 ]);
 const sourceById = new Map(config.sources.map(s => [s.id, s]));
@@ -105,6 +115,7 @@ if (hotlistSource) ensureHotlistConfig(state.preferences, hotlistSource);
 delete state.preferences.nvidiaFe;
 ensureKomplettDemoConfig(state.preferences);
 ensureInetConfig(state.preferences);
+ensureWebhallenConfig(state.preferences);
 
 // Metadata and preferences only: items are written incrementally through
 // flushItems(), and a full item sync of the whole table isn't needed here.
@@ -432,6 +443,64 @@ async function updateInetConfig(nextConfig) {
   console.log(`[inet] Listing: ${listed} item(s) from the watcher's saved state (${newKeys.length} added, ${deletedKeys.length} removed).`);
 }
 
+// ── Webhallen watcher (campaign deals + Fyndvaror outlet) ──────
+// Same pattern as the Inet watcher: its own randomised loop, one Apify run per
+// check (Webhallen is never contacted from this machine), state in its own
+// SQLite record, and every tracked item mirrored into the listing.
+const WEBHALLEN_RECORD = 'webhallen';
+const webhallenPersistence = typeof store.loadRecord === 'function'
+  ? {
+      load: () => store.loadRecord(WEBHALLEN_RECORD),
+      save: (value) => store.saveRecord(WEBHALLEN_RECORD, value)
+    }
+  : {
+      load: () => state.stats.webhallen ?? null,
+      save: async (value) => {
+        state.stats.webhallen = value;
+        await commitExclusive(() => store.save({ skipItems: true }));
+      }
+    };
+
+function syncWebhallenIntoListing(watcherState = webhallenPoller.getState()) {
+  return commitExclusive(async () => {
+    const result = syncWebhallenListing({
+      state,
+      watcherState,
+      config: normalizeWebhallenConfig(state.preferences?.webhallen ?? {}),
+      sources: webhallenSources,
+      maxHistoryEntries: config.maxHistoryEntries,
+      getItemHistory: (key) => store.getItemHistory?.(key) ?? []
+    });
+    store.flushItems(result.changedKeys, result.deletedKeys);
+    state.deals = computeDeals(state, config.thresholds);
+    productCache.rebuild(state, sourceLabelMap);
+    if (result.deletedKeys.length) await store.save({ skipItems: true });
+    return result;
+  });
+}
+
+const webhallenPoller = createWebhallenPoller({
+  getConfig: () => state.preferences?.webhallen ?? {},
+  notifier,
+  persistence: webhallenPersistence,
+  onStateChange: (watcherState) => syncWebhallenIntoListing(watcherState)
+});
+
+async function updateWebhallenConfig(nextConfig) {
+  const updated = normalizeWebhallenConfig(nextConfig, state.preferences?.webhallen ?? {});
+  state.preferences = { ...(state.preferences ?? {}), webhallen: updated };
+  await (store.savePreferences ?? store.save).call(store);
+  webhallenPoller.reschedule();
+  // A switched-off feed's items leave the listing straight away.
+  await syncWebhallenIntoListing().catch((error) => console.error('[webhallen] Listing update failed:', error.message));
+  return updated;
+}
+
+{
+  const { listed, newKeys, deletedKeys } = await syncWebhallenIntoListing();
+  console.log(`[webhallen] Listing: ${listed} item(s) from the watcher's saved state (${newKeys.length} added, ${deletedKeys.length} removed).`);
+}
+
 const app = await buildApp({
   config,
   store,
@@ -463,6 +532,13 @@ const app = await buildApp({
     getStatus: () => inetPoller.getStatus(),
     getCatalog: () => inetPoller.getCatalog(),
     pollNow: () => inetPoller.pollNow()
+  },
+  webhallen: {
+    getConfig: () => state.preferences?.webhallen ?? {},
+    update: updateWebhallenConfig,
+    getStatus: () => webhallenPoller.getStatus(),
+    getCatalog: () => webhallenPoller.getCatalog(),
+    pollNow: () => webhallenPoller.pollNow()
   }
 });
 
@@ -499,10 +575,21 @@ inetPoller.start();
   );
 }
 
+webhallenPoller.start();
+{
+  const pref = normalizeWebhallenConfig(state.preferences?.webhallen ?? {});
+  console.log(
+    `[webhallen] Watcher ${pref.enabled ? 'started' : 'configured (disabled)'} — ` +
+    `every ~${pref.intervalMinutes} min ±${pref.jitterPct}%, feeds: ${webhallenEnabledFeedIds(pref).join(', ') || 'none'}, ` +
+    `${pref.groups.filter((g) => g.enabled).length} watch group(s).`
+  );
+}
+
 async function shutdown(signal) {
   hotlistPoller.stop();
   komplettDemoPoller.stop();
   inetPoller.stop();
+  webhallenPoller.stop();
   await app.close();
   console.log(`${signal} received, shutting down.`);
   process.exit(0);
