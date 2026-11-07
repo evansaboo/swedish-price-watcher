@@ -389,7 +389,7 @@ export class ApifyStore {
 //   item_archive   — items that left scrapers (kept for history)
 //   scan_stats     — latest run stats + summary
 //
-//   preferences    — user-editable settings (hotlist, Komplett demo, NVIDIA, …)
+//   preferences    — user-editable settings (hotlist, Komplett demo, Inet, …)
 //                    stored as a single JSON blob row for fast partial saves
 // ═══════════════════════════════════════════════════════════════
 

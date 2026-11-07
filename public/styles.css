@@ -11,7 +11,7 @@
    5. Product cards and grid
    6. Pagination, empty state, notices, footer
    7. Sheets (drawers) and dialogs
-   8. Settings content (forms, status, watches, chips, Komplett, NVIDIA)
+   8. Settings content (forms, status, watches, chips, Komplett)
    9. Price history, buy controls
   10. Toasts, utilities, motion
    ================================================================ */
@@ -194,8 +194,6 @@ sl-icon-button::part(base) {
 }
 
 sl-icon-button::part(base):hover { color: var(--app-text); }
-.nvidia-btn::part(base),
-.nvidia-btn::part(base):hover { color: #76b900; }
 
 @media (min-width: 768px) {
   .topbar-inner {
@@ -1144,165 +1142,6 @@ sl-tag::part(remove-button__base) { padding: 4px; }
 
 .find-meta strong { color: var(--app-text); font-variant-numeric: tabular-nums; }
 .find-empty { padding: 12px; color: var(--app-muted); font-size: 0.9375rem; }
-
-/* NVIDIA FE */
-.nv-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.nv-head sl-badge { flex: none; }
-
-.nv-toolbar {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-
-.nv-toolbar sl-select { flex: 1; min-width: 0; }
-
-.nv-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  margin: 12px 0 4px;
-  font-size: 0.875rem;
-}
-
-.nv-live { font-weight: 600; color: var(--app-muted); }
-.nv-live[data-variant='success'] { color: var(--sl-color-success-600); }
-.nv-live[data-variant='warning'] { color: var(--sl-color-warning-600); }
-.nv-live[data-variant='danger'] { color: var(--sl-color-danger-600); }
-.nv-live:empty { display: none; }
-
-.nv-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.nv-cards > sl-spinner { align-self: center; font-size: 1.5rem; margin: 16px; }
-
-.nv-card {
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
-  grid-template-areas:
-    'thumb  info'
-    'toggle right';
-  align-items: center;
-  gap: 8px 12px;
-  padding: 12px;
-  background: var(--app-surface);
-  border: 1px solid var(--app-border);
-  border-radius: 12px;
-}
-
-.nv-card.in-stock {
-  border-color: var(--sl-color-success-600);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sl-color-success-600) 18%, transparent);
-}
-
-.nvidia-card-toggle { grid-area: toggle; }
-.nvidia-card-toggle::part(base) { width: auto; }
-
-.nv-thumb {
-  grid-area: thumb;
-  width: 48px;
-  height: 48px;
-  padding: 4px;
-  object-fit: contain;
-  border-radius: 8px;
-  background: var(--app-surface-2);
-}
-
-.nv-info { grid-area: info; min-width: 0; }
-
-.nv-name {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-}
-
-.nv-sub {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 10px;
-  font-size: 0.8125rem;
-  color: var(--app-muted);
-}
-
-.nv-sub code { font-size: 0.75rem; }
-.feed { display: inline-flex; align-items: center; gap: 4px; }
-.feed::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.feed.ok { color: var(--sl-color-success-600); }
-.feed.bad { color: var(--sl-color-danger-600); }
-
-.nv-right {
-  grid-area: right;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.nv-price {
-  margin-right: auto;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-@media (min-width: 640px) {
-  .nv-card {
-    grid-template-columns: auto 48px minmax(0, 1fr) auto;
-    grid-template-areas: 'toggle thumb info right';
-  }
-
-  .nv-right { flex-wrap: nowrap; }
-  .nv-price { margin-right: 0; }
-}
-
-.input-with-action {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.input-with-action sl-button { align-self: flex-start; }
-
-.sub-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 14px;
-  background: var(--app-surface);
-  border: 1px solid var(--app-border);
-  border-radius: 12px;
-}
-
-.sub-card-title {
-  padding-top: 8px;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--app-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.switch-with-action {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.switch-with-action sl-switch { flex: 1; min-width: 0; }
 
 .save-status { font-size: 0.875rem; color: var(--app-muted); }
 .save-status:empty { display: none; }

@@ -1,7 +1,7 @@
 import { collectFromElgigantenHotlist } from './elgigantenHotlist.js';
 
 // Only the Elgiganten hotlist is collected through this registry. The Komplett
-// demo watcher and the NVIDIA FE tracker run their own loops. Every other
+// demo and Inet watchers run their own loops. Every other
 // scraper was archived on 2026-10-31; see archive/scrapers/README.md for how
 // to bring one back.
 const handlers = {

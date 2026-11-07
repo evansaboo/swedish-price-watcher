@@ -35,7 +35,6 @@
         </sl-input>
 
         <nav class="topbar-actions" aria-label="Quick actions">
-          <sl-icon-button id="nvidia-open-btn" class="nvidia-btn" name="gpu-card" label="NVIDIA Founders Edition stock"></sl-icon-button>
           <sl-icon-button id="purchase-open-btn" name="lightning-charge" label="Buy controls"></sl-icon-button>
           <sl-icon-button id="theme-toggle" name="moon" label="Toggle dark mode"></sl-icon-button>
           <sl-icon-button id="settings-btn" name="gear" label="Settings"></sl-icon-button>
@@ -143,7 +142,6 @@
         <sl-tab slot="nav" panel="hotlist" data-tab="hotlist" active><span class="tab-long">Elgiganten&nbsp;</span>Hotlist</sl-tab>
         <sl-tab slot="nav" panel="komplett-demo" data-tab="komplett-demo">Komplett<span class="tab-long">&nbsp;demo</span></sl-tab>
         <sl-tab slot="nav" panel="inet" data-tab="inet">Inet</sl-tab>
-        <sl-tab slot="nav" panel="nvidia" data-tab="nvidia">NVIDIA FE</sl-tab>
 
         <!-- Elgiganten Hotlist — continuous poller -->
         <sl-tab-panel name="hotlist" id="tab-hotlist" active>
@@ -250,55 +248,6 @@
           <ul id="inet-finds" class="find-list"></ul>
         </sl-tab-panel>
 
-        <!-- NVIDIA Founders Edition — Notify-FE live feed -->
-        <sl-tab-panel name="nvidia" id="tab-nvidia">
-          <div class="nv-head">
-            <div>
-              <p class="section-hint flush">Live Founders Edition stock from the Notify-FE feed. Stock changes are pushed as they happen.</p>
-            </div>
-            <sl-badge id="nvidia-poller-badge" variant="neutral" pill>Loading…</sl-badge>
-          </div>
-
-          <div class="nv-toolbar">
-            <sl-select id="nvidia-locale-select" label="Region" value="sv-se">
-              <sl-option value="sv-se">Sverige (sv-se)</sl-option>
-              <sl-option value="de-de">Deutschland (de-de)</sl-option>
-              <sl-option value="en-gb">United Kingdom (en-gb)</sl-option>
-              <sl-option value="fr-fr">France (fr-fr)</sl-option>
-              <sl-option value="en-us">United States (en-us)</sl-option>
-              <sl-option value="nb-no">Norge (nb-no)</sl-option>
-              <sl-option value="da-dk">Danmark (da-dk)</sl-option>
-              <sl-option value="fi-fi">Suomi (fi-fi)</sl-option>
-            </sl-select>
-            <sl-button id="nvidia-refresh-btn"><sl-icon slot="prefix" name="arrow-clockwise"></sl-icon>Refresh</sl-button>
-          </div>
-          <div class="nv-meta">
-            <span id="nvidia-countdown" class="nv-live"></span>
-            <span id="nvidia-last-check" class="muted"></span>
-            <sl-badge id="nvidia-monitored-count" variant="neutral" pill>— monitored</sl-badge>
-          </div>
-          <p class="muted small">Switch a card on to have the background scheduler alert on it.</p>
-          <div id="nvidia-cards-container" class="nv-cards"><sl-spinner></sl-spinner></div>
-
-          <h3 class="subhead">Scheduler &amp; alerts</h3>
-          <div class="form-stack">
-            <sl-switch id="nvidia-enabled-input" help-text="Follows the live feed in the background and sends Discord alerts. Applies immediately.">Background stock scheduler</sl-switch>
-            <div class="input-with-action">
-              <sl-input id="nvidia-webhook-input" label="Discord webhook for stock drops" type="text" autocomplete="off" spellcheck="false"
-                placeholder="https://discord.com/api/webhooks/…" help-text="Blank = the server's default webhook."></sl-input>
-              <sl-button id="nvidia-test-webhook-btn" variant="primary" outline><sl-icon slot="prefix" name="send"></sl-icon>Test webhook</sl-button>
-            </div>
-            <div class="sub-card">
-              <span class="sub-card-title">This browser</span>
-              <div class="switch-with-action">
-                <sl-switch id="nvidia-sound-input" checked>Sound alarm on stock drop</sl-switch>
-                <sl-button id="nvidia-test-sound-btn" size="small"><sl-icon slot="prefix" name="volume-up"></sl-icon>Test</sl-button>
-              </div>
-              <sl-switch id="nvidia-auto-open-input">Auto-open the store page in a new tab</sl-switch>
-              <sl-switch id="nvidia-api-alarm-input">Log a server warning if the feed becomes unhealthy</sl-switch>
-            </div>
-          </div>
-        </sl-tab-panel>
       </sl-tab-group>
 
       <div slot="footer" class="drawer-actions">

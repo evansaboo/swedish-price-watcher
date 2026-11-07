@@ -33,8 +33,6 @@ import {
   summarizePurchaseState
 } from './services/purchaseEngine.js';
 import { createPurchaseService } from './services/purchaseService.js';
-import { normalizeNvidiaConfig } from './services/nvidiaConfig.js';
-import { GPU_DISPLAY_ORDER, CARD_METADATA } from './sources/nvidia.js';
 import {
   DEFAULT_KOMPLETT_DEMO_CONFIG,
   KOMPLETT_DEMO_CATALOG,
@@ -159,7 +157,7 @@ async function probeElgigantenReachability(timeoutMs = 8000) {
 
 // ── Route builder ──────────────────────────────────────────────
 
-export async function buildApp({ config, store, productCache, hotlist, fetcher, notifier, nvidia, komplettDemo, inet }) {
+export async function buildApp({ config, store, productCache, hotlist, fetcher, notifier, komplettDemo, inet }) {
   const app = Fastify({ logger: false });
   const sourceById = new Map((config.sources ?? []).map((source) => [source.id, source]));
   let preferencesSaveQueue = Promise.resolve();
@@ -768,98 +766,6 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
     } catch (error) {
       reply.code(502);
       return { ok: false, message: error.message, status: inet.getStatus() };
-    }
-  });
-
-  // ── NVIDIA Founders Edition (Notify-FE live feed) ─
-  app.get('/api/nvidia/config', async () => {
-    const state = store.getState();
-    const cfg = normalizeNvidiaConfig(state.preferences?.nvidiaFe ?? {});
-    const pollerStatus = nvidia?.getStatus ? nvidia.getStatus() : { running: false };
-
-    const availableCards = GPU_DISPLAY_ORDER.map((key) => ({
-      key,
-      name: CARD_METADATA[key]?.shortName || `RTX ${key} FE`,
-      fullName: CARD_METADATA[key]?.name || `NVIDIA GeForce RTX ${key} Founders Edition`,
-      msrpSek: CARD_METADATA[key]?.msrpSek || 0,
-      imageUrl: CARD_METADATA[key]?.imageUrl || null
-    }));
-
-    return {
-      ok: true,
-      config: cfg,
-      poller: pollerStatus,
-      availableCards
-    };
-  });
-
-  app.post('/api/nvidia/config', async (request, reply) => {
-    try {
-      const body = request.body || {};
-      const state = store.getState();
-      const current = state.preferences?.nvidiaFe ?? {};
-      const updated = normalizeNvidiaConfig({ ...current, ...body });
-      state.preferences = { ...(state.preferences ?? {}), nvidiaFe: updated };
-      await (store.savePreferences ?? store.save).call(store);
-
-      if (nvidia?.updateConfig) {
-        await nvidia.updateConfig(updated);
-      } else if (nvidia?.poller) {
-        nvidia.poller.restart();
-      }
-
-      return { ok: true, config: updated };
-    } catch (err) {
-      reply.code(500);
-      return { ok: false, error: err.message };
-    }
-  });
-
-  app.post('/api/nvidia/test-webhook', async (request, reply) => {
-    try {
-      const state = store.getState();
-      const webhookUrl = request.body?.webhookUrl || state.preferences?.nvidiaFe?.discordWebhookUrl || config.discordWebhookUrl;
-      if (!webhookUrl) {
-        reply.code(400);
-        return { ok: false, error: 'No Discord webhook URL provided or configured' };
-      }
-
-      if (notifier?.testNvidiaWebhook) {
-        await notifier.testNvidiaWebhook({ webhookUrl });
-      } else {
-        const { DiscordNotifier } = await import('./services/notifier.js');
-        const testNotifier = new DiscordNotifier({ webhookUrl });
-        await testNotifier.testNvidiaWebhook({ webhookUrl });
-      }
-
-      return { ok: true, message: 'Test notification sent successfully to Discord' };
-    } catch (err) {
-      reply.code(500);
-      return { ok: false, error: err.message };
-    }
-  });
-
-  app.get('/api/nvidia/status', async (request, reply) => {
-    try {
-      // Served from the live-feed poller's state; there is no direct NVIDIA query.
-      // `refresh=true` (the "Check Now" button) only forces a reconnect when the feed is down.
-      const pollerStatus = request.query?.refresh === 'true' && nvidia?.poller?.triggerNow
-        ? await nvidia.poller.triggerNow()
-        : (nvidia?.getStatus ? nvidia.getStatus() : null);
-      if (!pollerStatus) {
-        reply.code(503);
-        return { ok: false, error: 'NVIDIA tracker is not available' };
-      }
-      return {
-        ok: true,
-        locale: pollerStatus.locale,
-        poller: pollerStatus,
-        checkedAt: pollerStatus.feed?.lastPacketAt || pollerStatus.lastSuccessAt || null,
-        cards: pollerStatus.cards
-      };
-    } catch (err) {
-      reply.code(500);
-      return { ok: false, error: err.message };
     }
   });
 

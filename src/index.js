@@ -9,8 +9,6 @@ import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { createHotlistPoller } from './services/hotlistPoller.js';
 import { ensureHotlistConfig, normalizeHotlistConfig } from './services/hotlistConfig.js';
-import { ensureNvidiaConfig, normalizeNvidiaConfig } from './services/nvidiaConfig.js';
-import { createNvidiaPoller } from './services/nvidiaPoller.js';
 import { ensureKomplettDemoConfig, normalizeKomplettDemoConfig } from './services/komplettDemoConfig.js';
 import { createKomplettDemoPoller } from './services/komplettDemoPoller.js';
 import { KOMPLETT_DEMO_SOURCE_ID, KOMPLETT_DEMO_SOURCE_LABEL, syncKomplettDemoListing } from './services/komplettDemoListing.js';
@@ -21,8 +19,9 @@ import { ProductCache } from './services/productCache.js';
 import { DiscordNotifier } from './services/notifier.js';
 import { decorateAffiliateLink } from './services/affiliateLinks.js';
 
-// The app runs four features: the Elgiganten hotlist, the Komplett demo
-// watcher, the Inet watcher and the NVIDIA FE stock tracker, each on its own loop. The old
+// The app runs three features: the Elgiganten hotlist, the Komplett demo
+// watcher and the Inet watcher, each on its own loop. The NVIDIA FE stock
+// tracker was removed on 2026-11-07. The old
 // multi-source scan, its scheduler and the daily digest were retired on
 // 2026-10-31; the scrapers are in archive/scrapers/.
 
@@ -102,7 +101,8 @@ state.preferences = state.preferences ?? {};
 // Seed the hotlist watch list from config/sources.json the first time, then
 // let the dashboard own it from SQLite preferences.
 if (hotlistSource) ensureHotlistConfig(state.preferences, hotlistSource);
-ensureNvidiaConfig(state.preferences);
+// The NVIDIA FE tracker is gone; drop its saved settings on the next save.
+delete state.preferences.nvidiaFe;
 ensureKomplettDemoConfig(state.preferences);
 ensureInetConfig(state.preferences);
 
@@ -310,20 +310,6 @@ async function updateHotlistConfig(nextConfig) {
   return updated;
 }
 
-const nvidiaPoller = createNvidiaPoller({
-  getConfig: () => state.preferences?.nvidiaFe ?? {},
-  notifier,
-  logger: console
-});
-
-async function updateNvidiaConfig(nextConfig) {
-  const updated = normalizeNvidiaConfig({ ...(state.preferences?.nvidiaFe ?? {}), ...nextConfig });
-  state.preferences = { ...(state.preferences ?? {}), nvidiaFe: updated };
-  await (store.savePreferences ?? store.save).call(store);
-  nvidiaPoller.restart();
-  return updated;
-}
-
 // ── Komplett demo-products watcher ─────────────────────────────
 // Its own randomised loop (like the hotlist). Every poll is one Apify actor
 // run; state lives in its own SQLite record so restarts never re-alert.
@@ -465,12 +451,6 @@ const app = await buildApp({
         pollNow: () => hotlistPoller.pollNow()
       }
     : null,
-  nvidia: {
-    poller: nvidiaPoller,
-    getConfig: () => state.preferences?.nvidiaFe ?? {},
-    updateConfig: updateNvidiaConfig,
-    getStatus: () => nvidiaPoller.getStatus()
-  },
   komplettDemo: {
     getConfig: () => state.preferences?.komplettDemo ?? {},
     update: updateKomplettDemoConfig,
@@ -519,19 +499,10 @@ inetPoller.start();
   );
 }
 
-nvidiaPoller.start();
-const nvidiaPref = normalizeNvidiaConfig(state.preferences?.nvidiaFe ?? {});
-if (nvidiaPref.enabled) {
-  console.log(
-    `[nvidia] Following the Notify-FE live feed for ${nvidiaPref.monitoredCards.join(', ')} (${nvidiaPref.locale})`
-  );
-}
-
 async function shutdown(signal) {
   hotlistPoller.stop();
   komplettDemoPoller.stop();
   inetPoller.stop();
-  nvidiaPoller.stop();
   await app.close();
   console.log(`${signal} received, shutting down.`);
   process.exit(0);

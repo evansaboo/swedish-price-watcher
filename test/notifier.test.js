@@ -7,7 +7,7 @@ import { DiscordNotifier } from '../src/services/notifier.js';
 // The scan-time alert rules and the wishlist target-price ("favorite") alerts
 // were removed on 2026-10-31 together with the multi-source scan. What is left
 // of the notifier is covered here (webhook delivery and retries) and in
-// hotlistNotifications / komplettDemo / nvidia tests.
+// hotlistNotifications / komplettDemo tests.
 
 const MAIN_WEBHOOK = 'https://discord.example/webhook';
 
@@ -37,7 +37,7 @@ test('the scan alert rules and wishlist target alerts are gone', () => {
   assert.equal(notifier.notifyWishlistTargets, undefined);
   assert.equal(typeof notifier.notifyHotlist, 'function');
   assert.equal(typeof notifier.notifyKomplettDemo, 'function');
-  assert.equal(typeof notifier.notifyNvidiaStockDrop, 'function');
+  assert.equal(notifier.notifyNvidiaStockDrop, undefined);
 });
 
 test('retries the Discord webhook after a 429 and still delivers', async () => {
