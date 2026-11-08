@@ -9,9 +9,16 @@ import { collectSource } from './sources/index.js';
 import { computeDeals, mergeObservations } from './services/dealEngine.js';
 import { createHotlistPoller } from './services/hotlistPoller.js';
 import { ensureHotlistConfig, normalizeHotlistConfig } from './services/hotlistConfig.js';
-import { ensureKomplettDemoConfig, normalizeKomplettDemoConfig } from './services/komplettDemoConfig.js';
+import { ensureKomplettDemoConfig, normalizeKomplettDemoConfig, enabledFeedIds as komplettEnabledFeedIds } from './services/komplettDemoConfig.js';
 import { createKomplettDemoPoller } from './services/komplettDemoPoller.js';
-import { KOMPLETT_DEMO_SOURCE_ID, KOMPLETT_DEMO_SOURCE_LABEL, syncKomplettDemoListing } from './services/komplettDemoListing.js';
+import {
+  KOMPLETT_DEALS_SOURCE_ID,
+  KOMPLETT_DEALS_SOURCE_LABEL,
+  KOMPLETT_DEMO_SOURCE_ID,
+  KOMPLETT_DEMO_SOURCE_LABEL,
+  KOMPLETT_LISTING_SOURCES,
+  syncKomplettDemoListing,
+} from './services/komplettDemoListing.js';
 import { ensureInetConfig, normalizeInetConfig, enabledFeedIds as inetEnabledFeedIds } from './services/inetConfig.js';
 import { createInetPoller } from './services/inetPoller.js';
 import { INET_LISTING_SOURCES, syncInetListing } from './services/inetListing.js';
@@ -59,6 +66,8 @@ console.log(`[startup] store loaded at ${process.uptime().toFixed(1)}s`);
 // dashboard, deals and product cache.
 const komplettDemoSource = config.sources.find((entry) => entry.id === KOMPLETT_DEMO_SOURCE_ID)
   ?? { id: KOMPLETT_DEMO_SOURCE_ID, label: KOMPLETT_DEMO_SOURCE_LABEL, type: 'komplett-demo' };
+const komplettDealsSource = config.sources.find((entry) => entry.id === KOMPLETT_DEALS_SOURCE_ID)
+  ?? { id: KOMPLETT_DEALS_SOURCE_ID, label: KOMPLETT_DEALS_SOURCE_LABEL, type: 'komplett-deals' };
 // The Inet watcher's two listing feeds (campaign deals, Fyndhörnan outlet).
 const inetSources = Object.fromEntries(Object.entries(INET_LISTING_SOURCES).map(([feed, fallback]) => {
   const configured = config.sources.find((entry) => entry.id === fallback.id);
@@ -72,6 +81,7 @@ const webhallenSources = Object.fromEntries(Object.entries(WEBHALLEN_LISTING_SOU
 const activeSourceIds = new Set([
   ...config.sources.map((entry) => entry.id),
   komplettDemoSource.id,
+  komplettDealsSource.id,
   ...Object.values(inetSources).map((source) => source.id),
   ...Object.values(webhallenSources).map((source) => source.id)
 ]);
@@ -89,6 +99,7 @@ state.deals = computeDeals(state, config.thresholds);
 const productCache = new ProductCache();
 const sourceLabelMap = new Map([
   [komplettDemoSource.id, komplettDemoSource.label || KOMPLETT_DEMO_SOURCE_LABEL],
+  [komplettDealsSource.id, komplettDealsSource.label || KOMPLETT_DEALS_SOURCE_LABEL],
   ...Object.values(inetSources).map((source) => [source.id, source.label]),
   ...Object.values(webhallenSources).map((source) => [source.id, source.label]),
   ...config.sources.map(s => [s.id, s.label || s.id])
@@ -531,6 +542,7 @@ const app = await buildApp({
     getConfig: () => state.preferences?.komplettDemo ?? {},
     update: updateKomplettDemoConfig,
     getStatus: () => komplettDemoPoller.getStatus(),
+    getCatalog: () => komplettDemoPoller.getCatalog(),
     pollNow: () => komplettDemoPoller.pollNow()
   },
   inet: {
@@ -567,8 +579,9 @@ komplettDemoPoller.start();
 {
   const pref = normalizeKomplettDemoConfig(state.preferences?.komplettDemo ?? {});
   console.log(
-    `[komplett-demo] Watcher ${pref.enabled ? 'started' : 'configured (disabled)'} — ` +
-    `every ~${pref.intervalMinutes} min ±${pref.jitterPct}% across ${pref.categories.length} categor${pref.categories.length === 1 ? 'y' : 'ies'}.`
+    `[komplett] Watcher ${pref.enabled ? 'started' : 'configured (disabled)'} — ` +
+    `every ~${pref.intervalMinutes} min ±${pref.jitterPct}%, feeds: ${komplettEnabledFeedIds(pref).join(', ') || 'none'}, ` +
+    `${pref.groups.filter((g) => g.enabled).length} watch group(s).`
   );
 }
 

@@ -140,7 +140,7 @@
     <sl-drawer id="settings-drawer" label="Settings" class="sheet settings-drawer">
       <sl-tab-group id="settings-tabs">
         <sl-tab slot="nav" panel="hotlist" data-tab="hotlist" active><span class="tab-long">Elgiganten&nbsp;</span>Hotlist</sl-tab>
-        <sl-tab slot="nav" panel="komplett-demo" data-tab="komplett-demo">Komplett<span class="tab-long">&nbsp;demo</span></sl-tab>
+        <sl-tab slot="nav" panel="komplett-demo" data-tab="komplett-demo">Komplett</sl-tab>
         <sl-tab slot="nav" panel="inet" data-tab="inet">Inet</sl-tab>
         <sl-tab slot="nav" panel="webhallen" data-tab="webhallen">Webhallen</sl-tab>
 
@@ -175,19 +175,24 @@
           <div id="hotlist-groups" class="group-list"></div>
         </sl-tab-panel>
 
-        <!-- Komplett demo — B-grade demovaror watcher -->
+        <!-- Komplett — campaign deals + B-grade demovaror watcher -->
         <sl-tab-panel name="komplett-demo" id="tab-komplett-demo">
-          <p class="section-hint">Watches the Komplett demovaror (B-grade) categories you pick, newest first, and posts new demo products to Discord. Each check is one small Apify run on a randomised loop, with a monthly spend cap. A newly picked category is recorded silently on its first check. Tracked demo products also appear in the listing as “Komplett demo”.</p>
+          <p class="section-hint">Watches Komplett’s campaign deals (Kampanjer) and B-grade demo products (Demovaror), newest first, and posts matches of your watch groups to Discord: new items, price drops and items back in stock. Each check is one Apify run on a randomised loop with a monthly spend cap. A newly enabled feed or group is recorded silently on its first check. Every item also appears in the listing as “Komplett deals” or “Komplett demo”.</p>
           <div id="kd-status" class="status-card" aria-live="polite"></div>
 
           <div class="form-stack">
-            <sl-switch id="kd-enabled">Watch demo products</sl-switch>
+            <sl-switch id="kd-enabled">Watch Komplett</sl-switch>
+            <div class="check-stack">
+              <sl-checkbox id="kd-feed-deals">Campaign deals (Kampanjer)</sl-checkbox>
+              <sl-checkbox id="kd-feed-outlet">B-grade / demo (Demovaror)</sl-checkbox>
+            </div>
             <div class="form-grid-3">
               <sl-input id="kd-interval" label="Every (min)" type="number" inputmode="decimal" min="0.5" max="240" step="0.5"></sl-input>
               <sl-input id="kd-jitter" label="Jitter %" type="number" inputmode="numeric" min="0" max="50" step="5"></sl-input>
               <sl-input id="kd-max-usd" label="Cap $/mo" type="number" inputmode="decimal" min="0.1" max="50" step="0.5"></sl-input>
             </div>
-            <sl-input id="kd-drop-pct" label="Price-drop alert (%)" type="number" inputmode="numeric" min="0" max="90" step="1" help-text="0 = off."></sl-input>
+            <p id="kd-interval-hint" class="field-hint muted small" aria-live="polite"></p>
+            <sl-input id="kd-drop-pct" label="Price-drop alert (%)" type="number" inputmode="numeric" min="0" max="90" step="1" help-text="0 = off. A watch group can set its own."></sl-input>
             <sl-switch id="kd-back-in-stock">Notify when back in stock</sl-switch>
             <sl-input id="kd-webhook" label="Discord webhook" type="text" autocomplete="off" spellcheck="false" placeholder="Blank = the app's default webhook"
               help-text="Optional. The saved webhook is shown masked; leave it to keep it, or clear it to use the default."></sl-input>
@@ -195,16 +200,17 @@
 
           <div class="section-head">
             <div>
-              <h3>Categories</h3>
+              <h3>Watch groups</h3>
               <span id="kd-count-label" class="muted"></span>
             </div>
             <div class="section-head-actions">
               <sl-button id="kd-poll-now"><sl-icon slot="prefix" name="arrow-clockwise"></sl-icon>Check now</sl-button>
+              <sl-button id="kd-add-group" variant="primary" outline><sl-icon slot="prefix" name="plus-lg"></sl-icon>Add group</sl-button>
             </div>
           </div>
-          <div id="kd-categories" class="group-list"></div>
+          <div id="kd-groups" class="group-list"></div>
 
-          <h3 class="subhead">Latest demo finds</h3>
+          <h3 class="subhead">Latest Komplett finds</h3>
           <ul id="kd-alerts" class="find-list"></ul>
           <ul id="kd-finds" class="find-list"></ul>
         </sl-tab-panel>

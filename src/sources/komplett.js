@@ -59,6 +59,192 @@ export function komplettImageUrl(product) {
 export const KOMPLETT_DEMO_PAGE_SIZE = 24;
 export const KOMPLETT_DEMO_MAX_PAGES = 5;
 
+export const KOMPLETT_FEEDS = Object.freeze({
+  deals: Object.freeze({
+    id: 'deals',
+    label: 'Campaign deals (Kampanjer)',
+    shortLabel: 'Kampanjer',
+    url: `${KOMPLETT_ORIGIN}/kampanj/veckans-hetaste?sort=ReleaseDateDesc`,
+  }),
+  outlet: Object.freeze({
+    id: 'outlet',
+    label: 'B-grade / demo (Demovaror)',
+    shortLabel: 'Demovaror',
+    url: `${KOMPLETT_ORIGIN}/category/10066/demovaror?sort=ReleaseDateDesc`,
+  }),
+});
+
+export const KOMPLETT_DEALS_DEPARTMENTS = Object.freeze({
+  'deals-datorutrustning': Object.freeze({
+    id: 'deals-datorutrustning',
+    feed: 'deals',
+    label: 'Datorutrustning (Kampanjer)',
+    url: `${KOMPLETT_ORIGIN}/category/10000/datorutrustning?kom_isDiscounted=%27true%27&sort=ReleaseDateDesc&page=6`,
+  }),
+  'deals-gaming': Object.freeze({
+    id: 'deals-gaming',
+    feed: 'deals',
+    label: 'Gaming (Kampanjer)',
+    url: `${KOMPLETT_ORIGIN}/category/10431/gaming?kom_isDiscounted=%27true%27&sort=ReleaseDateDesc&page=6`,
+  }),
+  'deals-datorer': Object.freeze({
+    id: 'deals-datorer',
+    feed: 'deals',
+    label: 'Datorer & tillbehör (Kampanjer)',
+    url: `${KOMPLETT_ORIGIN}/category/10723/dator-tillbehor?kom_isDiscounted=%27true%27&sort=ReleaseDateDesc&page=4`,
+  }),
+  'deals-tv-ljud-bild': Object.freeze({
+    id: 'deals-tv-ljud-bild',
+    feed: 'deals',
+    label: 'TV, ljud & bild (Kampanjer)',
+    url: `${KOMPLETT_ORIGIN}/category/10719/tv-ljud-bild?kom_isDiscounted=%27true%27&sort=ReleaseDateDesc&page=6`,
+  }),
+  'deals-mobil-klockor': Object.freeze({
+    id: 'deals-mobil-klockor',
+    feed: 'deals',
+    label: 'Mobil, tablets & klockor (Kampanjer)',
+    url: `${KOMPLETT_ORIGIN}/category/10444/mobil-tablets-klockor?kom_isDiscounted=%27true%27&sort=ReleaseDateDesc&page=6`,
+  }),
+  'deals-hem-fritid': Object.freeze({
+    id: 'deals-hem-fritid',
+    feed: 'deals',
+    label: 'Hem & fritid (Kampanjer)',
+    url: `${KOMPLETT_ORIGIN}/category/10560/hem-fritid?kom_isDiscounted=%27true%27&sort=ReleaseDateDesc&page=6`,
+  }),
+  'deals-all': Object.freeze({
+    id: 'deals-all',
+    feed: 'deals',
+    label: 'Veckans hetaste (Kampanjer)',
+    url: `${KOMPLETT_ORIGIN}/kampanj/veckans-hetaste?sort=ReleaseDateDesc&page=6`,
+  }),
+});
+
+export const KOMPLETT_OUTLET_ALL_TARGET = Object.freeze({
+  id: 'outlet-all',
+  feed: 'outlet',
+  label: 'Alla demovaror',
+  url: `${KOMPLETT_ORIGIN}/category/10066/demovaror?sort=ReleaseDateDesc&page=6`,
+});
+
+const CATEGORY_TO_DEALS_DEPARTMENTS = Object.freeze({
+  '10073': ['deals-datorutrustning'],
+  '10072': ['deals-datorutrustning'],
+  '11203': ['deals-datorutrustning', 'deals-datorer'],
+  '9104': ['deals-datorutrustning', 'deals-gaming', 'deals-tv-ljud-bild'],
+  '9105': ['deals-datorutrustning'],
+  '10071': ['deals-datorutrustning'],
+  '9102': ['deals-datorutrustning', 'deals-gaming'],
+  '10075': ['deals-datorer', 'deals-datorutrustning'],
+  '10076': ['deals-datorutrustning'],
+  '10542': ['deals-datorer'],
+  '9103': ['deals-datorutrustning', 'deals-gaming'],
+  '11258': ['deals-gaming'],
+  '10140': ['deals-datorer', 'deals-gaming'],
+  '10141': ['deals-datorer', 'deals-gaming'],
+  '12423': ['deals-gaming', 'deals-datorer'],
+  '10142': ['deals-datorer'],
+  '10551': ['deals-tv-ljud-bild'],
+  '10661': ['deals-tv-ljud-bild'],
+  '11001': ['deals-tv-ljud-bild'],
+  '11149': ['deals-mobil-klockor'],
+  '965344': ['deals-mobil-klockor'],
+  '965343': ['deals-mobil-klockor'],
+  '11147': ['deals-hem-fritid'],
+  '21478': ['deals-hem-fritid'],
+});
+
+/** Return the normal-deals department target descriptors needed to cover `categoryIds` (empty = all main departments). */
+export function dealsTargetsForCategories(categoryIds = [], { includeAll = false } = {}) {
+  const deptIds = new Set();
+  if (includeAll || !Array.isArray(categoryIds) || categoryIds.length === 0) {
+    deptIds.add('deals-all');
+    deptIds.add('deals-datorutrustning');
+    deptIds.add('deals-gaming');
+    deptIds.add('deals-datorer');
+    deptIds.add('deals-tv-ljud-bild');
+    deptIds.add('deals-mobil-klockor');
+  } else {
+    for (const catId of categoryIds) {
+      const mapped = CATEGORY_TO_DEALS_DEPARTMENTS[String(catId)] ?? ['deals-all'];
+      for (const id of mapped) deptIds.add(id);
+    }
+  }
+  return [...deptIds].map((id) => KOMPLETT_DEALS_DEPARTMENTS[id]).filter(Boolean);
+}
+
+const DEMO_SLUG_TO_CATEGORY_ID = Object.freeze({
+  'demo-bildskarmar': '10073',
+  'demo-grafikkort': '10072',
+  'demo-haarddiskar': '11203',
+  'demo-headset': '9104',
+  'demo-minne-ram': '9105',
+  'demo-moderkort': '10071',
+  'demo-mus': '9102',
+  'demo-natverk': '10075',
+  'demo-skrivare': '10542',
+  'demo-tangentbord': '9103',
+  'demo-gaming': '11258',
+  'demo-barbara-datorer': '10140',
+  'demo-stationara-datorer': '10141',
+  'komplett-pc': '12423',
+  'demo-ovrigt-i-datorer': '10142',
+  'demo-tvprojektorer': '10551',
+  'demo-hi-fistereodvd': '10661',
+  'demo-mobiltelefoner': '11149',
+  'demo-tillbehor-till-mobiler-smartwatches': '965344',
+  'demo-watches': '965343',
+  'demo-hem-hushaall': '11147',
+  'demo-traning-halsa': '21478',
+});
+
+/**
+ * Infer a catalog categoryId ('10072', '10071', '12423', etc.) from a Komplett
+ * product's URL and title when the page was a broad department or campaign feed.
+ */
+export function inferKomplettCategoryId(product, fallbackCategoryId = null) {
+  const fb = fallbackCategoryId == null ? '' : String(fallbackCategoryId).trim();
+  if (fb && /^\d+$/.test(fb)) return fb;
+
+  const url = String(product?.url ?? '').toLowerCase();
+  const title = String(product?.name ?? product?.title ?? '').toLowerCase();
+
+  const demoMatch = url.match(/\/demovaror\/([^/]+)\/([^/]+)\//);
+  if (demoMatch) {
+    const [, group, slug] = demoMatch;
+    if (slug === 'demo-ovrigt') {
+      return group === 'tv-ljud-bild' ? '11001' : '10076';
+    }
+    if (DEMO_SLUG_TO_CATEGORY_ID[slug]) return DEMO_SLUG_TO_CATEGORY_ID[slug];
+  }
+
+  if (url.includes('/datorkomponenter/grafikkort/')) return '10072';
+  if (/\/datorkomponenter\/moderkort\/(?!tillbehor)/.test(url)) return '10071';
+  if (url.includes('/bildskarm/bildskarmar/') || url.includes('/bildskarm/')) return '10073';
+  if (url.includes('/lagring/harddisk-ssd/') || url.includes('/lagring/minneskort') || url.includes('/lagring/extern')) return '11203';
+  if (url.includes('/datorkomponenter/minne/')) return '9105';
+  if (url.includes('/kringutrustning/mus/') || url.includes('/gaming-utrustning/gamingmus/')) return '9102';
+  if (url.includes('/kringutrustning/tangentbord/') || url.includes('/gaming-utrustning/gamingtangentbord/')) return '9103';
+  if (url.includes('/kringutrustning/headset/') || url.includes('/gaming-utrustning/gaming-headset/') || url.includes('/tv-ljud-bild/horlurar/')) return '9104';
+  if (url.includes('/natverk/')) return '10075';
+  if (url.includes('/skrivare/') || url.includes('/skanner/')) return '10542';
+  if (title.includes('komplett-pc') || url.includes('/gamingdator/gamingdator-stationar/')) return '12423';
+  if (url.includes('/gamingdator/gaming-laptop/') || url.includes('/datorer-barbara/')) return '10140';
+  if (url.includes('/datorer-stationara/')) return '10141';
+  if (url.includes('/datorutrustning/')) return '10076';
+  if (url.includes('/dator-tillbehor/')) return '10142';
+  if (url.includes('/gaming/')) return '11258';
+  if (url.includes('/tv-ljud-bild/tv/') || url.includes('/tv-ljud-bild/projektorer/')) return '10551';
+  if (url.includes('/tv-ljud-bild/hogtalare-hi-fi/') || url.includes('/tv-ljud-bild/soundbar/')) return '10661';
+  if (url.includes('/tv-ljud-bild/')) return '11001';
+  if (url.includes('/mobiltelefoner/')) return '11149';
+  if (url.includes('/smartklockor/') || url.includes('/aktivitetsarmband/')) return '965343';
+  if (url.includes('/mobil-tablets-klockor/')) return '965344';
+  if (url.includes('/sport-fritid/') || url.includes('/traning')) return '21478';
+  if (url.includes('/hem-fritid/') || url.includes('/vitvaror/')) return '11147';
+
+  return fb || null;
+}
+
 /** Smallest `page` value that shows `total` products, clamped to [1, MAX_PAGES]. */
 export function komplettDemoPagesFor(total) {
   const n = Number(total);
@@ -67,8 +253,9 @@ export function komplettDemoPagesFor(total) {
 }
 export const KOMPLETT_DEMO_SORT = 'ReleaseDateDesc';
 
-/** Newest-first listing URL (page 1) for one demo category ({ id, group, slug }). */
+/** Newest-first listing URL (page 1) for one demo category ({ id, group, slug }) or custom target. */
 export function buildKomplettDemoUrl(category, { sort = KOMPLETT_DEMO_SORT, pages = 1 } = {}) {
+  if (category?.url) return String(category.url);
   const base = `${KOMPLETT_ORIGIN}/category/${encodeURIComponent(category.id)}/demovaror/${category.group}/${category.slug}`;
   const params = [];
   if (sort) params.push(`sort=${encodeURIComponent(sort)}`);
@@ -90,6 +277,7 @@ async function pageFunction(context) {
   const userData = context.request.userData || {};
   const meta = {
     categoryId: userData.categoryId || null,
+    feed: userData.feed || null,
     url: context.request.url,
     loadedUrl: context.request.loadedUrl || null,
     statusCode: context.response ? context.response.statusCode : null,
@@ -125,7 +313,10 @@ async function pageFunction(context) {
       url: p.url,
       manufacturerPartNumber: p.manufacturerPartNumber || null,
       description: typeof p.description === 'string' ? p.description.slice(0, 300) : null,
-      price: { listPriceNumber: p.price ? p.price.listPriceNumber : null },
+      price: {
+        listPriceNumber: p.price ? p.price.listPriceNumber : null,
+        discountNumber: p.price && typeof p.price.discountNumber === 'number' ? p.price.discountNumber : null,
+      },
       stock: p.stock ? {
         availabilityStatus: p.stock.availabilityStatus,
         availabilityQuantity: p.stock.availabilityQuantity,
@@ -146,8 +337,8 @@ export function isKomplettInStock(stock) {
   return /^(in)?stock(ed)?$/i.test(status);
 }
 
-/** Map one embedded listing product to the demo watcher's compact record. */
-export function mapKomplettDemoProduct(product, categoryId = null) {
+/** Map one embedded listing product to the watcher's compact record. */
+export function mapKomplettDemoProduct(product, categoryId = null, feed = null) {
   if (!product || typeof product !== 'object') return null;
   const id = String(product.materialNumber ?? '').trim();
   const title = String(product.name ?? '').trim();
@@ -156,13 +347,28 @@ export function mapKomplettDemoProduct(product, categoryId = null) {
 
   const rawPrice = product.price?.listPriceNumber;
   const priceSek = typeof rawPrice === 'number' && Number.isFinite(rawPrice) && rawPrice > 0 ? Math.round(rawPrice) : null;
+  const rawDiscount = product.price?.discountNumber;
+  const discountSek = typeof rawDiscount === 'number' && Number.isFinite(rawDiscount) && rawDiscount > 0 ? Math.round(rawDiscount) : 0;
+  const listPriceSek = priceSek != null && discountSek > 0 ? priceSek + discountSek : null;
+  const discountPct = listPriceSek && listPriceSek > priceSek
+    ? Math.round(((listPriceSek - priceSek) / listPriceSek) * 100)
+    : 0;
+
+  const isDemoProduct = /\/demovaror\//i.test(url) || /\b-?\s*b-?grade\b/i.test(title);
+  const resolvedFeed = feed === 'deals' || feed === 'outlet'
+    ? feed
+    : isDemoProduct ? 'outlet' : 'outlet';
+  const resolvedCategoryId = inferKomplettCategoryId(product, categoryId);
 
   return {
     id,
+    feed: resolvedFeed,
     title,
     url,
     imageUrl: komplettThumbnailUrl(id) ?? komplettImageUrl(product),
     priceSek,
+    listPriceSek,
+    discountPct,
     inStock: isKomplettInStock(product.stock),
     availabilityText: product.stock?.availabilityText ?? product.stock?.availabilityStatus ?? null,
     manufacturerPartNumber: product.manufacturerPartNumber ?? null,
@@ -172,7 +378,7 @@ export function mapKomplettDemoProduct(product, categoryId = null) {
       ? product.description.trim().slice(0, 300)
       : null,
     productKey: normalizeProductIdentity(title.replace(/\b-?\s*b-?grade\b/gi, '')),
-    categoryId: categoryId == null ? null : String(categoryId),
+    categoryId: resolvedCategoryId == null ? null : String(resolvedCategoryId),
   };
 }
 
@@ -192,10 +398,12 @@ export function parseKomplettDemoPageBody({
   url,
   loadedUrl = null,
   categoryId,
+  feed = null,
 }) {
   const html = String(body ?? '');
   const meta = {
     categoryId: categoryId || null,
+    feed: feed || null,
     url,
     loadedUrl: loadedUrl || url || null,
     statusCode,
@@ -237,7 +445,10 @@ export function parseKomplettDemoPageBody({
       url: p.url,
       manufacturerPartNumber: p.manufacturerPartNumber || null,
       description: typeof p.description === 'string' ? p.description.slice(0, 300) : null,
-      price: { listPriceNumber: p.price ? p.price.listPriceNumber : null },
+      price: {
+        listPriceNumber: p.price ? p.price.listPriceNumber : null,
+        discountNumber: p.price && typeof p.price.discountNumber === 'number' ? p.price.discountNumber : null,
+      },
       stock: p.stock ? {
         availabilityStatus: p.stock.availabilityStatus,
         availabilityQuantity: p.stock.availabilityQuantity,
@@ -251,7 +462,8 @@ export function parseKomplettDemoPageBody({
 }
 
 /**
- * Fetches page 1 (newest first) of every selected Komplett demo category.
+ * Fetches page 1 (newest first) of every selected Komplett target page
+ * (demovaror categories and/or normal deals departments).
  * Uses `KOMPLETT_PROXY_URL` or `WATCHER_PROXY_URL` first if configured; falls
  * back to Apify's `apify/cheerio-scraper`. Never contacts komplett.se from
  * the Pi's home IP.
@@ -287,6 +499,7 @@ export async function fetchKomplettDemoPages({
           url,
           loadedUrl: res.loadedUrl,
           categoryId: String(category.id),
+          feed: category.feed || null,
         });
       });
       const proxyResult = {
@@ -311,10 +524,14 @@ export async function fetchKomplettDemoPages({
 
   if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
 
-  const startUrls = categories.map((category) => ({
-    url: buildKomplettDemoUrl(category, { pages: category.pages }),
-    userData: { categoryId: String(category.id) },
-  }));
+  const startUrls = categories.map((category) => {
+    const userData = { categoryId: String(category.id) };
+    if (category.feed) userData.feed = String(category.feed);
+    return {
+      url: buildKomplettDemoUrl(category, { pages: category.pages }),
+      userData,
+    };
+  });
 
   const client = new ApifyClientClass({ token });
   const run = await client.actor('apify/cheerio-scraper').call({

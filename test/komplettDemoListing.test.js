@@ -385,3 +385,34 @@ test('Komplett alerts attach the fetched image and reference it from the embed',
     assert.equal(captured.body.get('files[0]').name, 'komplett-42.jpg');
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('syncKomplettDemoListing mirrors both B-grade demo items and normal campaign deals', () => {
+  const state = createDefaultState();
+  const demoRec = record(70, { feed: 'outlet', priceSek: 7224 });
+  const dealRec = record(90, {
+    feed: 'deals',
+    title: 'ASUS GeForce RTX 5070 Ti Prime OC',
+    url: 'https://www.komplett.se/product/90/datorutrustning/datorkomponenter/grafikkort/asus-rtx-5070-ti',
+    priceSek: 9990,
+    listPriceSek: 11490,
+    discountPct: 13,
+  });
+
+  const result = syncKomplettDemoListing({
+    state,
+    watcherState: watcherState([demoRec, dealRec]),
+    config: cfg([GPU]),
+  });
+
+  assert.equal(result.listed, 2);
+  assert.ok(state.items['komplett-demo:70']);
+  assert.equal(state.items['komplett-demo:70'].condition, 'outlet');
+  assert.equal(state.items['komplett-demo:70'].conditionLabel, 'B-grade / demo');
+
+  assert.ok(state.items['komplett-deals:90']);
+  assert.equal(state.items['komplett-deals:90'].sourceLabel, 'Komplett deals');
+  assert.equal(state.items['komplett-deals:90'].condition, 'deal');
+  assert.equal(state.items['komplett-deals:90'].conditionLabel, 'Kampanj');
+  assert.equal(state.items['komplett-deals:90'].latestPriceSek, 9990);
+  assert.equal(state.items['komplett-deals:90'].referencePriceSek, 11490);
+});

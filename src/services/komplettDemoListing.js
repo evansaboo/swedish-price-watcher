@@ -16,29 +16,57 @@ import { komplettThumbnailUrl } from '../sources/komplett.js';
 
 import { buildListingKey, normalizeProductIdentity } from '../lib/utils.js';
 import { mergeObservations } from './dealEngine.js';
-import { getKomplettDemoCategory } from './komplettDemoConfig.js';
+import {
+  getKomplettDemoCategory,
+  isGroupActive,
+  normalizeKomplettDemoConfig,
+} from './komplettDemoConfig.js';
+import { groupMatches } from './komplettDemoPoller.js';
 
 export const KOMPLETT_DEMO_SOURCE_ID = 'komplett-demo';
 export const KOMPLETT_DEMO_SOURCE_LABEL = 'Komplett demo';
 export const KOMPLETT_DEMO_CONDITION_LABEL = 'B-grade / demo';
 
-/** Records that belong in the listing: selected category, still listed, priced. */
+export const KOMPLETT_DEALS_SOURCE_ID = 'komplett-deals';
+export const KOMPLETT_DEALS_SOURCE_LABEL = 'Komplett deals';
+export const KOMPLETT_DEALS_CONDITION_LABEL = 'Kampanj';
+
+export const KOMPLETT_LISTING_SOURCES = Object.freeze({
+  deals: Object.freeze({
+    id: KOMPLETT_DEALS_SOURCE_ID,
+    label: KOMPLETT_DEALS_SOURCE_LABEL,
+    condition: 'deal',
+    conditionLabel: KOMPLETT_DEALS_CONDITION_LABEL,
+  }),
+  outlet: Object.freeze({
+    id: KOMPLETT_DEMO_SOURCE_ID,
+    label: KOMPLETT_DEMO_SOURCE_LABEL,
+    condition: 'outlet',
+    conditionLabel: KOMPLETT_DEMO_CONDITION_LABEL,
+  }),
+});
+
+/** Records that belong in the listing: matching watch group/category, still listed, priced. */
 export function listableKomplettDemoRecords(watcherState, config) {
-  const selected = new Set((config?.categories ?? []).map(String));
-  return Object.values(watcherState?.products ?? {}).filter((record) =>
-    record
-    && record.id
-    && record.title
-    && record.url
-    && selected.has(String(record.categoryId))
-    && !record.missingSince
-    && Number.isFinite(record.priceSek)
-    && record.priceSek > 0
-  );
+  const normalized = normalizeKomplettDemoConfig(config);
+  const activeGroups = (normalized.groups ?? []).filter(isGroupActive);
+  const selected = new Set((normalized.categories ?? []).map(String));
+  return Object.values(watcherState?.products ?? {}).filter((record) => {
+    if (!record || !record.id || !record.title || !record.url || record.missingSince) return false;
+    if (!Number.isFinite(record.priceSek) || record.priceSek <= 0) return false;
+    const feed = record.feed === 'deals' ? 'deals' : 'outlet';
+    if (normalized.feeds?.[feed] === false) return false;
+    if (activeGroups.length > 0) {
+      return activeGroups.some((g) => groupMatches(g, { ...record, feed }));
+    }
+    return selected.has(String(record.categoryId));
+  });
 }
 
 /** One watcher record as a listing observation (the shape mergeObservations expects). */
 export function komplettDemoRecordToObservation(record, source = {}) {
+  const isDeal = record.feed === 'deals';
+  const meta = isDeal ? KOMPLETT_LISTING_SOURCES.deals : KOMPLETT_LISTING_SOURCES.outlet;
   const category = getKomplettDemoCategory(record.categoryId);
   const description = typeof record.description === 'string' && record.description.trim() ? record.description.trim() : null;
   // Demo PCs share a few generic names ("Komplett-PC Epic Gaming B-Grade"), so the
@@ -46,26 +74,29 @@ export function komplettDemoRecordToObservation(record, source = {}) {
   const title = category?.group === 'datorer' && description
     ? `${record.title} (${description})`
     : record.title;
+  const referencePriceSek = isDeal && Number.isFinite(record.listPriceSek) && record.listPriceSek > record.priceSek
+    ? record.listPriceSek
+    : null;
   return {
-    sourceId: source.id ?? KOMPLETT_DEMO_SOURCE_ID,
-    sourceLabel: source.label ?? KOMPLETT_DEMO_SOURCE_LABEL,
-    sourceType: 'komplett-demo',
+    sourceId: source.id ?? meta.id,
+    sourceLabel: source.label ?? meta.label,
+    sourceType: isDeal ? 'komplett-deals' : 'komplett-demo',
     externalId: String(record.id),
     // One card per demo unit: demo items are individual units, and grouping by
     // name merged different PCs (17 configs under one "Epic Gaming" card).
-    productKey: `komplett-demo-${record.id}`,
+    productKey: isDeal
+      ? (normalizeProductIdentity(title) || `komplett-deal-${record.id}`)
+      : `komplett-demo-${record.id}`,
     title,
     description,
     url: record.url,
-    category: category?.label ?? 'Komplett demo',
+    category: category?.label ?? (isDeal ? 'Komplett deals' : 'Komplett demo'),
     categoryGroupId: category?.group ?? null,
-    condition: 'outlet',
-    conditionLabel: KOMPLETT_DEMO_CONDITION_LABEL,
+    condition: meta.condition,
+    conditionLabel: meta.conditionLabel,
     priceSek: record.priceSek,
-    // Komplett's listing JSON carries no new-unit price, so there is no
-    // reference price and no discount to show.
     marketValueSek: null,
-    referencePriceSek: null,
+    referencePriceSek,
     articleNumber: String(record.id),
     availability: record.inStock === false ? 'out_of_stock' : 'in_stock',
     // Thumbnail from the id, so records saved with the full-size URL get it too.
@@ -86,9 +117,13 @@ export function komplettDemoRecordToObservation(record, source = {}) {
  * @returns {{ listed: number, newCount: number, newKeys: string[], changedKeys: string[], deletedKeys: string[] }}
  */
 export function syncKomplettDemoListing({ state, watcherState, config, source = {}, maxHistoryEntries = 20, getItemHistory = null }) {
-  const sourceId = source.id ?? KOMPLETT_DEMO_SOURCE_ID;
+  const outletSource = source.id ? source : KOMPLETT_LISTING_SOURCES.outlet;
+  const managedSourceIds = new Set([outletSource.id, KOMPLETT_DEALS_SOURCE_ID]);
   const records = listableKomplettDemoRecords(watcherState, config);
-  const observations = records.map((record) => komplettDemoRecordToObservation(record, source));
+  const observations = records.map((record) => komplettDemoRecordToObservation(
+    record,
+    record.feed === 'deals' ? KOMPLETT_LISTING_SOURCES.deals : outletSource,
+  ));
   const { newItems } = mergeObservations(state, observations, maxHistoryEntries);
 
   // A newly mirrored product keeps the date the watcher first saw it, so a
@@ -104,7 +139,7 @@ export function syncKomplettDemoListing({ state, watcherState, config, source = 
   const listedKeys = new Set(observations.map((o) => buildListingKey(o.sourceId, o.externalId)));
   const deletedKeys = [];
   for (const [key, item] of Object.entries(state.items)) {
-    if (item.sourceId !== sourceId || listedKeys.has(key)) continue;
+    if (!managedSourceIds.has(item.sourceId) || listedKeys.has(key)) continue;
     const history = item.history?.length > 0 ? item.history : getItemHistory?.(key) ?? [];
     if (history.length > 0) {
       state.itemHistory = state.itemHistory ?? {};

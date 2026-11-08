@@ -20,15 +20,27 @@
  */
 
 import {
-  fetchKomplettImages,
-  komplettDemoPagesFor,
   KOMPLETT_DEMO_SORT,
+  KOMPLETT_FEEDS,
+  KOMPLETT_OUTLET_ALL_TARGET,
   buildKomplettDemoUrl,
+  dealsTargetsForCategories,
   fetchApifyRunUsage,
   fetchKomplettDemoPages,
+  fetchKomplettImages,
+  komplettDemoPagesFor,
   mapKomplettDemoProduct,
 } from '../sources/komplett.js';
-import { getKomplettDemoCategory, normalizeKomplettDemoConfig } from './komplettDemoConfig.js';
+import {
+  KOMPLETT_DEMO_CATALOG,
+  enabledFeedIds,
+  getKomplettDemoCategory,
+  groupCoversFeed,
+  isGroupActive,
+  normalizeCategoryIds,
+  normalizeKomplettDemoConfig,
+} from './komplettDemoConfig.js';
+import { keywordMatchesTitle } from './inetPoller.js';
 import {
   ZERO_COST_MODEL,
   resolveWatcherProxyUrl,
@@ -58,10 +70,13 @@ export const COST_MODEL = Object.freeze({ perRunUsd: 0.00028, perUrlUsd: 0.00005
 
 export function createEmptyKomplettDemoState() {
   return {
-    version: 1,
+    version: 2,
     products: {},
     seededCategories: {},
     categoryStats: {},
+    seededFeeds: {},
+    seededGroups: {},
+    feedStats: {},
     recentAlerts: [],
     pendingAlerts: [],
     usage: { month: null, usd: 0, runs: 0, urls: 0 },
@@ -76,11 +91,34 @@ export function normalizeKomplettDemoState(raw) {
   const input = plainObject(raw);
   const empty = createEmptyKomplettDemoState();
   const usage = plainObject(input.usage);
+  const seededCategories = plainObject(input.seededCategories);
+  const seededFeeds = { ...plainObject(input.seededFeeds) };
+  const seededGroups = { ...plainObject(input.seededGroups) };
+
+  // Migrate legacy seededCategories so existing B-grade categories/groups do not re-alert on upgrade.
+  const legacySeedEntries = Object.entries(seededCategories);
+  if (legacySeedEntries.length > 0) {
+    if (!seededFeeds.outlet) {
+      seededFeeds.outlet = legacySeedEntries[0][1];
+    }
+    for (const [catId, seededAt] of legacySeedEntries) {
+      const legacyGroupId = `kg-cat-${catId}`;
+      if (!seededGroups[legacyGroupId]) {
+        seededGroups[legacyGroupId] = { outlet: seededAt };
+      } else if (!seededGroups[legacyGroupId].outlet) {
+        seededGroups[legacyGroupId] = { ...plainObject(seededGroups[legacyGroupId]), outlet: seededAt };
+      }
+    }
+  }
+
   return {
     ...empty,
     products: plainObject(input.products),
-    seededCategories: plainObject(input.seededCategories),
+    seededCategories,
     categoryStats: plainObject(input.categoryStats),
+    seededFeeds,
+    seededGroups,
+    feedStats: plainObject(input.feedStats),
     recentAlerts: Array.isArray(input.recentAlerts) ? input.recentAlerts.slice(0, MAX_RECENT_ALERTS) : [],
     pendingAlerts: Array.isArray(input.pendingAlerts) ? input.pendingAlerts.slice(0, MAX_PENDING_ALERTS) : [],
     usage: {
@@ -229,26 +267,147 @@ function isAvailable(record) {
   return record.inStock !== false && !record.missingSince;
 }
 
+export function groupScopeMatches(group, product, productCategories = null) {
+  if (!group || !group.enabled || !product) return false;
+  const feed = product.feed || 'outlet';
+  if (!groupCoversFeed(group, feed)) return false;
+
+  if (Array.isArray(group.categories) && group.categories.length > 0) {
+    const candidateCats = Array.isArray(productCategories) && productCategories.length > 0
+      ? productCategories.map(String)
+      : product.categoryId ? [String(product.categoryId)] : [];
+    const matchedCat = group.categories.some((id) => candidateCats.includes(String(id)));
+    if (!matchedCat) return false;
+  }
+
+  if (Array.isArray(group.keywords) && group.keywords.length > 0) {
+    const strict = group.strictKeywordMatch !== false;
+    const title = String(product.title ?? '');
+    const description = String(product.description ?? '');
+    const matchedKw = group.keywords.some((kw) => (
+      keywordMatchesTitle(title, kw, { strict })
+      || (description && keywordMatchesTitle(description, kw, { strict }))
+    ));
+    if (!matchedKw) return false;
+  }
+
+  return true;
+}
+
+export function groupFiltersMatch(group, product) {
+  if (!group || !product) return false;
+  if (group.inStockOnly && !product.inStock) return false;
+  if (group.maxPriceSek != null) {
+    if (!(product.priceSek > 0) || product.priceSek > group.maxPriceSek) return false;
+  }
+  if (group.minDiscountPct != null) {
+    if (!((product.discountPct ?? 0) >= group.minDiscountPct)) return false;
+  }
+  return true;
+}
+
+export function groupMatches(group, product, productCategories = null) {
+  return isGroupActive(group)
+    && groupScopeMatches(group, product, productCategories)
+    && groupFiltersMatch(group, product);
+}
+
+function effectiveDropThreshold(matchingGroups, config) {
+  const globalThreshold = Number(config.notifyPriceDropPercent) || 0;
+  if (!Array.isArray(matchingGroups) || matchingGroups.length === 0) return globalThreshold;
+  const thresholds = matchingGroups
+    .map((g) => (g.priceDropPct !== null && g.priceDropPct !== undefined ? Number(g.priceDropPct) : globalThreshold))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return thresholds.length > 0 ? Math.min(...thresholds) : 0;
+}
+
+/** Build the list of Komplett target pages to fetch for this poll. */
+export function buildKomplettTargets(config, state = {}) {
+  const normalized = normalizeKomplettDemoConfig(config);
+  const feeds = enabledFeedIds(normalized);
+  const activeGroups = (normalized.groups ?? []).filter(isGroupActive);
+  if (!feeds.length) return [];
+  if (!activeGroups.length && !(normalized.categories?.length > 0)) return [];
+
+  const targets = [];
+
+  if (feeds.includes('outlet')) {
+    const outletGroups = activeGroups.filter((g) => groupCoversFeed(g, 'outlet'));
+    const outletCatIds = normalizeCategoryIds([
+      ...(normalized.categories ?? []),
+      ...outletGroups.flatMap((g) => g.categories ?? []),
+    ]);
+    for (const id of outletCatIds) {
+      const category = getKomplettDemoCategory(id);
+      if (category) {
+        targets.push({
+          ...category,
+          feed: 'outlet',
+          pages: komplettDemoPagesFor(state.categoryStats?.[category.id]?.total),
+        });
+      }
+    }
+    const needsAllOutlet = outletGroups.some((g) => !(g.categories?.length > 0));
+    if (needsAllOutlet) {
+      targets.push({ ...KOMPLETT_OUTLET_ALL_TARGET, feed: 'outlet' });
+    }
+  }
+
+  if (feeds.includes('deals')) {
+    const dealsGroups = activeGroups.filter((g) => groupCoversFeed(g, 'deals'));
+    if (dealsGroups.length > 0) {
+      const includeAll = dealsGroups.some((g) => !(g.categories?.length > 0));
+      const dealsCatIds = normalizeCategoryIds(dealsGroups.flatMap((g) => g.categories ?? []));
+      for (const target of dealsTargetsForCategories(dealsCatIds, { includeAll })) {
+        targets.push({ ...target, feed: 'deals' });
+      }
+    }
+  }
+
+  return targets;
+}
+
 /**
  * Apply one run's pages to the state and work out what to alert about.
  * Pure apart from mutating `state`; the poller handles fetching and Discord.
  *
- * @returns {{ alerts, okCategories, failedCategories, warnings, productCount, newCount }}
+ * @returns {{ alerts, okCategories, failedCategories, okFeeds, warnings, productCount, newCount }}
  */
 export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEnabled = true }) {
-  const selected = config.categories.map(getKomplettDemoCategory).filter(Boolean);
+  const normalized = normalizeKomplettDemoConfig(config);
+  const activeGroups = (normalized.groups ?? []).filter(isGroupActive);
+  const selected = normalized.categories.map(getKomplettDemoCategory).filter(Boolean);
   const selectedIds = new Set(selected.map((c) => c.id));
   const warnings = [];
+
+  if (!state.seededFeeds) state.seededFeeds = {};
+  if (!state.seededGroups) state.seededGroups = {};
+  if (!state.feedStats) state.feedStats = {};
 
   // Deselecting a category forgets its seed, so re-selecting it later seeds
   // silently again instead of alerting on everything listed meanwhile.
   for (const id of Object.keys(state.seededCategories)) {
     if (!selectedIds.has(id)) delete state.seededCategories[id];
   }
+  const activeGroupIds = new Set(activeGroups.map((g) => g.id));
+  for (const id of Object.keys(state.seededGroups)) {
+    if (!activeGroupIds.has(id)) delete state.seededGroups[id];
+  }
+  const activeFeeds = new Set(enabledFeedIds(normalized));
+  for (const feedId of Object.keys(state.seededFeeds)) {
+    if (!activeFeeds.has(feedId)) delete state.seededFeeds[feedId];
+  }
 
   const pageByCategory = new Map();
+  const extraPages = [];
   for (const page of Array.isArray(pages) ? pages : []) {
     const id = categoryIdFromPage(page);
+    const isDealsPage = page?.feed === 'deals' || String(id ?? '').startsWith('deals-');
+    const isOutletAllPage = id === 'outlet-all';
+    if (isDealsPage || isOutletAllPage || (id && !selectedIds.has(id))) {
+      extraPages.push({ page, id, feed: isDealsPage ? 'deals' : 'outlet' });
+      continue;
+    }
     if (!id || !selectedIds.has(id)) continue;
     const existing = pageByCategory.get(id);
     if (!existing || (!existing.found && page.found)) pageByCategory.set(id, page);
@@ -256,101 +415,203 @@ export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEna
 
   const okCategories = [];
   const failedCategories = [];
-  for (const category of selected) {
-    const page = pageByCategory.get(category.id);
-    const prev = plainObject(state.categoryStats[category.id]);
-    if (!page || !page.found || !Array.isArray(page.products)) {
-      failedCategories.push(category.id);
+  const checkOutletCategories = normalized.feeds?.outlet !== false || pageByCategory.size > 0;
+  if (checkOutletCategories) {
+    for (const category of selected) {
+      const page = pageByCategory.get(category.id);
+      const prev = plainObject(state.categoryStats[category.id]);
+      if (!page || !page.found || !Array.isArray(page.products)) {
+        failedCategories.push(category.id);
+        state.categoryStats[category.id] = {
+          ...prev,
+          lastErrorAt: nowIso,
+          lastError: page ? `No product data on the page${page.title ? ` ("${page.title}")` : ''}` : 'Page not fetched',
+        };
+        continue;
+      }
+      okCategories.push(category.id);
+      if (page.sort && page.sort !== KOMPLETT_DEMO_SORT) {
+        warnings.push(`${category.label}: Komplett ignored the newest-first sort (got ${page.sort}).`);
+      }
+      if (Number.isFinite(page.numberOfResults) && page.numberOfResults > page.products.length) {
+        warnings.push(`${category.label}: Komplett lists ${page.numberOfResults} product(s) but only rendered ${page.products.length}.`);
+      }
       state.categoryStats[category.id] = {
-        ...prev,
-        lastErrorAt: nowIso,
-        lastError: page ? `No product data on the page${page.title ? ` ("${page.title}")` : ''}` : 'Page not fetched',
+        lastFetchedAt: nowIso,
+        lastCount: page.products.length,
+        total: Number.isFinite(page.total) ? page.total : null,
+        numberOfResults: Number.isFinite(page.numberOfResults) ? page.numberOfResults : null,
+        sort: page.sort ?? null,
+        lastError: null,
+        lastErrorAt: prev.lastErrorAt ?? null,
       };
-      continue;
     }
-    okCategories.push(category.id);
-    if (page.sort && page.sort !== KOMPLETT_DEMO_SORT) {
-      warnings.push(`${category.label}: Komplett ignored the newest-first sort (got ${page.sort}).`);
-    }
-    if (Number.isFinite(page.numberOfResults) && page.numberOfResults > page.products.length) {
-      warnings.push(`${category.label}: Komplett lists ${page.numberOfResults} product(s) but only rendered ${page.products.length}.`);
-    }
-    state.categoryStats[category.id] = {
-      lastFetchedAt: nowIso,
-      lastCount: page.products.length,
-      total: Number.isFinite(page.total) ? page.total : null,
-      numberOfResults: Number.isFinite(page.numberOfResults) ? page.numberOfResults : null,
-      sort: page.sort ?? null,
-      lastError: null,
-      lastErrorAt: prev.lastErrorAt ?? null,
-    };
   }
   if (failedCategories.length && okCategories.length) {
     warnings.push(`${failedCategories.length} categor${failedCategories.length === 1 ? 'y' : 'ies'} failed to load this poll.`);
   }
 
-  // Dedupe by materialNumber across categories.
+  const okFeedSet = new Set();
+  if (okCategories.length > 0) okFeedSet.add('outlet');
+  let dealsTotalCount = 0;
+  let dealsTotalAvailable = 0;
+  let dealsHadPage = false;
+  let dealsLastError = null;
+  let outletAllCount = 0;
+
+  for (const { page, feed } of extraPages) {
+    if (feed === 'deals') dealsHadPage = true;
+    if (!page || !page.found || !Array.isArray(page.products)) {
+      if (feed === 'deals') {
+        dealsLastError = page ? `No product data on deals page${page.title ? ` ("${page.title}")` : ''}` : 'Deals page not fetched';
+      }
+      continue;
+    }
+    okFeedSet.add(feed);
+    if (feed === 'deals') {
+      dealsTotalCount += page.products.length;
+      if (Number.isFinite(page.total)) dealsTotalAvailable += page.total;
+    } else {
+      outletAllCount += page.products.length;
+    }
+  }
+
+  if (okCategories.length > 0 || okFeedSet.has('outlet')) {
+    const outletCount = okCategories.reduce((sum, id) => sum + (state.categoryStats[id]?.lastCount ?? 0), 0) + outletAllCount;
+    const outletTotal = okCategories.reduce((sum, id) => sum + (state.categoryStats[id]?.total ?? 0), 0);
+    state.feedStats.outlet = {
+      lastFetchedAt: nowIso,
+      lastCount: outletCount,
+      total: outletTotal || outletCount,
+      lastError: null,
+      lastErrorAt: state.feedStats.outlet?.lastErrorAt ?? null,
+    };
+  } else if (failedCategories.length > 0) {
+    state.feedStats.outlet = {
+      ...plainObject(state.feedStats.outlet),
+      lastErrorAt: nowIso,
+      lastError: state.categoryStats[failedCategories[0]]?.lastError ?? 'Failed to load demo categories',
+    };
+  }
+
+  if (okFeedSet.has('deals')) {
+    state.feedStats.deals = {
+      lastFetchedAt: nowIso,
+      lastCount: dealsTotalCount,
+      total: dealsTotalAvailable || dealsTotalCount,
+      lastError: null,
+      lastErrorAt: state.feedStats.deals?.lastErrorAt ?? null,
+    };
+  } else if (dealsHadPage && dealsLastError) {
+    state.feedStats.deals = {
+      ...plainObject(state.feedStats.deals),
+      lastErrorAt: nowIso,
+      lastError: dealsLastError,
+    };
+  }
+
+  // Dedupe by materialNumber across categories and feeds.
   const seen = new Map();
   for (const categoryId of okCategories) {
     for (const raw of pageByCategory.get(categoryId).products) {
-      const product = mapKomplettDemoProduct(raw, categoryId);
+      const product = mapKomplettDemoProduct(raw, categoryId, 'outlet');
       if (!product) continue;
       const entry = seen.get(product.id);
-      if (entry) entry.categories.push(categoryId);
-      else seen.set(product.id, { product, categories: [categoryId] });
+      if (entry) {
+        if (!entry.categories.includes(categoryId)) entry.categories.push(categoryId);
+      } else {
+        seen.set(product.id, { product, categories: [categoryId], fromSpecificCategory: true });
+      }
+    }
+  }
+
+  for (const { page, id, feed } of extraPages) {
+    if (!page || !page.found || !Array.isArray(page.products)) continue;
+    for (const raw of page.products) {
+      const product = mapKomplettDemoProduct(raw, id, feed);
+      if (!product) continue;
+      const catList = product.categoryId ? [product.categoryId] : [];
+      // Only track products from broad department/campaign pages if they match an active watch group's scope.
+      if (activeGroups.length > 0 && !activeGroups.some((g) => groupScopeMatches(g, product, catList))) {
+        continue;
+      }
+      const entry = seen.get(product.id);
+      if (entry) {
+        for (const c of catList) {
+          if (!entry.categories.includes(c)) entry.categories.push(c);
+        }
+      } else {
+        seen.set(product.id, { product, categories: catList, fromSpecificCategory: false });
+      }
     }
   }
 
   const alerts = [];
   let newCount = 0;
-  const threshold = config.notifyPriceDropPercent;
 
-  // Newest-known listing per category before this run. Komplett ids grow with
-  // each new listing, so an unseen product with a LOWER id isn't a new listing:
-  // it just came into view, e.g. because more "load more" pages are fetched now.
+  // Newest-known listing per category before this run (for B-grade / outlet items).
   const newestKnown = new Map();
   for (const record of Object.values(state.products)) {
+    if ((record.feed || 'outlet') !== 'outlet') continue;
     const n = numericId(record.id);
     if (n === null) continue;
     const key = String(record.categoryId);
     if (!newestKnown.has(key) || n > newestKnown.get(key)) newestKnown.set(key, n);
   }
 
-  for (const [id, { product, categories }] of seen) {
+  for (const [id, { product, categories, fromSpecificCategory }] of seen) {
+    const feed = product.feed || 'outlet';
+    const matchingGroups = activeGroups.filter((g) => groupMatches(g, product, categories));
+    const matchesAnyGroup = matchingGroups.length > 0;
+    const threshold = effectiveDropThreshold(matchingGroups, normalized);
+
     const seededCategories = categories.filter((c) => state.seededCategories[c]);
+    const isSeededForFeed = feed === 'outlet' && fromSpecificCategory
+      ? seededCategories.length > 0
+      : Boolean(state.seededFeeds[feed]) && (
+        matchingGroups.length === 0 || matchingGroups.some((g) => Boolean(state.seededGroups[g.id]?.[feed]))
+      );
+
     const idNum = numericId(id);
-    const olderThanKnown = idNum !== null && seededCategories.length > 0
+    const olderThanKnown = feed === 'outlet' && fromSpecificCategory && idNum !== null && seededCategories.length > 0
       && seededCategories.every((c) => newestKnown.has(String(c)) && idNum < newestKnown.get(String(c)));
-    const silent = !alertsEnabled || seededCategories.length === 0;
-    const categoryId = seededCategories[0] ?? categories[0];
+    const silent = !alertsEnabled || !isSeededForFeed || !matchesAnyGroup;
+    const categoryId = seededCategories[0] ?? categories[0] ?? product.categoryId ?? null;
+    const groupRefs = matchingGroups.map((g) => ({ id: g.id, name: g.name }));
     const existing = state.products[id];
 
     if (!existing) {
       newCount += 1;
       state.products[id] = {
         id,
+        feed,
         title: product.title,
         description: product.description ?? null,
         url: product.url,
         imageUrl: product.imageUrl,
         priceSek: product.priceSek,
+        listPriceSek: product.listPriceSek ?? null,
+        discountPct: product.discountPct ?? 0,
         basePriceSek: product.priceSek,
         inStock: product.inStock,
         availabilityText: product.availabilityText,
         categoryId,
+        groups: groupRefs,
         firstSeenAt: nowIso,
         lastSeenAt: nowIso,
         seeded: silent || olderThanKnown,
         missingSince: null,
         misses: 0,
       };
-      if (!silent && !olderThanKnown) alerts.push({ reason: 'new', product, categoryId });
+      if (!silent && !olderThanKnown) {
+        alerts.push({ reason: 'new', feed, product, categoryId, groups: groupRefs });
+      }
       continue;
     }
 
     const wasAvailable = isAvailable(existing);
-    if (!silent && config.notifyBackInStock && !wasAvailable && product.inStock) {
-      alerts.push({ reason: 'back-in-stock', product, categoryId });
+    if (!silent && normalized.notifyBackInStock && !wasAvailable && product.inStock) {
+      alerts.push({ reason: 'back-in-stock', feed, product, categoryId, groups: groupRefs });
       existing.basePriceSek = product.priceSek;
     } else if (!silent && threshold > 0 && existing.basePriceSek > 0 && product.priceSek > 0
       && product.priceSek < existing.basePriceSek) {
@@ -358,8 +619,10 @@ export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEna
       if (dropPercent >= threshold) {
         alerts.push({
           reason: 'price-drop',
+          feed,
           product,
           categoryId,
+          groups: groupRefs,
           previousPriceSek: existing.basePriceSek,
           dropPercent: Math.round(dropPercent * 10) / 10,
         });
@@ -373,14 +636,18 @@ export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEna
     }
 
     Object.assign(existing, {
+      feed,
       title: product.title,
       description: product.description ?? existing.description ?? null,
       url: product.url,
       imageUrl: product.imageUrl ?? existing.imageUrl ?? null,
       priceSek: product.priceSek ?? existing.priceSek,
+      listPriceSek: product.listPriceSek ?? existing.listPriceSek ?? null,
+      discountPct: product.discountPct ?? existing.discountPct ?? 0,
       inStock: product.inStock,
       availabilityText: product.availabilityText,
       categoryId: categories.includes(existing.categoryId) ? existing.categoryId : categoryId,
+      groups: groupRefs.length > 0 ? groupRefs : (existing.groups ?? []),
       lastSeenAt: nowIso,
       missingSince: null,
       misses: 0,
@@ -392,10 +659,26 @@ export function applyKomplettDemoPages({ state, pages, config, nowIso, alertsEna
   for (const categoryId of okCategories) {
     if (!state.seededCategories[categoryId]) state.seededCategories[categoryId] = nowIso;
   }
+  for (const feedId of okFeedSet) {
+    if (!state.seededFeeds[feedId]) state.seededFeeds[feedId] = nowIso;
+    for (const group of activeGroups) {
+      if (!groupCoversFeed(group, feedId)) continue;
+      if (!state.seededGroups[group.id]) state.seededGroups[group.id] = {};
+      if (!state.seededGroups[group.id][feedId]) state.seededGroups[group.id][feedId] = nowIso;
+    }
+  }
 
   pruneProducts(state, Date.parse(nowIso));
 
-  return { alerts, okCategories, failedCategories, warnings, productCount: seen.size, newCount };
+  return {
+    alerts,
+    okCategories,
+    failedCategories,
+    okFeeds: [...okFeedSet],
+    warnings,
+    productCount: seen.size,
+    newCount,
+  };
 }
 
 /**
@@ -430,6 +713,7 @@ function markMissingProducts({ state, okCategories, pageByCategory, seenIds, now
     const oldestOnPage = Math.min(...ids);
 
     for (const record of Object.values(state.products)) {
+      if ((record.feed || 'outlet') !== 'outlet') continue;
       if (record.categoryId !== categoryId || seenIds.has(record.id) || record.missingSince) continue;
       const n = numericId(record.id);
       const shouldBeListed = wholeCategoryVisible || (n !== null && n > oldestOnPage);
@@ -463,17 +747,21 @@ function describeAlert(alert, nowIso, delivered, note = null) {
   return {
     at: nowIso,
     reason: alert.reason,
+    feed: alert.feed ?? alert.product?.feed ?? 'outlet',
     id: alert.product.id,
     title: alert.product.title,
     url: alert.product.url,
     imageUrl: alert.product.imageUrl,
     priceSek: alert.product.priceSek,
+    listPriceSek: alert.product.listPriceSek ?? null,
+    discountPct: alert.product.discountPct ?? 0,
     previousPriceSek: alert.previousPriceSek ?? null,
     dropPercent: alert.dropPercent ?? null,
     availabilityText: alert.product.availabilityText,
     inStock: alert.product.inStock,
     categoryId: alert.categoryId,
     categoryLabel: category?.label ?? alert.categoryId,
+    groups: Array.isArray(alert.groups) ? alert.groups.map((g) => g.name || g.id) : [],
     delivered,
     note,
   };
@@ -545,10 +833,11 @@ export function createKomplettDemoPoller({
   }
 
   function costGuard(config = readConfig(), nowMs = now()) {
+    const targets = buildKomplettTargets(config, state);
     return computeCostGuard({
       usage: state.usage,
       config,
-      urlCount: config.categories.length,
+      urlCount: targets.length,
       nowMs,
       costModel: isProxyMode() ? ZERO_COST_MODEL : COST_MODEL,
     });
@@ -665,10 +954,8 @@ export function createKomplettDemoPoller({
     const nowIso = new Date(nowMs).toISOString();
     rollUsageMonth(state.usage, nowMs);
 
-    // Fetch enough "load more" pages to cover each category's last known size.
-    const categories = config.categories.map(getKomplettDemoCategory).filter(Boolean)
-      .map((category) => ({ ...category, pages: komplettDemoPagesFor(state.categoryStats[category.id]?.total) }));
-    if (!categories.length) throw new Error('Select at least one Komplett demo category first.');
+    const categories = buildKomplettTargets(config, state);
+    if (!categories.length) throw new Error('Select at least one Komplett watch group or category first.');
 
     await settlePreviousRunCost();
 
@@ -701,7 +988,7 @@ export function createKomplettDemoPoller({
 
     const outcome = applyKomplettDemoPages({ state, pages, config, nowIso, alertsEnabled: config.enabled });
 
-    if (!outcome.okCategories.length) {
+    if (!outcome.okCategories.length && !outcome.okFeeds?.length) {
       const message = run.status && run.status !== 'SUCCEEDED'
         ? `Apify run ${run.status} without usable pages`
         : 'No category page returned product data (blocked or layout change?)';
@@ -753,7 +1040,8 @@ export function createKomplettDemoPoller({
       schedule(nextDelayMs());
       return null;
     }
-    if (!manual && !config.categories.length) {
+    const targets = buildKomplettTargets(config, state);
+    if (!manual && !targets.length) {
       status.lastSkipReason = 'no-categories';
       schedule(nextDelayMs());
       return null;
@@ -840,25 +1128,74 @@ export function createKomplettDemoPoller({
     });
   }
 
-  function latestFinds(config, limit = 20) {
+  function feedStatus(config) {
+    return Object.values(KOMPLETT_FEEDS).map((feed) => {
+      const stats = plainObject(state.feedStats?.[feed.id]);
+      const enabled = Boolean(config.feeds?.[feed.id]);
+      const seeded = feed.id === 'outlet'
+        ? Boolean(state.seededFeeds?.outlet || Object.keys(state.seededCategories).length > 0)
+        : Boolean(state.seededFeeds?.[feed.id]);
+      const seededAt = state.seededFeeds?.[feed.id]
+        ?? (feed.id === 'outlet' ? Object.values(state.seededCategories)[0] ?? null : null);
+      return {
+        id: feed.id,
+        label: feed.label,
+        shortLabel: feed.shortLabel,
+        url: feed.url,
+        enabled,
+        seeded,
+        seededAt,
+        lastCount: stats.lastCount ?? null,
+        total: stats.total ?? null,
+        lastFetchedAt: stats.lastFetchedAt ?? null,
+        lastError: stats.lastError ?? null,
+      };
+    });
+  }
+
+  function groupStatus(config) {
+    return (config.groups ?? []).map((group) => ({
+      ...group,
+      active: isGroupActive(group),
+      seeded: state.seededGroups?.[group.id] ?? {},
+    }));
+  }
+
+  function latestFinds(config, limit = 25) {
+    const activeGroups = (config.groups ?? []).filter(isGroupActive);
     const selected = new Set(config.categories);
     return Object.values(state.products)
-      .filter((record) => selected.has(record.categoryId) && isAvailable(record))
+      .filter((record) => {
+        if (!isAvailable(record)) return false;
+        const feed = record.feed || 'outlet';
+        if (config.feeds?.[feed] === false) return false;
+        if (activeGroups.length > 0) {
+          return activeGroups.some((g) => groupMatches(g, record));
+        }
+        return selected.has(record.categoryId);
+      })
       .sort((a, b) => (Date.parse(b.firstSeenAt) - Date.parse(a.firstSeenAt))
         || ((numericId(b.id) ?? 0) - (numericId(a.id) ?? 0)))
       .slice(0, limit)
-      .map((record) => ({
-        id: record.id,
-        title: record.title,
-        url: record.url,
-        imageUrl: record.imageUrl,
-        priceSek: record.priceSek,
-        availabilityText: record.availabilityText,
-        categoryId: record.categoryId,
-        categoryLabel: getKomplettDemoCategory(record.categoryId)?.label ?? record.categoryId,
-        firstSeenAt: record.firstSeenAt,
-        seeded: Boolean(record.seeded),
-      }));
+      .map((record) => {
+        const matched = activeGroups.filter((g) => groupMatches(g, record));
+        return {
+          id: record.id,
+          feed: record.feed || 'outlet',
+          title: record.title,
+          url: record.url,
+          imageUrl: record.imageUrl,
+          priceSek: record.priceSek,
+          listPriceSek: record.listPriceSek ?? null,
+          discountPct: record.discountPct ?? 0,
+          availabilityText: record.availabilityText,
+          categoryId: record.categoryId,
+          categoryLabel: getKomplettDemoCategory(record.categoryId)?.label ?? record.categoryId,
+          groups: matched.length ? matched.map((g) => g.name) : (record.groups ?? []).map((g) => g.name || g.id),
+          firstSeenAt: record.firstSeenAt,
+          seeded: Boolean(record.seeded),
+        };
+      });
   }
 
   function getStatus() {
@@ -884,6 +1221,8 @@ export function createKomplettDemoPoller({
         exhausted: guard.exhausted,
       },
       lastRun: state.lastRun,
+      feeds: feedStatus(config),
+      groups: groupStatus(config),
       categories: selectedCategoryStatus(config),
       trackedProducts: Object.keys(state.products).length,
       pendingAlerts: state.pendingAlerts.length,
@@ -914,6 +1253,7 @@ export function createKomplettDemoPoller({
       return tick({ manual: true });
     },
     getStatus,
+    getCatalog: () => KOMPLETT_DEMO_CATALOG,
     /** For tests and diagnostics. */
     getState: () => state,
   };

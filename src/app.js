@@ -36,8 +36,11 @@ import { createPurchaseService } from './services/purchaseService.js';
 import {
   DEFAULT_KOMPLETT_DEMO_CONFIG,
   KOMPLETT_DEMO_CATALOG,
+  MAX_CATEGORIES_PER_GROUP as KOMPLETT_DEMO_MAX_CATEGORIES_PER_GROUP,
+  MAX_GROUPS as KOMPLETT_DEMO_MAX_GROUPS,
   MAX_INTERVAL_MINUTES as KOMPLETT_DEMO_MAX_INTERVAL_MINUTES,
   MAX_JITTER_PCT as KOMPLETT_DEMO_MAX_JITTER_PCT,
+  MAX_KEYWORDS_PER_GROUP as KOMPLETT_DEMO_MAX_KEYWORDS_PER_GROUP,
   MAX_MONTHLY_USD_LIMIT as KOMPLETT_DEMO_MAX_MONTHLY_USD,
   MIN_INTERVAL_MINUTES as KOMPLETT_DEMO_MIN_INTERVAL_MINUTES,
   MIN_MONTHLY_USD as KOMPLETT_DEMO_MIN_MONTHLY_USD,
@@ -45,7 +48,8 @@ import {
   isMaskedWebhookUrl,
   maskWebhookUrl,
   normalizeKomplettDemoConfig,
-  publicKomplettDemoConfig
+  publicKomplettDemoConfig,
+  validateKomplettDemoConfigPatch,
 } from './services/komplettDemoConfig.js';
 import { buildKomplettDemoUrl } from './sources/komplett.js';
 import {
@@ -615,6 +619,9 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
     maxJitterPct: KOMPLETT_DEMO_MAX_JITTER_PCT,
     minMonthlyUsd: KOMPLETT_DEMO_MIN_MONTHLY_USD,
     maxMonthlyUsd: KOMPLETT_DEMO_MAX_MONTHLY_USD,
+    maxGroups: KOMPLETT_DEMO_MAX_GROUPS,
+    maxKeywordsPerGroup: KOMPLETT_DEMO_MAX_KEYWORDS_PER_GROUP,
+    maxCategoriesPerGroup: KOMPLETT_DEMO_MAX_CATEGORIES_PER_GROUP,
     defaults: DEFAULT_KOMPLETT_DEMO_CONFIG
   };
 
@@ -639,23 +646,12 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
     const missing = requireKomplettDemo(reply);
     if (missing) return missing;
     const body = request.body ?? {};
-    if (typeof body !== 'object' || Array.isArray(body)) {
+    const problem = validateKomplettDemoConfigPatch(body);
+    if (problem) {
       reply.code(400);
-      return { message: 'Expected a Komplett demo configuration object.' };
+      return { message: problem };
     }
     const patch = { ...body };
-
-    if (Object.hasOwn(patch, 'categories')) {
-      if (!Array.isArray(patch.categories)) {
-        reply.code(400);
-        return { message: 'categories must be an array of Komplett demo category ids.' };
-      }
-      const unknown = findUnknownCategoryIds(patch.categories);
-      if (unknown.length) {
-        reply.code(400);
-        return { message: `Unknown Komplett demo categor${unknown.length === 1 ? 'y' : 'ies'}: ${unknown.join(', ')}` };
-      }
-    }
 
     if (Object.hasOwn(patch, 'discordWebhookUrl')) {
       const raw = String(patch.discordWebhookUrl ?? '').trim();

@@ -112,15 +112,19 @@ const el = {
   hotlistAddGroup: $('#hotlist-add-group'),
   kdStatus: $('#kd-status'),
   kdEnabled: $('#kd-enabled'),
+  kdFeedDeals: $('#kd-feed-deals'),
+  kdFeedOutlet: $('#kd-feed-outlet'),
   kdInterval: $('#kd-interval'),
   kdJitter: $('#kd-jitter'),
   kdMaxUsd: $('#kd-max-usd'),
+  kdIntervalHint: $('#kd-interval-hint'),
   kdDropPct: $('#kd-drop-pct'),
   kdBackInStock: $('#kd-back-in-stock'),
   kdWebhook: $('#kd-webhook'),
   kdCountLabel: $('#kd-count-label'),
   kdPollNow: $('#kd-poll-now'),
-  kdCategories: $('#kd-categories'),
+  kdAddGroup: $('#kd-add-group'),
+  kdGroups: $('#kd-groups'),
   kdAlerts: $('#kd-alerts'),
   kdFinds: $('#kd-finds'),
   inetStatus: $('#inet-status'),
@@ -1476,19 +1480,214 @@ function collectHotlistConfig() {
   };
 }
 
-// ── KOMPLETT DEMO (B-grade demovaror watcher) ───────────────────
-// Its own randomised loop like the hotlist; each check is one Apify run, so
-// the status line shows this month's Apify spend against the cap.
+// ── KOMPLETT (campaign deals + B-grade demovaror watcher) ────────
+// Same architecture and configurable settings as the Inet and Webhallen
+// watchers: one Apify run per check sweeping both feeds, monthly spend cap,
+// and watch groups (with automatic migration from legacy category lists).
 
 let komplettDemo = null; // { config, catalog, limits, lastStatus }
-// Which category groups are expanded (null = not decided yet: open the ones in use).
-let kdOpenGroups = null;
+const kdOpenGroups = new Set();
 
+const KD_FEED_LABELS = { deals: 'Kampanjer', outlet: 'Demovaror' };
+const KD_GROUP_FEEDS = { both: 'Deals and B-grade demo', deals: 'Campaign deals only', outlet: 'B-grade / demo only' };
+const KD_MIN_INTERVAL_MIN = 0.5;
 const KD_REASON_LABELS = { 'new': 'New', 'price-drop': 'Price drop', 'back-in-stock': 'Back in stock' };
 const KD_REASON_VARIANTS = { 'new': 'success', 'price-drop': 'primary', 'back-in-stock': 'warning' };
 
 function formatUsd(value, digits = 3) {
   return Number.isFinite(value) ? `$${value.toFixed(digits)}` : '—';
+}
+
+function komplettCatalogMaps() {
+  const catalog = komplettDemo?.catalog ?? [];
+  const idToName = new Map();
+  const nameToId = new Map();
+  for (const group of catalog) {
+    for (const cat of group.categories ?? []) {
+      const name = cat.label;
+      idToName.set(String(cat.id), name);
+      nameToId.set(name, String(cat.id));
+    }
+  }
+  return { idToName, nameToId, names: [...nameToId.keys()] };
+}
+
+function komplettCategoryLabel(id, maps = komplettCatalogMaps()) {
+  return maps.idToName.get(String(id)) ?? String(id);
+}
+
+function createEmptyKomplettGroup() {
+  return {
+    id: `kg-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+    name: '',
+    enabled: true,
+    feeds: 'both',
+    keywords: [],
+    strictKeywordMatch: true,
+    categories: [],
+    minDiscountPct: null,
+    maxPriceSek: null,
+    inStockOnly: false,
+    priceDropPct: null
+  };
+}
+
+function komplettGroupIsActive(group) {
+  return Boolean(
+    group.enabled && (
+      (group.keywords && group.keywords.length)
+      || (group.categories && group.categories.length)
+      || (group.minDiscountPct ?? 0) > 0
+      || (group.maxPriceSek ?? 0) > 0
+    )
+  );
+}
+
+function komplettGroupSummary(group) {
+  const parts = [];
+  if (group.keywords?.length) parts.push(`${group.keywords.length} keyword${group.keywords.length === 1 ? '' : 's'}`);
+  if (group.categories?.length) parts.push(`${group.categories.length} categor${group.categories.length === 1 ? 'y' : 'ies'}`);
+  if ((group.minDiscountPct ?? 0) > 0) parts.push(`≥${group.minDiscountPct}% off`);
+  if ((group.maxPriceSek ?? 0) > 0) parts.push(`≤${formatSek(group.maxPriceSek)}`);
+  if (group.feeds && group.feeds !== 'both') parts.push(group.feeds === 'deals' ? 'deals' : 'demo');
+  return parts.join(' · ') || 'Add a keyword, category or min discount';
+}
+
+function createKomplettGroupElement(group) {
+  const details = document.createElement('sl-details');
+  details.className = `watch${group.enabled ? '' : ' is-disabled'}`;
+  details.open = kdOpenGroups.has(group.id);
+  const numeric = (value) => (value != null ? value : '');
+  const maps = komplettCatalogMaps();
+  const categoryChips = (group.categories ?? []).map((id) => komplettCategoryLabel(id, maps));
+
+  details.innerHTML = `
+    <div slot="summary" class="watch-summary">
+      <span class="watch-title">
+        <span class="watch-name"></span>
+        <sl-badge class="watch-off" variant="neutral" pill>Off</sl-badge>
+      </span>
+      <span class="watch-meta"></span>
+    </div>
+    <div class="watch-body">
+      <div class="watch-top">
+        <sl-switch class="kg-enabled" ${group.enabled ? 'checked' : ''}>Enabled</sl-switch>
+        <sl-button class="kg-delete" variant="danger" outline size="small"><sl-icon slot="prefix" name="trash3"></sl-icon>Delete</sl-button>
+      </div>
+      <sl-input class="kg-name" label="Group name" placeholder="e.g. Grafikkort" value="${escapeHtml(group.name ?? '')}"></sl-input>
+      <sl-select class="kg-feeds" label="Feeds" value="${escapeHtml(group.feeds ?? 'both')}">
+        ${Object.entries(KD_GROUP_FEEDS).map(([value, label]) => `<sl-option value="${value}">${escapeHtml(label)}</sl-option>`).join('')}
+      </sl-select>
+      ${chipFieldHtml({ id: `kg-kw-${group.id}`, label: 'Keywords', hint: 'any one matches title or PC specs; type, then tap Add', placeholder: 'e.g. RTX 5090, 9800X3D' })}
+      <sl-switch class="kg-strict" ${group.strictKeywordMatch !== false ? 'checked' : ''} help-text="On: multi-word keywords must appear as an exact phrase. Off: words can appear anywhere.">Exact title match</sl-switch>
+      ${chipFieldHtml({ id: `kg-cat-${group.id}`, label: 'Categories', hint: 'any one matches (leave empty for all)', placeholder: 'Search Komplett categories…' })}
+      <div class="form-grid-3">
+        <sl-input class="kg-mindiscount" label="Min off %" type="number" inputmode="numeric" placeholder="any" min="0" max="99" step="1" value="${numeric(group.minDiscountPct)}"></sl-input>
+        <sl-input class="kg-maxprice" label="Max price" type="number" inputmode="numeric" placeholder="any" min="0" step="100" value="${numeric(group.maxPriceSek)}"></sl-input>
+        <sl-input class="kg-droppct" label="Drop alert %" type="number" inputmode="numeric" placeholder="global" min="0" max="90" step="1" value="${numeric(group.priceDropPct)}"></sl-input>
+      </div>
+      <sl-switch class="kg-instock" ${group.inStockOnly ? 'checked' : ''} help-text="Only alert when the item is in stock.">In stock only</sl-switch>
+    </div>`;
+
+  const syncSummary = () => {
+    details.querySelector('.watch-name').textContent = group.name || 'Untitled group';
+    details.querySelector('.watch-meta').textContent = komplettGroupSummary(group);
+    details.classList.toggle('is-disabled', !group.enabled);
+    renderKomplettDemoCount();
+  };
+  syncSummary();
+
+  details.addEventListener('sl-show', (e) => { if (e.target === details) kdOpenGroups.add(group.id); });
+  details.addEventListener('sl-hide', (e) => { if (e.target === details) kdOpenGroups.delete(group.id); });
+  details.querySelector('.kg-enabled').addEventListener('sl-change', (e) => { group.enabled = e.target.checked; syncSummary(); });
+  details.querySelector('.kg-name').addEventListener('sl-input', (e) => { group.name = e.target.value; syncSummary(); });
+  details.querySelector('.kg-feeds').addEventListener('sl-change', (e) => { group.feeds = e.target.value || 'both'; syncSummary(); });
+  details.querySelector('.kg-strict').addEventListener('sl-change', (e) => { group.strictKeywordMatch = e.target.checked; });
+  details.querySelector('.kg-instock').addEventListener('sl-change', (e) => { group.inStockOnly = e.target.checked; });
+  details.querySelector('.kg-delete').addEventListener('click', () => {
+    komplettDemo.config.groups = (komplettDemo.config.groups ?? []).filter((g) => g.id !== group.id);
+    kdOpenGroups.delete(group.id);
+    renderKomplettDemoGroups();
+  });
+  const numberField = (selector, key) => {
+    details.querySelector(selector).addEventListener('sl-input', (e) => {
+      const raw = String(e.target.value ?? '').trim();
+      const parsed = Number(raw);
+      group[key] = raw === '' || !Number.isFinite(parsed) ? null : parsed;
+      syncSummary();
+    });
+  };
+  numberField('.kg-mindiscount', 'minDiscountPct');
+  numberField('.kg-maxprice', 'maxPriceSek');
+  numberField('.kg-droppct', 'priceDropPct');
+
+  wireChipInput({
+    container: details.querySelector(`#kg-kw-${group.id}`),
+    items: group.keywords,
+    onAdd: syncSummary, onRemove: syncSummary,
+    allOptions: null
+  });
+  wireChipInput({
+    container: details.querySelector(`#kg-cat-${group.id}`),
+    items: categoryChips,
+    onAdd: (name) => {
+      const id = maps.nameToId.get(name);
+      if (!id) {
+        categoryChips.splice(categoryChips.indexOf(name), 1);
+        showToast(`“${name}” is not a Komplett category. Pick one from the list.`, 'warning');
+        return;
+      }
+      if (!group.categories.includes(id)) group.categories.push(id);
+      syncSummary();
+    },
+    onRemove: (name) => {
+      const id = maps.nameToId.get(name) ?? name;
+      group.categories = group.categories.filter((c) => c !== id);
+      syncSummary();
+    },
+    allOptions: maps.names
+  });
+
+  return details;
+}
+
+function renderKomplettDemoCount() {
+  if (!el.kdCountLabel || !komplettDemo) return;
+  const groups = komplettDemo.config.groups ?? [];
+  const active = groups.filter(komplettGroupIsActive).length;
+  el.kdCountLabel.textContent = groups.length ? `${active}/${groups.length} active · 1 Apify run per check` : 'No watch groups';
+}
+
+function renderKomplettDemoGroups() {
+  if (!el.kdGroups || !komplettDemo) return;
+  el.kdGroups.innerHTML = '';
+  renderKomplettDemoCount();
+  const groups = komplettDemo.config.groups ?? [];
+  if (!groups.length) {
+    el.kdGroups.innerHTML = '<div class="empty-mini"><sl-icon name="bell"></sl-icon><strong>No watch groups yet</strong><span>Add a group with categories or keywords to watch Komplett deals and B-grade demo products.</span></div>';
+    return;
+  }
+  for (const group of groups) el.kdGroups.appendChild(createKomplettGroupElement(group));
+}
+
+function renderKomplettDemoIntervalHint() {
+  if (!el.kdIntervalHint) return;
+  const raw = Number(el.kdInterval.value);
+  const base = Math.min(240, Math.max(KD_MIN_INTERVAL_MIN, Number.isFinite(raw) && raw > 0 ? raw : KD_MIN_INTERVAL_MIN));
+  const jitter = Math.min(50, Math.max(0, Number(el.kdJitter.value) || 0));
+  const lo = Math.max(KD_MIN_INTERVAL_MIN, Math.round(base * (1 - jitter / 100) * 10) / 10);
+  const hi = Math.round(base * (1 + jitter / 100) * 10) / 10;
+  const runUsd = komplettDemo?.lastStatus?.costGuard?.estimatedRunUsd;
+  const monthly = Number.isFinite(runUsd)
+    ? (runUsd === 0 ? ' Free via proxy ($0/month on Apify).' : ` About ${formatUsd(runUsd * (30 * 24 * 60) / base, 2)}/month at this rate, before the cost guard.`)
+    : '';
+  el.kdIntervalHint.textContent = (jitter
+    ? `Checks Komplett at random every ${lo}–${hi} min (~${base} min).`
+    : `Checks Komplett every ${base} min.`) + ` Minimum ${KD_MIN_INTERVAL_MIN} min.${monthly}`;
+}
+for (const input of [el.kdInterval, el.kdJitter]) {
+  input?.addEventListener('sl-input', renderKomplettDemoIntervalHint);
+  input?.addEventListener('input', renderKomplettDemoIntervalHint);
 }
 
 function renderKomplettDemoStatus(status) {
@@ -1497,14 +1696,24 @@ function renderKomplettDemoStatus(status) {
   if (komplettDemo) komplettDemo.lastStatus = status;
 
   const guard = status.costGuard ?? {};
+  const feeds = status.feeds ?? [];
   const notes = [];
   if (guard.stretched && !guard.exhausted) {
     notes.push(`Cost guard: checking every ~${Math.round(status.effectiveIntervalMinutes)} min to stay under ${formatUsd(guard.maxMonthlyUsd, 2)} this month.`);
   }
   if (guard.exhausted) notes.push('This month\'s Apify cap is used up; automatic checks resume next month.');
   if (status.lastWarning) notes.push(status.lastWarning);
+  for (const feed of feeds) if (feed.enabled && feed.lastError) notes.push(`${feed.label}: ${feed.lastError}`);
   if (status.lastAlertCount) notes.push(`${status.lastAlertCount} alert(s) on the last check.`);
   if (status.pendingAlerts) notes.push(`${status.pendingAlerts} Discord alert(s) waiting to be retried.`);
+  const feedStat = (id) => {
+    const feed = feeds.find((f) => f.id === id);
+    if (!feed) return '—';
+    if (!feed.enabled) return 'off';
+    if (!feed.seeded && !feed.lastCount) return 'not yet';
+    return Number.isFinite(feed.lastCount) ? `${feed.lastCount} items` : 'ready';
+  };
+  const activeGroups = (status.groups ?? []).filter((g) => g.active).length;
 
   el.kdStatus.innerHTML = statusCardHtml({
     stateClass: status.lastError ? 'error' : status.enabled ? 'ok' : 'idle',
@@ -1512,31 +1721,41 @@ function renderKomplettDemoStatus(status) {
       ? 'Failing'
       : !status.enabled ? 'Paused'
         : status.running ? 'Checking…'
-          : guard.exhausted ? 'Monthly cap reached' : 'Watching',
-    meta: `${status.categories?.length ?? 0} categories · ${status.trackedProducts ?? 0} tracked · ${status.pollCount ?? 0} checks`,
+          : guard.exhausted ? 'Monthly cap reached'
+            : guard.stretched ? 'Watching (slowed by cost guard)' : 'Watching',
+    meta: `${status.trackedProducts ?? 0} items · ${activeGroups} active group${activeGroups === 1 ? '' : 's'} · ${status.pollCount ?? 0} checks`,
     stats: [
       ['Last check', relativeTime(status.lastSuccessAt, { assumePast: true }) ?? 'never'],
       ['Next check', status.enabled ? (relativeTime(status.nextPollAt) ?? '—') : 'paused'],
       ['Apify this month', `${formatUsd(guard.spentUsd)} / ${formatUsd(guard.maxMonthlyUsd, 2)}`],
-      ['Projected', `${formatUsd(guard.projectedMonthUsd, 2)}`]
+      ['Projected', `${formatUsd(guard.projectedMonthUsd, 2)}`],
+      ['Kampanjer', feedStat('deals')],
+      ['Demovaror', feedStat('outlet')]
     ],
     error: status.lastError,
     notes
   });
 
   renderKomplettDemoFinds(status);
-  renderKomplettDemoCategoryMeta(status);
+  renderKomplettDemoIntervalHint();
 }
 
 function kdFindItem(entry, { reason = null } = {}) {
   const when = reason ? timeAgo(entry.at) : timeAgo(entry.firstSeenAt);
-  const priceLine = reason === 'price-drop' && Number.isFinite(entry.previousPriceSek)
-    ? `${formatSek(entry.priceSek)} <s>${formatSek(entry.previousPriceSek)}</s>`
+  const was = reason === 'price-drop' && Number.isFinite(entry.previousPriceSek)
+    ? entry.previousPriceSek
+    : (Number.isFinite(entry.listPriceSek) && entry.listPriceSek > entry.priceSek ? entry.listPriceSek : null);
+  const priceLine = was
+    ? `${formatSek(entry.priceSek)} <s>${formatSek(was)}</s>`
     : formatSek(entry.priceSek);
+  const off = Number.isFinite(entry.discountPct) && entry.discountPct > 0 ? `−${entry.discountPct}%` : '';
+  const feedKey = entry.feed || 'outlet';
   const tags = [
+    `<sl-badge variant="neutral" pill>${escapeHtml(KD_FEED_LABELS[feedKey] ?? feedKey)}</sl-badge>`,
     reason ? `<sl-badge variant="${KD_REASON_VARIANTS[reason] ?? 'neutral'}" pill>${escapeHtml(KD_REASON_LABELS[reason] ?? reason)}</sl-badge>` : '',
     reason && entry.delivered === false ? `<sl-badge variant="neutral" pill title="${escapeHtml(entry.note ?? '')}">not sent</sl-badge>` : ''
   ].join('');
+  const groups = (entry.groups ?? []).join(', ');
   return `
     <li class="find">
       ${entry.imageUrl ? `<img src="${escapeHtml(entry.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="find-noimg"></span>'}
@@ -1544,7 +1763,9 @@ function kdFindItem(entry, { reason = null } = {}) {
         <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.title)}</a>
         <div class="find-meta">
           <strong>${priceLine}</strong>
-          <span>${escapeHtml(entry.categoryLabel ?? '')}</span>
+          ${off ? `<span>${escapeHtml(off)}</span>` : ''}
+          ${entry.categoryLabel ? `<span>${escapeHtml(entry.categoryLabel)}</span>` : ''}
+          ${groups ? `<span>${escapeHtml(groups)}</span>` : ''}
           ${when ? `<span>${escapeHtml(when)}</span>` : ''}
           ${tags}
         </div>
@@ -1558,126 +1779,29 @@ function renderKomplettDemoFinds(status) {
   const finds = status?.latestFinds ?? [];
   el.kdAlerts.innerHTML = alerts.map((entry) => kdFindItem(entry, { reason: entry.reason })).join('');
   el.kdAlerts.classList.toggle('hidden', alerts.length === 0);
+  const anyFeed = (status?.feeds ?? []).some((f) => f.enabled);
   el.kdFinds.innerHTML = finds.length
     ? finds.map((entry) => kdFindItem(entry)).join('')
-    : `<li class="find-empty">${status?.categories?.length ? 'Nothing recorded yet. The first check records what is listed now, without alerts.' : 'Pick at least one category above.'}</li>`;
+    : `<li class="find-empty">${!anyFeed ? 'Switch on at least one feed above.' : (status?.groups?.length ? 'Nothing recorded yet. The first check records what is listed now, without alerts.' : 'Add at least one watch group above.')}</li>`;
   // Images from Komplett that fail (offline, moved) just disappear.
   for (const img of el.kdAlerts.querySelectorAll('img')) img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'find-noimg' })), { once: true });
   for (const img of el.kdFinds.querySelectorAll('img')) img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'find-noimg' })), { once: true });
-}
-
-function renderKomplettDemoCount() {
-  if (!el.kdCountLabel || !komplettDemo) return;
-  const count = komplettDemo.config.categories.length;
-  el.kdCountLabel.textContent = count
-    ? `${count} categor${count === 1 ? 'y' : 'ies'} selected · 1 Apify run per check`
-    : 'No categories selected';
-}
-
-function renderKomplettDemoCategoryMeta(status) {
-  if (!el.kdCategories) return;
-  const byId = new Map((status?.categories ?? []).map((c) => [c.id, c]));
-  for (const meta of el.kdCategories.querySelectorAll('[data-kd-meta]')) {
-    const info = byId.get(meta.dataset.kdMeta);
-    if (!info) { meta.textContent = ''; meta.title = ''; meta.className = 'kd-cat-meta'; continue; }
-    meta.textContent = info.lastError ? '⚠' : Number.isFinite(info.total) ? `${info.total}` : (info.seeded ? '' : 'new');
-    meta.className = `kd-cat-meta${info.lastError ? ' warn' : ''}`;
-    meta.title = info.lastError
-      ? info.lastError
-      : Number.isFinite(info.total) ? `${info.total} demo products listed` : (info.seeded ? '' : 'Recorded silently on the next check');
-  }
-}
-
-function syncKomplettDemoGroupBoxes() {
-  if (!el.kdCategories || !komplettDemo) return;
-  const selected = new Set(komplettDemo.config.categories);
-  for (const groupBox of el.kdCategories.querySelectorAll('sl-checkbox[data-kd-group]')) {
-    const group = komplettDemo.catalog.find((g) => g.group === groupBox.dataset.kdGroup);
-    const picked = group ? group.categories.filter((c) => selected.has(c.id)).length : 0;
-    const total = group?.categories.length ?? 0;
-    groupBox.checked = group ? picked === total : false;
-    groupBox.indeterminate = picked > 0 && picked < total;
-    const badge = el.kdCategories.querySelector(`[data-kd-group-count="${CSS.escape(groupBox.dataset.kdGroup)}"]`);
-    if (badge) {
-      badge.textContent = `${picked}/${total}`;
-      badge.variant = picked > 0 ? 'primary' : 'neutral';
-    }
-  }
-  renderKomplettDemoCount();
-}
-
-function renderKomplettDemoCategories() {
-  if (!el.kdCategories || !komplettDemo) return;
-  const selected = new Set(komplettDemo.config.categories);
-  if (!kdOpenGroups) {
-    kdOpenGroups = new Set(komplettDemo.catalog
-      .filter((g) => g.categories.some((c) => selected.has(c.id)))
-      .map((g) => g.group));
-  }
-  el.kdCategories.innerHTML = komplettDemo.catalog.map((group) => `
-    <sl-details class="kd-group" data-kd-details="${escapeHtml(group.group)}" ${kdOpenGroups.has(group.group) ? 'open' : ''}>
-      <div slot="summary" class="kd-summary">
-        <span>${escapeHtml(group.label)}</span>
-        <sl-badge variant="neutral" pill data-kd-group-count="${escapeHtml(group.group)}"></sl-badge>
-      </div>
-      ${group.categories.length > 1 ? `<sl-checkbox class="kd-all" data-kd-group="${escapeHtml(group.group)}">Select all</sl-checkbox>` : `<sl-checkbox class="kd-all hidden" data-kd-group="${escapeHtml(group.group)}"></sl-checkbox>`}
-      <div class="kd-cat-list">
-        ${group.categories.map((category) => `
-          <div class="kd-cat">
-            <sl-checkbox data-kd-cat="${escapeHtml(category.id)}" ${selected.has(category.id) ? 'checked' : ''}>${escapeHtml(category.label)}</sl-checkbox>
-            <span class="kd-cat-meta" data-kd-meta="${escapeHtml(category.id)}"></span>
-            <a class="kd-cat-link" href="${escapeHtml(category.url)}" target="_blank" rel="noopener noreferrer" title="Open on Komplett" aria-label="Open ${escapeHtml(category.label)} on Komplett"><sl-icon name="box-arrow-up-right"></sl-icon></a>
-          </div>`).join('')}
-      </div>
-    </sl-details>`).join('');
-  for (const details of el.kdCategories.querySelectorAll('sl-details')) {
-    details.addEventListener('sl-show', (e) => { if (e.target === details) kdOpenGroups.add(details.dataset.kdDetails); });
-    details.addEventListener('sl-hide', (e) => { if (e.target === details) kdOpenGroups.delete(details.dataset.kdDetails); });
-  }
-  syncKomplettDemoGroupBoxes();
-  renderKomplettDemoCategoryMeta(komplettDemo.lastStatus);
-}
-
-function setKomplettDemoCategories(ids) {
-  // Keep catalog order so the saved list is stable.
-  const wanted = new Set(ids);
-  komplettDemo.config.categories = komplettDemo.catalog
-    .flatMap((g) => g.categories.map((c) => c.id))
-    .filter((id) => wanted.has(id));
-}
-
-function onKomplettDemoCategoryChange(event) {
-  const target = event.target;
-  if (target?.tagName !== 'SL-CHECKBOX' || !komplettDemo) return;
-  const selected = new Set(komplettDemo.config.categories);
-  if (target.dataset.kdGroup) {
-    const group = komplettDemo.catalog.find((g) => g.group === target.dataset.kdGroup);
-    for (const category of group?.categories ?? []) {
-      if (target.checked) selected.add(category.id); else selected.delete(category.id);
-    }
-    for (const box of el.kdCategories.querySelectorAll('sl-checkbox[data-kd-cat]')) {
-      if (group?.categories.some((c) => c.id === box.dataset.kdCat)) box.checked = target.checked;
-    }
-  } else if (target.dataset.kdCat) {
-    if (target.checked) selected.add(target.dataset.kdCat); else selected.delete(target.dataset.kdCat);
-  } else {
-    return;
-  }
-  setKomplettDemoCategories([...selected]);
-  syncKomplettDemoGroupBoxes();
 }
 
 function renderKomplettDemoForm() {
   if (!komplettDemo) return;
   const cfg = komplettDemo.config;
   el.kdEnabled.checked = cfg.enabled === true;
+  if (el.kdFeedDeals) el.kdFeedDeals.checked = cfg.feeds?.deals !== false;
+  if (el.kdFeedOutlet) el.kdFeedOutlet.checked = cfg.feeds?.outlet !== false;
   el.kdInterval.value = String(cfg.intervalMinutes ?? '');
   el.kdJitter.value = String(cfg.jitterPct ?? '');
   el.kdMaxUsd.value = String(cfg.maxMonthlyUsd ?? '');
   el.kdDropPct.value = String(cfg.notifyPriceDropPercent ?? '');
   el.kdBackInStock.checked = cfg.notifyBackInStock !== false;
   el.kdWebhook.value = cfg.discordWebhookUrl ?? '';
-  renderKomplettDemoCategories();
+  renderKomplettDemoIntervalHint();
+  renderKomplettDemoGroups();
 }
 
 async function loadKomplettDemo() {
@@ -1707,7 +1831,11 @@ function collectKomplettDemoConfig() {
   };
   return {
     enabled: el.kdEnabled.checked,
-    categories: cfg.categories,
+    feeds: {
+      deals: el.kdFeedDeals ? el.kdFeedDeals.checked : true,
+      outlet: el.kdFeedOutlet ? el.kdFeedOutlet.checked : true
+    },
+    groups: cfg.groups ?? [],
     intervalMinutes: toNumber(el.kdInterval, cfg.intervalMinutes),
     jitterPct: toNumber(el.kdJitter, cfg.jitterPct),
     maxMonthlyUsd: toNumber(el.kdMaxUsd, cfg.maxMonthlyUsd),
@@ -2590,12 +2718,20 @@ function bindEvents() {
     }
   });
 
-  // Komplett demo watcher
-  el.kdCategories?.addEventListener('sl-change', onKomplettDemoCategoryChange);
+  // Komplett watcher
+  el.kdAddGroup?.addEventListener('click', () => {
+    if (!komplettDemo) return;
+    const group = createEmptyKomplettGroup();
+    kdOpenGroups.add(group.id);
+    if (!Array.isArray(komplettDemo.config.groups)) komplettDemo.config.groups = [];
+    komplettDemo.config.groups.push(group);
+    renderKomplettDemoGroups();
+    el.kdGroups.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
   el.kdPollNow?.addEventListener('click', async () => {
     if (!komplettDemo) return;
-    if (!komplettDemo.config.categories.length) {
-      showToast('Pick at least one Komplett demo category and save first.', 'error');
+    if (el.kdFeedDeals && el.kdFeedOutlet && !el.kdFeedDeals.checked && !el.kdFeedOutlet.checked) {
+      showToast('Switch on at least one Komplett feed and save first.', 'error');
       return;
     }
     el.kdPollNow.loading = true;
@@ -2603,10 +2739,10 @@ function bindEvents() {
       const res = await fetchJson('/api/komplett-demo/poll', { method: 'POST' });
       renderKomplettDemoStatus(res.status);
       const r = res.result ?? {};
-      showToast(`Komplett demo: ${r.count ?? 0} product(s), ${r.alertCount ?? 0} alert(s).`, 'success');
+      showToast(`Komplett: ${r.count ?? 0} item(s), ${r.alertCount ?? 0} alert(s).`, 'success');
       loadDashboard().catch(() => {});
     } catch (err) {
-      showToast(`Komplett demo check failed: ${err.message}`, 'error');
+      showToast(`Komplett check failed: ${err.message}`, 'error');
       refreshKomplettDemoStatus();
     } finally {
       el.kdPollNow.loading = false;

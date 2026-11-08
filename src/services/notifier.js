@@ -191,6 +191,7 @@ export class DiscordNotifier {
     const buildEmbed = (alert) => {
       const meta = reasonMeta[alert.reason] ?? reasonMeta.new;
       const product = alert.product ?? {};
+      const isDeal = (alert.feed ?? product.feed) === 'deals';
       const category = getKomplettDemoCategory(alert.categoryId);
       const reasonLine = alert.reason === 'price-drop'
         ? `📉 Price drop ${formatPercent(alert.dropPercent)} (was ${formatSek(alert.previousPriceSek)})`
@@ -198,18 +199,28 @@ export class DiscordNotifier {
       const fields = [
         { name: 'Price', value: formatSek(product.priceSek), inline: true }
       ];
+      if (isDeal && Number.isFinite(product.listPriceSek) && product.listPriceSek > product.priceSek) {
+        const pct = product.discountPct ?? Math.round((1 - product.priceSek / product.listPriceSek) * 100);
+        fields.push({ name: 'Ordinary', value: `${formatSek(product.listPriceSek)} (−${pct}%)`, inline: true });
+      }
       if (alert.reason === 'price-drop') {
         fields.push({ name: 'Was', value: formatSek(alert.previousPriceSek), inline: true });
       }
       fields.push(
         { name: 'Stock', value: String(product.availabilityText || (product.inStock ? 'In stock' : 'Out of stock')).slice(0, 1024), inline: true },
         { name: 'Category', value: category ? `${category.groupLabel} › ${category.label}` : String(alert.categoryId ?? '—'), inline: true },
-        { name: 'Condition', value: 'B-grade / demo', inline: true }
+        { name: 'Condition', value: isDeal ? 'Kampanj' : 'B-grade / demo', inline: true }
       );
+      if (Array.isArray(alert.groups) && alert.groups.length > 0) {
+        const names = alert.groups.map((g) => (typeof g === 'string' ? g : g.name || g.id)).filter(Boolean);
+        if (names.length > 0) {
+          fields.push({ name: 'Watch group(s)', value: names.join(', ').slice(0, 1024), inline: false });
+        }
+      }
       return {
-        title: String(product.title ?? 'Komplett demo product').slice(0, 256),
+        title: String(product.title ?? (isDeal ? 'Komplett deal' : 'Komplett demo product')).slice(0, 256),
         url: product.url,
-        description: ['Komplett demovaror', reasonLine].filter(Boolean).join('\n'),
+        description: [isDeal ? 'Komplett kampanj' : 'Komplett demovaror', reasonLine].filter(Boolean).join('\n'),
         color: meta.color,
         fields,
         // An attached file (see `images`) renders; a komplett.se URL doesn't,
@@ -217,7 +228,7 @@ export class DiscordNotifier {
         image: images[String(product.id)]
           ? { url: `attachment://${komplettAttachmentName(product.id, images[String(product.id)])}` }
           : (product.imageUrl ? { url: product.imageUrl } : undefined),
-        footer: { text: `Komplett demo · B-grade${product.id ? ` · ${product.id}` : ''}` },
+        footer: { text: `${isDeal ? 'Komplett deal · Kampanj' : 'Komplett demo · B-grade'}${product.id ? ` · ${product.id}` : ''}` },
         timestamp: new Date().toISOString()
       };
     };
@@ -227,9 +238,12 @@ export class DiscordNotifier {
     for (let start = 0; start < alerts.length; start += 10) {
       const batch = alerts.slice(start, start + 10);
       const first = reasonMeta[batch[0].reason] ?? reasonMeta.new;
+      const isDealBatch = (batch[0].feed ?? batch[0].product?.feed) === 'deals';
+      const label = isDealBatch ? 'Komplett deal' : 'Komplett demo';
+      const firstText = batch[0].reason === 'new' && isDealBatch ? 'new deal' : first.text;
       const content = batch.length === 1
-        ? `${first.emoji} **Komplett demo** — ${batch[0].reason === 'price-drop' ? `${first.text} ${formatPercent(batch[0].dropPercent)}` : first.text}`
-        : `${first.emoji} **Komplett demo** — ${batch.length} updates`;
+        ? `${first.emoji} **${label}** — ${batch[0].reason === 'price-drop' ? `${firstText} ${formatPercent(batch[0].dropPercent)}` : firstText}`
+        : `${first.emoji} **${label}** — ${batch.length} updates`;
       try {
         const files = batch
           .map((alert) => {

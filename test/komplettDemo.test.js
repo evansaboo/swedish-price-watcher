@@ -872,3 +872,85 @@ test('Komplett demo routes: config, validation, masked webhook, poll', async () 
 
   await app.close();
 });
+
+test('legacy categories migrate to watch groups and normal deals + B-grade feeds work together', () => {
+  const migrated = normalizeKomplettDemoConfig({
+    enabled: true,
+    categories: ['10072', '10071', '12423'],
+    intervalMinutes: 5,
+    jitterPct: 40,
+    notifyPriceDropPercent: 2,
+    notifyBackInStock: true,
+    maxMonthlyUsd: 4,
+  });
+  assert.deepEqual(migrated.feeds, { deals: true, outlet: true });
+  assert.deepEqual(migrated.categories, ['10072', '10071', '12423']);
+  assert.equal(migrated.groups.length, 3);
+  assert.deepEqual(
+    migrated.groups.map((g) => ({ id: g.id, name: g.name, feeds: g.feeds, categories: g.categories })),
+    [
+      { id: 'kg-cat-10072', name: 'Grafikkort', feeds: 'both', categories: ['10072'] },
+      { id: 'kg-cat-10071', name: 'Moderkort', feeds: 'both', categories: ['10071'] },
+      { id: 'kg-cat-12423', name: 'Komplett-PC', feeds: 'both', categories: ['12423'] },
+    ],
+  );
+
+  // Simulate upgrading a live state that already seeded B-grade categories.
+  const state = createEmptyKomplettDemoState();
+  state.seededCategories = { '10072': '2026-10-31T20:00:00.000Z' };
+  state.seededFeeds = { outlet: '2026-10-31T20:00:00.000Z' };
+  state.seededGroups = { 'kg-cat-10072': { outlet: '2026-10-31T20:00:00.000Z' } };
+
+  const dealGpu = {
+    materialNumber: '1310001',
+    name: 'ASUS Prime GeForce RTX 5070 Ti OC',
+    url: '/product/1310001/datorutrustning/datorkomponenter/grafikkort/asus-prime-geforce-rtx-5070-ti-oc',
+    price: { listPriceNumber: 9990, discountNumber: 1500 },
+    stock: { availabilityStatus: 'Stocked', availabilityQuantity: '5', availabilityText: '5 st i lager' },
+    productImages: [{ url: 'product-media/b2c/en-us', fileName: '1310001.jpg' }],
+  };
+  const unrelatedMouse = {
+    materialNumber: '1310099',
+    name: 'Logitech G Pro X Superlight 2',
+    url: '/product/1310099/gaming/gaming-utrustning/gamingmus/logitech-g-pro-x-superlight-2',
+    price: { listPriceNumber: 1290, discountNumber: 300 },
+    stock: { availabilityStatus: 'Stocked', availabilityQuantity: '10', availabilityText: '10 st i lager' },
+    productImages: [],
+  };
+
+  // First poll after upgrade: deals feed seeds silently, while outlet is already seeded.
+  const first = applyKomplettDemoPages({
+    state,
+    pages: [
+      page('10072', [rawProduct(2001, { url: '/product/2001/demovaror/datorutrustning/demo-grafikkort/rtx-5080-demo' })]),
+      { categoryId: 'deals-datorutrustning', feed: 'deals', found: true, sort: KOMPLETT_DEMO_SORT, total: 2, products: [dealGpu, unrelatedMouse] },
+    ],
+    config: migrated,
+    nowIso: '2026-11-08T10:00:00.000Z',
+  });
+  // Only the new B-grade GPU alerts on the first run; the normal deal GPU seeds silently, and the mouse is ignored.
+  assert.deepEqual(first.alerts.map((a) => [a.feed, a.product.id]), [['outlet', '2001']]);
+  assert.equal(state.products['1310001'].feed, 'deals');
+  assert.equal(state.products['1310001'].listPriceSek, 11490);
+  assert.equal(state.products['1310001'].discountPct, 13);
+  assert.equal(state.products['1310099'], undefined);
+
+  // Second poll: a new normal deal GPU now alerts!
+  const dealGpu2 = {
+    ...dealGpu,
+    materialNumber: '1310002',
+    name: 'MSI GeForce RTX 5080 Gaming Trio OC',
+    url: '/product/1310002/datorutrustning/datorkomponenter/grafikkort/msi-geforce-rtx-5080',
+    price: { listPriceNumber: 13990, discountNumber: 2000 },
+  };
+  const second = applyKomplettDemoPages({
+    state,
+    pages: [
+      page('10072', [rawProduct(2001, { url: '/product/2001/demovaror/datorutrustning/demo-grafikkort/rtx-5080-demo' })]),
+      { categoryId: 'deals-datorutrustning', feed: 'deals', found: true, sort: KOMPLETT_DEMO_SORT, total: 2, products: [dealGpu2, dealGpu] },
+    ],
+    config: migrated,
+    nowIso: '2026-11-08T10:05:00.000Z',
+  });
+  assert.deepEqual(second.alerts.map((a) => [a.feed, a.product.id]), [['deals', '1310002']]);
+});
