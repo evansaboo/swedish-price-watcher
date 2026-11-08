@@ -43,6 +43,7 @@ import {
   MIN_MONTHLY_USD as KOMPLETT_DEMO_MIN_MONTHLY_USD,
   findUnknownCategoryIds,
   isMaskedWebhookUrl,
+  maskWebhookUrl,
   normalizeKomplettDemoConfig,
   publicKomplettDemoConfig
 } from './services/komplettDemoConfig.js';
@@ -503,12 +504,18 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
     return null;
   }
 
+  // The dashboard GET is not admin-gated, so the webhook token is never echoed
+  // back in full (same as the other watchers).
+  function publicHotlistConfig(config) {
+    return { ...config, webhookUrl: maskWebhookUrl(config.webhookUrl), webhookConfigured: Boolean(config.webhookUrl) };
+  }
+
   app.get('/api/hotlist', async (_, reply) => {
     const missing = requireHotlist(reply);
     if (missing) return missing;
     const hotlistConfig = normalizeHotlistConfig(hotlist.getConfig());
     return {
-      config: hotlistConfig,
+      config: publicHotlistConfig(hotlistConfig),
       status: hotlist.getStatus(),
       subqueriesPerPoll: countSubqueries(hotlistConfig),
       limits: {
@@ -524,11 +531,14 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
   app.put('/api/hotlist', async (request, reply) => {
     const missing = requireHotlist(reply);
     if (missing) return missing;
-    const body = request.body ?? {};
-    if (typeof body !== 'object' || Array.isArray(body)) {
+    const rawBody = request.body ?? {};
+    if (typeof rawBody !== 'object' || Array.isArray(rawBody)) {
       reply.code(400);
       return { message: 'Expected a hotlist configuration object.' };
     }
+    // The dashboard posts back the masked webhook it was given; that means "keep".
+    const body = { ...rawBody };
+    if (isMaskedWebhookUrl(body.webhookUrl)) delete body.webhookUrl;
     // Merge over the current config so a partial update (e.g. just the
     // interval) never silently wipes the watch groups.
     const merged = { ...normalizeHotlistConfig(hotlist.getConfig()), ...body };
@@ -545,7 +555,7 @@ export async function buildApp({ config, store, productCache, hotlist, fetcher, 
     }
 
     const updated = await hotlist.update(merged);
-    return { config: updated, subqueriesPerPoll: countSubqueries(updated), status: hotlist.getStatus() };
+    return { config: publicHotlistConfig(updated), subqueriesPerPoll: countSubqueries(updated), status: hotlist.getStatus() };
   });
 
   app.post('/api/hotlist/poll', async (_, reply) => {

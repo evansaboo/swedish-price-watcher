@@ -231,6 +231,45 @@ test('a malformed hotlist webhook is rejected instead of silently clearing it', 
   await app.close();
 });
 
+test('the hotlist webhook token is never served, and posting the mask back keeps it', async () => {
+  const state = createDefaultState();
+  const secret = 'https://discord.com/api/webhooks/1/secret-token';
+  let config = {
+    enabled: true, intervalSeconds: 60, jitterPct: 20, minDiscountPct: 10,
+    hitsPerGroup: 100, notifyPriceDrops: true, webhookUrl: secret, groups: []
+  };
+
+  const app = await buildApp({
+    config: { publicDir, sources: [] },
+    store: { getState: () => state },
+    productCache: buildTestCache(state),
+    hotlist: {
+      getConfig: () => config,
+      getStatus: () => ({}),
+      update: async (next) => { config = next; return next; }
+    }
+  });
+
+  const overview = await app.inject({ method: 'GET', url: '/api/hotlist' });
+  assert.equal(overview.statusCode, 200);
+  assert.doesNotMatch(overview.body, /secret-token/);
+  assert.equal(overview.json().config.webhookUrl, 'https://discord.com/api/webhooks/1/••••••');
+  assert.equal(overview.json().config.webhookConfigured, true);
+
+  // The dashboard saves the whole form, masked webhook included.
+  const saved = await app.inject({
+    method: 'PUT',
+    url: '/api/hotlist',
+    payload: { ...overview.json().config, intervalSeconds: 120 }
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.doesNotMatch(saved.body, /secret-token/);
+  assert.equal(config.webhookUrl, secret, 'stored webhook kept');
+  assert.equal(config.intervalSeconds, 120);
+
+  await app.close();
+});
+
 test('the dashboard loads Shoelace from the vendored copy, never a CDN', async () => {
   const state = createDefaultState();
   const app = await buildApp({
