@@ -314,9 +314,25 @@ test('titleMatchesKeyword ignores noise but rejects a near-miss model', () => {
   assert.equal(titleMatchesKeyword('MSI GeForce RTX 5070 VENTUS', 'RTX 5090'), false);
   // Case and punctuation are not significant.
   assert.equal(titleMatchesKeyword('Apple iPhone 16 Pro Max 256 GB', 'iphone 16 pro'), true);
-  // Short tokens are skipped so units/suffixes don't cause false rejections.
+  // Short tokens are preserved for model numbers while still matching reordered specs.
   assert.equal(titleMatchesKeyword('Kingston FURY 32 GB DDR5', 'DDR5 32 GB'), true);
   assert.equal(titleMatchesKeyword('anything', ''), true);
+
+  // Regression: "MacBook Neo 13 A18 Pro" contains both "MacBook" and "Pro" (on the A18 Pro chip)
+  // and must NOT match a "macbook pro" or "macbook air" watch keyword.
+  assert.equal(titleMatchesKeyword('MacBook Neo 13 A18 Pro 8/256GB (Indigo)', 'macbook pro'), false);
+  assert.equal(titleMatchesKeyword('MacBook Neo 13 A18 Pro 8/512GB (Rosé)', 'macbook air'), false);
+  assert.equal(titleMatchesKeyword('MacBook Pro 14 M5 16/1TB (Silver)', 'macbook pro'), true);
+  assert.equal(titleMatchesKeyword('MacBook Air 15 M5 16/512GB (Midnight)', 'macbook air'), true);
+
+  // Short model numbers ("11" in "iPad Air 11", "5" in "PlayStation 5", "rx" in "rx 9070")
+  // must not be stripped out.
+  assert.equal(titleMatchesKeyword('iPad Air 11" (M4) 128GB WiFi', 'iPad Air 11'), true);
+  assert.equal(titleMatchesKeyword('iPad Air 13" (M4) 128GB WiFi', 'iPad Air 11'), false);
+  assert.equal(titleMatchesKeyword('PlayStation 5 Slim Digital Edition', 'PlayStation 5'), true);
+  assert.equal(titleMatchesKeyword('PlayStation Portal Midnight Black', 'PlayStation 5'), false);
+  assert.equal(titleMatchesKeyword('SAPPHIRE NITRO+ AMD Radeon RX 9070 XT', 'rx 9070'), true);
+  assert.equal(titleMatchesKeyword('ASUS GeForce RTX 5070 12GB TUF OC', 'rx 9070'), false);
 });
 
 test('strict keyword matching filters out Algolia typo-tolerance bleed', async () => {

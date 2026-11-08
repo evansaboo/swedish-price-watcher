@@ -139,13 +139,70 @@ export function matchTokens(value) {
   return runs.flatMap((run) => run.match(/\p{N}+|\p{L}+/gu) ?? []);
 }
 
+const TIER_WORDS = new Set(['pro', 'air', 'max', 'plus', 'ultra', 'mini', 'neo', 'slim', 'ti', 'xt', 'super', 'fe']);
+const UNIT_WORDS = new Set(['gb', 'tb', 'mb', 'g', 'w', 'hz', 'mhz', 'ghz', 'mm', 'cm', 'tum', 'inch']);
+const MODEL_PREFIXES = new Set(['rtx', 'gtx', 'rx', 'arc', 'playstation', 'ps', 'xbox', 'switch', 'iphone', 'galaxy', 'pixel', 'ryzen', 'core']);
+
+const isAlphaToken = (t) => /^\p{L}+$/u.test(t);
+const isNumericToken = (t) => /^\p{N}+$/u.test(t);
+
+/**
+ * Group a keyword's tokens into contiguous phrase segments so model names and
+ * tier suffixes stay bound together ("macbook pro" → [[macbook, pro]],
+ * "iphone 16 pro" → [[iphone, 16, pro]], "iPad Air 11" → [[ipad, air], [11]],
+ * "DDR5 32 GB" → [[ddr, 5], [32, gb]]). Prevents a chip/accessory modifier
+ * elsewhere in the title ("MacBook Neo 13 A18 Pro", "iPad mini A17 Pro",
+ * "Razer V2 PRO Wireless PS5") from satisfying a model keyword.
+ */
+export function keywordPhraseSegments(keyword) {
+  const rawWords = foldText(keyword).trim().split(/\s+/).filter(Boolean);
+  const segments = [];
+  for (const raw of rawWords) {
+    const tokens = matchTokens(raw);
+    if (!tokens.length) continue;
+    if (!segments.length) {
+      segments.push(tokens);
+      continue;
+    }
+    const prev = segments[segments.length - 1];
+    const a = prev[prev.length - 1];
+    const b = tokens[0];
+    const shouldMerge =
+      (isAlphaToken(a) && isAlphaToken(b)) ||
+      TIER_WORDS.has(b) ||
+      (isNumericToken(a) && tokens.length === 1 && UNIT_WORDS.has(b)) ||
+      (MODEL_PREFIXES.has(a) && isNumericToken(b) && tokens.length === 1);
+    if (shouldMerge) {
+      prev.push(...tokens);
+    } else {
+      segments.push(tokens);
+    }
+  }
+  return segments;
+}
+
+function containsTokenSequence(haystack, needle) {
+  if (needle.length > haystack.length) return false;
+  for (let i = 0; i <= haystack.length - needle.length; i++) {
+    let matched = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return true;
+  }
+  return false;
+}
+
 const titleCache = new Map();
 function titleIndex(title) {
   const key = String(title ?? '');
   let entry = titleCache.get(key);
   if (!entry) {
-    const tokens = matchTokens(key);
-    entry = { tokens: new Set(tokens), compact: tokens.join('') };
+    const list = matchTokens(key);
+    entry = { list, tokens: new Set(list), compact: list.join('') };
     if (titleCache.size > 20_000) titleCache.clear();
     titleCache.set(key, entry);
   }
@@ -153,18 +210,22 @@ function titleIndex(title) {
 }
 
 /**
- * Strict: every keyword word is a whole word of the title, in any order
- * ("RTX 5090" doesn't match an RTX 4090 with a "5090mm" spec, "ram" doesn't
- * match "ramverk"). Loose: every keyword word appears anywhere in the title.
+ * Strict: every keyword phrase segment matches whole tokens of the title in
+ * sequence ("macbook pro" doesn't match "MacBook Neo 13 A18 Pro", "RTX 5090"
+ * doesn't match an RTX 4090 with a "5090mm" spec, "ram" doesn't match
+ * "ramverk"). Loose: every keyword word appears anywhere in the title.
  * Both are case- and diacritic-insensitive.
  */
 export function keywordMatchesTitle(keyword, title, { strict = true } = {}) {
   const words = matchTokens(keyword);
   if (!words.length) return false;
   const index = titleIndex(title);
-  return strict
-    ? words.every((word) => index.tokens.has(word))
-    : words.every((word) => index.compact.includes(word));
+  if (!strict) {
+    return words.every((word) => index.compact.includes(word));
+  }
+  if (!words.every((word) => index.tokens.has(word))) return false;
+  const segments = keywordPhraseSegments(keyword);
+  return segments.every((seg) => (seg.length === 1 ? index.tokens.has(seg[0]) : containsTokenSequence(index.list, seg)));
 }
 
 /** Does the product fall in what the group watches (feed, keywords, categories)? */

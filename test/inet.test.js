@@ -287,6 +287,12 @@ test('keyword matching ignores case and diacritics; strict needs whole words', (
   assert.equal(keywordMatchesTitle('ram', 'Corsair Ramverk 4000D'), false);
   assert.equal(keywordMatchesTitle('rtx 5090', 'ASUS RTX 5080 TUF'), false);
   assert.equal(keywordMatchesTitle('pro', 'Epson projektor'), false);
+  assert.equal(keywordMatchesTitle('macbook pro', 'Apple MacBook Neo - 13" | A18 Pro | 8GB | 256GB | Indigo'), false);
+  assert.equal(keywordMatchesTitle('macbook pro', 'Apple MacBook Pro - 14,2" | M5 Pro | 24GB | 2TB'), true);
+  assert.equal(keywordMatchesTitle('PS5 Pro', 'Razer Wolverine V2 PRO Wireless PS5 & PC'), false);
+  assert.equal(keywordMatchesTitle('PS5 Pro', 'Sony PS5 Pro 2TB'), true);
+  assert.equal(keywordMatchesTitle('iPad Air 11', 'Apple iPad Air M4 11" / Wi-Fi 128GB'), true);
+  assert.equal(keywordMatchesTitle('iPad Air 11', 'Apple iPad Air 13" / Wi-Fi 128GB'), false);
   // Loose: substrings.
   assert.equal(keywordMatchesTitle('ram', 'Corsair Ramverk 4000D', { strict: false }), true);
   assert.equal(keywordMatchesTitle('pro', 'Epson projektor', { strict: false }), true);

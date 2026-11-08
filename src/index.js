@@ -233,11 +233,18 @@ async function runHotlistPoll() {
             archivedAt: new Date().toISOString()
           };
         }
-        for (const notifKey of Object.keys(state.notifications)) {
-          if (notifKey.startsWith(`${key}:`)) delete state.notifications[notifKey];
-        }
         deletedItemKeys.push(key);
         delete state.items[key];
+      }
+    }
+
+    // Prune only expired notification cooldown entries so an item that briefly
+    // drops out on a lagging Algolia replica cannot re-alert within cooldownMs.
+    const notifCutoffMs = Date.now() - notifier.cooldownMs;
+    for (const [notifKey, sentAt] of Object.entries(state.notifications)) {
+      const sentMs = Date.parse(sentAt);
+      if (!Number.isFinite(sentMs) || sentMs < notifCutoffMs) {
+        delete state.notifications[notifKey];
       }
     }
 

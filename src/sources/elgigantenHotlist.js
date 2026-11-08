@@ -1,5 +1,6 @@
 import { normalizeProductIdentity } from '../lib/utils.js';
 import { getSharedAlgoliaApiKey } from './elgigantenAuth.js';
+import { keywordMatchesTitle, matchTokens } from '../services/inetPoller.js';
 import {
   MAX_SUBQUERIES,
   activeGroups,
@@ -137,26 +138,15 @@ export function buildGroupFilters(group) {
 }
 
 /**
- * Algolia is typo-tolerant and prefix-matching, which makes it a great search
- * box and a poor alerting rule: querying "RTX 5090" happily returns RTX 5070
- * cards. When a group uses strict matching, every significant token of the
- * keyword must also appear literally in the product title.
- *
- * Short tokens (≤2 chars) are ignored so things like "16 GB" or model suffixes
- * don't reject otherwise correct hits.
+ * Algolia is typo-tolerant and bag-of-words, which makes it a great search box
+ * and a poor alerting rule: querying "RTX 5090" happily returns RTX 5070 cards,
+ * and querying "macbook pro" returns "MacBook Neo 13 A18 Pro" because "Pro"
+ * appears in the A18 Pro chip name. When a group uses strict matching, every
+ * phrase segment and token of the keyword must match whole tokens in the title.
  */
 export function titleMatchesKeyword(title, keyword) {
-  if (!keyword) return true;
-  const normalize = (str) => String(str ?? '')
-    .toLowerCase()
-    .replace(/(\d+)\s+([a-z]+)/gi, '$1$2');
-
-  const haystack = normalize(title);
-  const tokens = normalize(keyword)
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((token) => token.length > 2);
-  if (!tokens.length) return true;
-  return tokens.every((token) => haystack.includes(token));
+  if (!keyword || !matchTokens(keyword).length) return true;
+  return keywordMatchesTitle(keyword, title, { strict: true });
 }
 
 export function normalizeWatchGroups(rawGroups, sourceId = 'elgiganten-hotlist') {
