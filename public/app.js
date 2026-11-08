@@ -1726,7 +1726,7 @@ let inetData = null; // { config, catalog, limits, lastStatus }
 const inetOpenGroups = new Set();
 const INET_FEED_LABELS = { deals: 'Kampanj', outlet: 'Fyndhörnan' };
 const INET_GROUP_FEEDS = { both: 'Deals and outlet', deals: 'Campaign deals only', outlet: 'Outlet only' };
-const INET_MIN_INTERVAL_MIN = 10;
+const INET_MIN_INTERVAL_MIN = 0.5;
 
 // Catalog names ↔ template ids. A duplicate name gets its id appended so
 // every chip maps back to exactly one category.
@@ -1902,10 +1902,12 @@ function renderInetIntervalHint() {
   const raw = Number(el.inetInterval.value);
   const base = Math.min(240, Math.max(INET_MIN_INTERVAL_MIN, Number.isFinite(raw) && raw > 0 ? raw : INET_MIN_INTERVAL_MIN));
   const jitter = Math.min(50, Math.max(0, Number(el.inetJitter.value) || 0));
-  const lo = Math.max(INET_MIN_INTERVAL_MIN, Math.round(base * (1 - jitter / 100)));
-  const hi = Math.round(base * (1 + jitter / 100));
+  const lo = Math.max(INET_MIN_INTERVAL_MIN, Math.round(base * (1 - jitter / 100) * 10) / 10);
+  const hi = Math.round(base * (1 + jitter / 100) * 10) / 10;
   const runUsd = inetData?.lastStatus?.costGuard?.estimatedRunUsd;
-  const monthly = Number.isFinite(runUsd) ? ` About ${formatUsd(runUsd * (30 * 24 * 60) / base, 2)}/month at this rate, before the cost guard.` : '';
+  const monthly = Number.isFinite(runUsd)
+    ? (runUsd === 0 ? ' Free via proxy ($0/month on Apify).' : ` About ${formatUsd(runUsd * (30 * 24 * 60) / base, 2)}/month at this rate, before the cost guard.`)
+    : '';
   el.inetIntervalHint.textContent = (jitter
     ? `Checks Inet at random every ${lo}–${hi} min (~${base} min).`
     : `Checks Inet every ${base} min.`) + ` Minimum ${INET_MIN_INTERVAL_MIN} min.${monthly}`;
@@ -2076,7 +2078,7 @@ let webhallenData = null; // { config, catalog, limits, lastStatus }
 const webhallenOpenGroups = new Set();
 const WEBHALLEN_FEED_LABELS = { deals: 'Kampanjer', outlet: 'Fyndvaror' };
 const WEBHALLEN_GROUP_FEEDS = { both: 'Deals and outlet', deals: 'Campaign deals only', outlet: 'Outlet only' };
-const WEBHALLEN_MIN_INTERVAL_MIN = 10;
+const WEBHALLEN_MIN_INTERVAL_MIN = 0.5;
 
 function webhallenCatalogMaps() {
   const catalog = webhallenData?.catalog ?? [];
@@ -2249,10 +2251,12 @@ function renderWebhallenIntervalHint() {
   const raw = Number(el.whInterval.value);
   const base = Math.min(240, Math.max(WEBHALLEN_MIN_INTERVAL_MIN, Number.isFinite(raw) && raw > 0 ? raw : WEBHALLEN_MIN_INTERVAL_MIN));
   const jitter = Math.min(50, Math.max(0, Number(el.whJitter.value) || 0));
-  const lo = Math.max(WEBHALLEN_MIN_INTERVAL_MIN, Math.round(base * (1 - jitter / 100)));
-  const hi = Math.round(base * (1 + jitter / 100));
+  const lo = Math.max(WEBHALLEN_MIN_INTERVAL_MIN, Math.round(base * (1 - jitter / 100) * 10) / 10);
+  const hi = Math.round(base * (1 + jitter / 100) * 10) / 10;
   const runUsd = webhallenData?.lastStatus?.costGuard?.estimatedRunUsd;
-  const monthly = Number.isFinite(runUsd) ? ` About ${formatUsd(runUsd * (30 * 24 * 60) / base, 2)}/month at this rate, before the cost guard.` : '';
+  const monthly = Number.isFinite(runUsd)
+    ? (runUsd === 0 ? ' Free via proxy ($0/month on Apify).' : ` About ${formatUsd(runUsd * (30 * 24 * 60) / base, 2)}/month at this rate, before the cost guard.`)
+    : '';
   el.whIntervalHint.textContent = (jitter
     ? `Checks Webhallen at random every ${lo}–${hi} min (~${base} min).`
     : `Checks Webhallen every ${base} min.`) + ` Minimum ${WEBHALLEN_MIN_INTERVAL_MIN} min.${monthly}`;

@@ -52,7 +52,7 @@ export function parseSocksUrl(raw) {
  * Binds to 127.0.0.1 only — the upstream credentials must not be reachable
  * from the LAN.
  */
-export async function startSocksHttpBridge(socksUrl, { port = 0, logger = console } = {}) {
+export async function startSocksHttpBridge(socksUrl, { port = 0, unref = false, logger = console } = {}) {
   const proxy = parseSocksUrl(socksUrl);
   if (!proxy) throw new Error(`Invalid SOCKS URL: ${String(socksUrl).slice(0, 40)}`);
 
@@ -105,6 +105,7 @@ export async function startSocksHttpBridge(socksUrl, { port = 0, logger = consol
       resolve();
     });
   });
+  if (unref && typeof server.unref === 'function') server.unref();
 
   const actualPort = server.address().port;
   const url = `http://127.0.0.1:${actualPort}`;

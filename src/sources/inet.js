@@ -1,5 +1,10 @@
 import { ApifyClient } from 'apify-client';
 
+import {
+  fetchViaWatcherProxy,
+  mapWithConcurrency,
+  resolveWatcherProxyUrl,
+} from '../services/watcherProxy.js';
 import { fetchApifyRunUsage } from './komplett.js';
 
 // ═══════════════════════════════════════════════════════════════
@@ -194,6 +199,7 @@ async function pageFunction(context) {
   };
   if (meta.page === 1) {
     out.productIds = ids;
+    if (ud.delta) out.delta = true;
     const fo = vm.filterOptions && typeof vm.filterOptions === 'object' ? vm.filterOptions : {};
     out.templates = Array.isArray(fo.templates)
       ? fo.templates.filter((t) => t && t.id != null).map((t) => ({ id: t.id, name: t.name == null ? null : String(t.name).slice(0, 120), facetCount: typeof t.facetCount === 'number' ? t.facetCount : null }))
@@ -201,10 +207,33 @@ async function pageFunction(context) {
     const needed = Math.min(Math.ceil(ids.length / pageSize), Number(ud.maxPages) || 15);
     const planned = Number(ud.plannedPages) || 1;
     if (needed > planned && typeof context.enqueueRequest === 'function' && ud.baseUrl) {
-      for (let p = planned + 1; p <= needed; p++) {
-        await context.enqueueRequest({ url: ud.baseUrl + '?page=' + p, userData: { ...ud, page: p } });
+      if (ud.delta && Array.isArray(ud.knownIds) && ud.knownIds.length > 0) {
+        const known = {};
+        for (let k = 0; k < ud.knownIds.length; k++) known[String(ud.knownIds[k])] = true;
+        const deltaPages = [];
+        for (let p = planned + 1; p <= needed; p++) {
+          const from = (p - 1) * pageSize;
+          const to = Math.min(p * pageSize, ids.length);
+          let hasNew = false;
+          for (let i = from; i < to; i++) {
+            if (!known[ids[i]]) { hasNew = true; break; }
+          }
+          if (hasNew) {
+            deltaPages.push(p);
+            await context.enqueueRequest({
+              url: ud.baseUrl + '?page=' + p,
+              userData: { ...ud, page: p, knownIds: undefined },
+            });
+          }
+        }
+        out.deltaPages = deltaPages;
+        out.enqueued = deltaPages.length;
+      } else {
+        for (let p = planned + 1; p <= needed; p++) {
+          await context.enqueueRequest({ url: ud.baseUrl + '?page=' + p, userData: { ...ud, page: p } });
+        }
+        out.enqueued = needed - planned;
       }
-      out.enqueued = needed - planned;
     }
   }
   return out;
@@ -270,13 +299,162 @@ function resolveApifyToken() {
   return process.env.APIFY_TOKEN?.trim() || '';
 }
 
+function extractTitleFromHtml(html) {
+  const match = String(html ?? '').match(/<title[^>]*>([^<]*)<\/title>/i);
+  return match ? match[1].trim().slice(0, 120) : null;
+}
+
+/** Parse one Inet HTML page into the same dataset item shape as INET_PAGE_FUNCTION. */
+export function parseInetPageBody({
+  body,
+  statusCode = null,
+  url,
+  loadedUrl = null,
+  feedId,
+  page = 1,
+  hydrate = INET_FEEDS[feedId]?.hydrate,
+  delta = false,
+}) {
+  const html = body ? String(body) : '';
+  const meta = {
+    feed: feedId || null,
+    page: page || 1,
+    url,
+    loadedUrl: loadedUrl || url || null,
+    statusCode,
+  };
+  const extracted = extractInetHydrate(html, hydrate);
+  const vm = extracted.data && extracted.data.productListWithDynamicFilterViewModel;
+  if (!vm || typeof vm !== 'object') {
+    return {
+      ...meta,
+      found: false,
+      error: extracted.error || 'no productListWithDynamicFilterViewModel',
+      title: extractTitleFromHtml(html),
+    };
+  }
+  const ids = Array.isArray(vm.productIds) ? vm.productIds.map(String) : [];
+  const map = vm.products && typeof vm.products === 'object' ? vm.products : {};
+  const products = [];
+  for (const key of Object.keys(map)) {
+    const compact = compactInetProduct(map[key]);
+    if (compact) products.push(compact);
+  }
+  const pageSize = Number(vm.pageSize) > 0 ? Number(vm.pageSize) : INET_PAGE_SIZE;
+  const out = {
+    ...meta,
+    found: true,
+    pageName: extracted.pageName,
+    vmPage: vm.page == null ? null : vm.page,
+    pageSize,
+    total: ids.length,
+    products,
+  };
+  if (page === 1) {
+    out.productIds = ids;
+    if (delta) out.delta = true;
+    const fo = vm.filterOptions && typeof vm.filterOptions === 'object' ? vm.filterOptions : {};
+    out.templates = Array.isArray(fo.templates)
+      ? fo.templates
+        .filter((t) => t && t.id != null)
+        .map((t) => ({
+          id: t.id,
+          name: t.name == null ? null : String(t.name).slice(0, 120),
+          facetCount: typeof t.facetCount === 'number' ? t.facetCount : null,
+        }))
+      : [];
+  }
+  return out;
+}
+
+async function fetchInetPagesViaProxy({ planned, proxyUrl, proxyFetch = fetchViaWatcherProxy, logger = console }) {
+  const startedAtMs = Date.now();
+  const pages = [];
+
+  for (const feed of planned) {
+    const firstUrl = buildInetFeedUrl(feed.id, 1);
+    const firstRes = await proxyFetch(firstUrl, { proxyUrl, logger });
+    const firstPage = parseInetPageBody({
+      body: firstRes.body,
+      statusCode: firstRes.statusCode,
+      url: firstUrl,
+      loadedUrl: firstRes.loadedUrl,
+      feedId: feed.id,
+      page: 1,
+      hydrate: INET_FEEDS[feed.id].hydrate,
+      delta: Boolean(feed.delta),
+    });
+    pages.push(firstPage);
+    if (!firstPage.found) continue;
+
+    const pageSize = firstPage.pageSize || INET_PAGE_SIZE;
+    const needed = inetPagesFor(firstPage.total, pageSize);
+    let pagesToFetch = [];
+
+    if (feed.delta && Array.isArray(feed.knownIds) && feed.knownIds.length > 0) {
+      const known = new Set(feed.knownIds.map(String));
+      const ids = firstPage.productIds || [];
+      for (let p = 2; p <= needed; p += 1) {
+        const slice = ids.slice((p - 1) * pageSize, p * pageSize);
+        if (slice.some((id) => !known.has(id))) pagesToFetch.push(p);
+      }
+      firstPage.deltaPages = pagesToFetch;
+      firstPage.enqueued = pagesToFetch.length;
+    } else if (needed > 1) {
+      pagesToFetch = Array.from({ length: needed - 1 }, (_, i) => i + 2);
+      firstPage.enqueued = pagesToFetch.length;
+    }
+
+    if (pagesToFetch.length) {
+      const restPages = await mapWithConcurrency(pagesToFetch, 2, async (pageNum) => {
+        const pageUrl = buildInetFeedUrl(feed.id, pageNum);
+        try {
+          const res = await proxyFetch(pageUrl, { proxyUrl, logger });
+          return parseInetPageBody({
+            body: res.body,
+            statusCode: res.statusCode,
+            url: pageUrl,
+            loadedUrl: res.loadedUrl,
+            feedId: feed.id,
+            page: pageNum,
+            hydrate: INET_FEEDS[feed.id].hydrate,
+          });
+        } catch (error) {
+          return {
+            feed: feed.id,
+            page: pageNum,
+            url: pageUrl,
+            loadedUrl: null,
+            statusCode: null,
+            found: false,
+            error: error.message,
+            title: null,
+          };
+        }
+      });
+      pages.push(...restPages);
+    }
+  }
+
+  return {
+    run: {
+      id: null,
+      status: 'PROXY',
+      usageTotalUsd: 0,
+      runTimeSecs: Math.round((Date.now() - startedAtMs) / 100) / 10,
+    },
+    pages,
+    urls: pages.length,
+  };
+}
+
 /**
- * One cheerio-scraper run fetching every planned page of each feed.
- * `feeds` is `[{ id: 'deals'|'outlet', pages }]`; page 1 enqueues any extra
- * pages the feed has grown into.
+ * Fetches every planned page of each enabled Inet feed.
+ * `feeds` is `[{ id: 'deals'|'outlet', pages, delta?, knownIds? }]`.
  *
- * Never throws on a failed *run* (the caller still needs its cost); throws
- * only when the actor could not be started or read.
+ * Uses `INET_PROXY_URL` or `WATCHER_PROXY_URL` first if configured; falls back
+ * to Apify's `apify/cheerio-scraper` if no proxy is set or if the proxy is
+ * blocked. Never contacts inet.se from the Pi's home IP.
  *
  * @returns {Promise<{ run: { id, status, usageTotalUsd, runTimeSecs }, pages: object[] }>}
  */
@@ -284,13 +462,40 @@ export async function fetchInetPages({
   feeds,
   token = resolveApifyToken(),
   ApifyClientClass = ApifyClient,
+  proxyUrl,
+  proxyFetch = fetchViaWatcherProxy,
+  logger = console,
   memoryMbytes = 256,
   timeoutSecs = 240,
   maxRequestRetries = 2,
 }) {
-  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
   const planned = (Array.isArray(feeds) ? feeds : []).filter((feed) => INET_FEEDS[feed?.id]);
   if (!planned.length) throw new Error('No Inet feeds enabled.');
+
+  const resolvedProxy = proxyUrl !== undefined
+    ? String(proxyUrl ?? '').trim()
+    : (ApifyClientClass === ApifyClient ? resolveWatcherProxyUrl('INET') : '');
+
+  if (resolvedProxy) {
+    try {
+      const proxyResult = await fetchInetPagesViaProxy({
+        planned,
+        proxyUrl: resolvedProxy,
+        proxyFetch,
+        logger,
+      });
+      if (proxyResult.pages.some((p) => p?.found)) {
+        return proxyResult;
+      }
+      if (!token) return proxyResult;
+      logger.warn?.('[inet] Proxy returned no usable pages; falling back to Apify.');
+    } catch (error) {
+      if (!token) throw error;
+      logger.warn?.(`[inet] Proxy fetch failed (${error.message}); falling back to Apify.`);
+    }
+  }
+
+  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
 
   const startUrls = [];
   for (const feed of planned) {
@@ -301,9 +506,13 @@ export async function fetchInetPages({
       baseUrl: buildInetFeedUrl(feed.id, 1),
       plannedPages: pages,
       maxPages: INET_MAX_PAGES_PER_FEED,
+      ...(feed.delta ? { delta: true, knownIds: Array.isArray(feed.knownIds) ? feed.knownIds.map(String) : [] } : {}),
     };
     for (let page = 1; page <= pages; page += 1) {
-      startUrls.push({ url: buildInetFeedUrl(feed.id, page), userData: { ...userData, page } });
+      startUrls.push({
+        url: buildInetFeedUrl(feed.id, page),
+        userData: { ...userData, page, ...(page > 1 ? { knownIds: undefined } : {}) },
+      });
     }
   }
 

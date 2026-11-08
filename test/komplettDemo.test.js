@@ -373,10 +373,10 @@ test('delays stay within the jitter, floor and backoff bounds', () => {
   assert.equal(min, 6 * 60_000);
   assert.equal(max, 14 * 60_000);
 
-  // The 5-minute floor holds even with maximum negative jitter.
-  const fast = config({ intervalMinutes: 5, jitterPct: 50 });
+  // The 30-second floor holds even with maximum negative jitter.
+  const fast = config({ intervalMinutes: 0.5, jitterPct: 50 });
   assert.equal(computeNextDelayMs({ config: fast, random: () => 0 }), MIN_DELAY_MS);
-  assert.equal(normalizeKomplettDemoConfig({ intervalMinutes: 1 }).intervalMinutes, 5);
+  assert.equal(normalizeKomplettDemoConfig({ intervalMinutes: 0.1 }).intervalMinutes, 0.5);
 
   // Exponential backoff, capped at 60 minutes.
   const noJitter = config({ intervalMinutes: 10, jitterPct: 0 });

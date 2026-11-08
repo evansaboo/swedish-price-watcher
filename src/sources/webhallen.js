@@ -1,5 +1,10 @@
 import { ApifyClient } from 'apify-client';
 
+import {
+  fetchViaWatcherProxy,
+  mapWithConcurrency,
+  resolveWatcherProxyUrl,
+} from '../services/watcherProxy.js';
 import { fetchApifyRunUsage } from './komplett.js';
 
 // ═══════════════════════════════════════════════════════════════
@@ -399,13 +404,146 @@ function resolveApifyToken() {
   return process.env.APIFY_TOKEN?.trim() || '';
 }
 
+function extractTitleFromHtml(html) {
+  const match = String(html ?? '').match(/<title[^>]*>([^<]*)<\/title>/i);
+  return match ? match[1].trim().slice(0, 120) : null;
+}
+
+/** Parse one Webhallen JSON response into the same page shape as WEBHALLEN_PAGE_FUNCTION. */
+export function parseWebhallenPageBody({
+  body,
+  statusCode = null,
+  url,
+  loadedUrl = null,
+  feedId,
+  page = 1,
+  pageSize = WEBHALLEN_PAGE_SIZE,
+}) {
+  const meta = {
+    feed: feedId || null,
+    page: page || 1,
+    url,
+    loadedUrl: loadedUrl || url || null,
+    statusCode,
+  };
+  let payload = null;
+  let parseError = null;
+  try {
+    payload = body ? JSON.parse(String(body)) : null;
+  } catch (err) {
+    parseError = err.message;
+  }
+  if (!payload || typeof payload !== 'object' || !Array.isArray(payload.products)) {
+    return {
+      ...meta,
+      found: false,
+      error: parseError ? `parse error: ${parseError}` : 'no products array in response',
+      title: extractTitleFromHtml(body),
+    };
+  }
+  const products = [];
+  for (const raw of payload.products) {
+    if (feedId === 'outlet' && raw && raw.isFyndware === false) continue;
+    const compact = compactWebhallenProduct(raw);
+    if (compact) products.push(compact);
+  }
+  const total = typeof payload.filteredProductCount === 'number'
+    ? payload.filteredProductCount
+    : (typeof payload.totalProductCount === 'number' ? payload.totalProductCount : products.length);
+  const out = {
+    ...meta,
+    found: true,
+    pageSize,
+    total,
+    products,
+  };
+  if (page === 1) {
+    out.categories = Array.isArray(payload.categories)
+      ? payload.categories
+        .filter((c) => c && c.name)
+        .map((c) => ({ id: c.id ?? null, name: String(c.name).slice(0, 120) }))
+      : [];
+  }
+  return out;
+}
+
+async function fetchWebhallenPagesViaProxy({ planned, proxyUrl, proxyFetch = fetchViaWatcherProxy, logger = console }) {
+  const startedAtMs = Date.now();
+  const pages = [];
+
+  for (const feed of planned) {
+    const firstUrl = buildWebhallenFeedUrl(feed.id, 1);
+    const firstRes = await proxyFetch(firstUrl, {
+      proxyUrl,
+      headers: WEBHALLEN_API_HEADERS,
+      logger,
+    });
+    const firstPage = parseWebhallenPageBody({
+      body: firstRes.body,
+      statusCode: firstRes.statusCode,
+      url: firstUrl,
+      loadedUrl: firstRes.loadedUrl,
+      feedId: feed.id,
+      page: 1,
+    });
+    pages.push(firstPage);
+    if (!firstPage.found) continue;
+
+    const needed = webhallenPagesFor(firstPage.total, firstPage.pageSize);
+    if (needed > 1) {
+      const restPageNums = Array.from({ length: needed - 1 }, (_, i) => i + 2);
+      const restPages = await mapWithConcurrency(restPageNums, 2, async (pageNum) => {
+        const pageUrl = buildWebhallenFeedUrl(feed.id, pageNum);
+        try {
+          const res = await proxyFetch(pageUrl, {
+            proxyUrl,
+            headers: WEBHALLEN_API_HEADERS,
+            logger,
+          });
+          return parseWebhallenPageBody({
+            body: res.body,
+            statusCode: res.statusCode,
+            url: pageUrl,
+            loadedUrl: res.loadedUrl,
+            feedId: feed.id,
+            page: pageNum,
+          });
+        } catch (error) {
+          return {
+            feed: feed.id,
+            page: pageNum,
+            url: pageUrl,
+            loadedUrl: null,
+            statusCode: null,
+            found: false,
+            error: error.message,
+            title: null,
+          };
+        }
+      });
+      pages.push(...restPages);
+    }
+  }
+
+  return {
+    run: {
+      id: null,
+      status: 'PROXY',
+      usageTotalUsd: 0,
+      runTimeSecs: Math.round((Date.now() - startedAtMs) / 100) / 10,
+    },
+    pages,
+    urls: pages.length,
+  };
+}
+
 /**
- * One cheerio-scraper run fetching every planned page of each enabled feed.
- * `feeds` is `[{ id: 'deals'|'outlet', pages }]`; page 1 enqueues any extra
- * pages the feed has grown into.
+ * Fetches every page of each enabled Webhallen feed.
  *
- * Never throws on a failed *run* (the caller still needs its cost); throws
- * only when the actor could not be started or read.
+ * Uses the configured proxy (`WEBHALLEN_PROXY_URL`, `WATCHER_PROXY_URL`, or
+ * `ELGIGANTEN_PROXY_URL`) first at $0.00 cost; falls back to Apify's
+ * `apify/cheerio-scraper` if no proxy is set or if the proxy fails/is blocked.
+ * Never contacts webhallen.com from the Pi's home IP.
  *
  * @returns {Promise<{ run: { id, status, usageTotalUsd, runTimeSecs }, pages: object[], urls: number }>}
  */
@@ -413,13 +551,40 @@ export async function fetchWebhallenPages({
   feeds,
   token = resolveApifyToken(),
   ApifyClientClass = ApifyClient,
+  proxyUrl,
+  proxyFetch = fetchViaWatcherProxy,
+  logger = console,
   memoryMbytes = 256,
   timeoutSecs = 240,
   maxRequestRetries = 2,
 }) {
-  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
   const planned = (Array.isArray(feeds) ? feeds : []).filter((feed) => WEBHALLEN_FEEDS[feed?.id]);
   if (!planned.length) throw new Error('No Webhallen feeds enabled.');
+
+  const resolvedProxy = proxyUrl !== undefined
+    ? String(proxyUrl ?? '').trim()
+    : (ApifyClientClass === ApifyClient ? resolveWatcherProxyUrl('WEBHALLEN') : '');
+
+  if (resolvedProxy) {
+    try {
+      const proxyResult = await fetchWebhallenPagesViaProxy({
+        planned,
+        proxyUrl: resolvedProxy,
+        proxyFetch,
+        logger,
+      });
+      if (proxyResult.pages.some((p) => p?.found)) {
+        return proxyResult;
+      }
+      if (!token) return proxyResult;
+      logger.warn?.('[webhallen] Proxy returned no usable pages; falling back to Apify.');
+    } catch (error) {
+      if (!token) throw error;
+      logger.warn?.(`[webhallen] Proxy fetch failed (${error.message}); falling back to Apify.`);
+    }
+  }
+
+  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
 
   const startUrls = [];
   for (const feed of planned) {

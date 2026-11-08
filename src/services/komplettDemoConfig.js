@@ -8,9 +8,8 @@
 
 import { normalizeWebhookUrl } from './hotlistConfig.js';
 
-// Komplett's Akamai edge blocked us for polling on a fixed, fast clock. Each
-// poll is also a paid Apify actor run, so the floor is deliberately generous.
-export const MIN_INTERVAL_MINUTES = 5;
+// Allow intervals down to 30 seconds (0.5 min); the cost guard stretches when needed.
+export const MIN_INTERVAL_MINUTES = 0.5;
 export const MAX_INTERVAL_MINUTES = 240;
 export const DEFAULT_INTERVAL_MINUTES = 10;
 export const DEFAULT_JITTER_PCT = 40;

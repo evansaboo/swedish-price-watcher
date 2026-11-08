@@ -324,6 +324,46 @@ test('page planning covers the feed size, clamped; one Apify run fetches every p
 
   await assert.rejects(() => fetchWebhallenPages({ feeds: [], token: 't', ApifyClientClass: StubClient }), /No Webhallen feeds/);
   await assert.rejects(() => fetchWebhallenPages({ feeds: [{ id: 'deals', pages: 1 }], token: '', ApifyClientClass: StubClient }), /No Apify token/);
+
+  // Proxy-first fetch ($0 cost) and automatic Apify fallback on proxy failure:
+  const proxyUrls = [];
+  const proxyResult = await fetchWebhallenPages({
+    feeds: [{ id: 'outlet', pages: 1 }],
+    token: 't',
+    proxyUrl: 'socks5://u:p@127.0.0.1:1080',
+    proxyFetch: async (url) => {
+      proxyUrls.push(url);
+      const isPage1 = url.includes('page=1');
+      return {
+        statusCode: 200,
+        ok: true,
+        url,
+        loadedUrl: url,
+        body: JSON.stringify({
+          products: [whRaw(isPage1 ? 395586 : 395587)],
+          filteredProductCount: 260,
+          categories: [{ id: 1, name: 'Datorer & Tillbehör' }],
+        }),
+      };
+    },
+    ApifyClientClass: StubClient,
+  });
+  assert.equal(proxyResult.run.status, 'PROXY');
+  assert.equal(proxyResult.run.usageTotalUsd, 0);
+  assert.equal(proxyResult.pages.length, 2, 'page 1 discovers page 2 and fetches both via proxy');
+  assert.equal(calls.length, 1, 'Apify was not called when proxy succeeded');
+
+  // When proxy fails, falls back to Apify automatically:
+  const fallbackResult = await fetchWebhallenPages({
+    feeds: [{ id: 'deals', pages: 1 }],
+    token: 't',
+    proxyUrl: 'socks5://u:p@127.0.0.1:1080',
+    proxyFetch: async () => { throw new Error('proxy unreachable'); },
+    logger: silentLogger,
+    ApifyClientClass: StubClient,
+  });
+  assert.equal(fallbackResult.run.status, 'SUCCEEDED');
+  assert.equal(calls.length, 2, 'fell back to Apify when proxy threw');
 });
 
 // ── Matching ───────────────────────────────────────────────────
@@ -481,7 +521,7 @@ test('delays, cost guard and config validation', () => {
   assert.equal(defaults.notifyBackInStock, true);
   assert.deepEqual(DEFAULT_WEBHALLEN_CONFIG.feeds, { deals: true, outlet: true });
 
-  const clamped = normalizeWebhallenConfig({ intervalMinutes: 1, jitterPct: 40 });
+  const clamped = normalizeWebhallenConfig({ intervalMinutes: 0.1, jitterPct: 40 });
   assert.equal(clamped.intervalMinutes, MIN_INTERVAL_MINUTES);
   assert.equal(computeNextDelayMs({ config: clamped, random: () => 0, minDelayMs: MIN_DELAY_MS }), MIN_DELAY_MS);
 

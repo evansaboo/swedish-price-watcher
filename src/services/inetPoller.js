@@ -43,9 +43,16 @@ import {
   isGroupActive,
   normalizeInetConfig,
 } from './inetConfig.js';
+import {
+  ZERO_COST_MODEL,
+  resolveWatcherProxyUrl,
+} from './watcherProxy.js';
 
-export const MIN_DELAY_MS = 10 * 60 * 1000;
+export const MIN_DELAY_MS = 30 * 1000;
 export const MAX_BACKOFF_MS = 60 * 60 * 1000;
+// Between full sweeps, Page-1 delta checks fetch only Page 1 (which carries all
+// productIds) plus any page whose slice contains an unseen product id.
+export const FULL_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 export const MAX_ALERTS_PER_POLL = 25;
 export const MAX_ALERT_ATTEMPTS = 3;
 const MAX_RECENT_ALERTS = 30;
@@ -294,12 +301,16 @@ export function applyInetPages({ state, pages, config, nowIso, alertsEnabled = t
     okFeeds.push(feedId);
 
     const first = pagesOfFeed.get(1);
+    const isDelta = Boolean(first?.delta);
     const ids = first?.found && Array.isArray(first.productIds) ? first.productIds.map(String) : null;
     const pageSize = Number(first?.pageSize) > 0 ? Number(first.pageSize) : INET_PAGE_SIZE;
     const total = ids ? ids.length : (Number.isFinite(foundPages[0].total) ? foundPages[0].total : prevStats.total ?? null);
-    const expectedPages = inetPagesFor(total, pageSize);
-    const missingPages = [];
-    for (let n = 1; n <= expectedPages; n += 1) if (!pagesOfFeed.get(n)?.found) missingPages.push(n);
+    const fullExpectedPages = inetPagesFor(total, pageSize);
+    const requiredPages = isDelta
+      ? [1, ...(Array.isArray(first?.deltaPages) ? first.deltaPages : [])]
+      : Array.from({ length: fullExpectedPages }, (_, i) => i + 1);
+    const expectedPages = requiredPages.length;
+    const missingPages = requiredPages.filter((n) => !pagesOfFeed.get(n)?.found);
     const truncated = Number.isFinite(total) && total > INET_MAX_PAGES_PER_FEED * pageSize;
     const complete = Boolean(ids) && !missingPages.length && !truncated;
     if (missingPages.length) warnings.push(`${INET_FEEDS[feedId].label}: page${missingPages.length === 1 ? '' : 's'} ${missingPages.join(', ')} failed to load.`);
@@ -430,8 +441,12 @@ export function applyInetPages({ state, pages, config, nowIso, alertsEnabled = t
     }
     if (ids) state.feedIds[feedId] = ids;
 
+    const priorFullSweepAt = prevStats.lastFullSweepAt
+      ?? (prevStats.complete && !prevStats.delta ? prevStats.lastFetchedAt ?? null : null);
     state.feedStats[feedId] = {
       lastFetchedAt: nowIso,
+      lastFullSweepAt: !isDelta && complete ? nowIso : priorFullSweepAt,
+      delta: isDelta,
       total: Number.isFinite(total) ? total : null,
       pagesExpected: expectedPages,
       pagesFetched: foundPages.length,
@@ -557,23 +572,64 @@ export function createInetPoller({
     }
   }
 
-  /** Pages per feed for the next sweep, from the last known feed sizes. */
-  function planFeeds(config) {
+  function hasRecentFullSweep(id, nowMs = now()) {
+    const stats = state.feedStats[id];
+    const lastFullIso = stats?.lastFullSweepAt
+      ?? (stats?.complete && !stats?.delta ? stats?.lastFetchedAt ?? '' : '');
+    const lastFullMs = Date.parse(lastFullIso);
+    return Number.isFinite(lastFullMs) && nowMs - lastFullMs < FULL_SWEEP_INTERVAL_MS;
+  }
+
+  /**
+   * Pages per feed for the next check. Once a multi-page feed has completed a
+   * full sweep within the last hour, checks run in Page-1 delta mode (1 URL per
+   * feed, enqueuing extra pages only if their slice of `productIds` has a new id).
+   */
+  function planFeeds(config, nowMs = now()) {
     return enabledFeedIds(config).map((id) => {
       const total = state.feedStats[id]?.total;
-      return { id, pages: Number.isFinite(total) ? inetPagesFor(total) : 1 };
+      const fullPages = Number.isFinite(total) ? inetPagesFor(total) : 1;
+      const knownIds = state.feedIds[id];
+      if (
+        state.seededFeeds[id]
+        && fullPages > 1
+        && Array.isArray(knownIds)
+        && knownIds.length > 0
+        && hasRecentFullSweep(id, nowMs)
+      ) {
+        return { id, pages: 1, delta: true, knownIds };
+      }
+      return { id, pages: fullPages };
     });
   }
 
   function expectedUrlCount(config) {
     return enabledFeedIds(config).reduce((sum, id) => {
-      const total = state.feedStats[id]?.total;
-      return sum + (Number.isFinite(total) ? inetPagesFor(total) : UNKNOWN_FEED_PAGES);
+      const stats = state.feedStats[id];
+      const total = stats?.total;
+      if (!Number.isFinite(total)) return sum + UNKNOWN_FEED_PAGES;
+      const fullPages = inetPagesFor(total);
+      if (state.seededFeeds[id] && fullPages > 1 && (stats?.lastFullSweepAt || stats?.complete)) {
+        return sum + 1;
+      }
+      return sum + fullPages;
     }, 0);
   }
 
+  function isProxyMode() {
+    if (state.lastRun?.runStatus === 'PROXY') return true;
+    if (!state.lastRun && fetchPages === fetchInetPages && resolveWatcherProxyUrl('INET')) return true;
+    return false;
+  }
+
   function costGuard(config = readConfig(), nowMs = now()) {
-    return computeCostGuard({ usage: state.usage, config, urlCount: expectedUrlCount(config), nowMs, costModel: INET_COST_MODEL });
+    return computeCostGuard({
+      usage: state.usage,
+      config,
+      urlCount: expectedUrlCount(config),
+      nowMs,
+      costModel: isProxyMode() ? ZERO_COST_MODEL : INET_COST_MODEL,
+    });
   }
 
   function nextDelayMs() {
@@ -674,7 +730,7 @@ export function createInetPoller({
     const nowIso = new Date(nowMs).toISOString();
     rollUsageMonth(state.usage, nowMs);
 
-    const feeds = planFeeds(config);
+    const feeds = planFeeds(config, nowMs);
     if (!feeds.length) throw new Error('Enable at least one Inet feed first.');
 
     await settlePreviousRunCost();

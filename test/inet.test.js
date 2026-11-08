@@ -22,6 +22,7 @@ import {
   validateInetConfigPatch,
 } from '../src/services/inetConfig.js';
 import {
+  FULL_SWEEP_INTERVAL_MS,
   INET_COST_MODEL,
   MIN_DELAY_MS,
   applyInetPages,
@@ -480,12 +481,12 @@ test('a feed whose pages all failed is reported and not seeded', () => {
 
 // ── Cost guard, interval floor ─────────────────────────────────
 
-test('delays respect the 10-minute floor and the jitter', () => {
-  const config = normalizeInetConfig({ intervalMinutes: 1, jitterPct: 40 });
+test('delays respect the 30-second floor and the jitter', () => {
+  const config = normalizeInetConfig({ intervalMinutes: 0.1, jitterPct: 40 });
   assert.equal(config.intervalMinutes, MIN_INTERVAL_MINUTES);
   const at = (r) => computeNextDelayMs({ config, random: () => r, minDelayMs: MIN_DELAY_MS });
   assert.equal(at(0), MIN_DELAY_MS, 'jitter never goes below the floor');
-  assert.equal(at(1), 14 * 60_000);
+  assert.equal(at(1), Math.round(MIN_DELAY_MS * 1.4));
 
   const defaults = normalizeInetConfig({});
   const lo = computeNextDelayMs({ config: defaults, random: () => 0, minDelayMs: MIN_DELAY_MS });
@@ -623,6 +624,89 @@ test('the poller plans pages from the last sweep, seeds, alerts and tracks spend
   assert.equal(status.latestFinds[0].id, '131');
   assert.ok(status.effectiveIntervalMinutes >= 20);
   assert.deepEqual(h.poller.getCatalog().map((c) => c.name), ['Bildskärmar', 'Bärbara datorer'], 'Swedish order: ä after z');
+});
+
+test('Page-1 delta polling fetches only Page 1 between hourly full sweeps and enqueues only pages with new IDs', async () => {
+  const ids = Array.from({ length: 130 }, (_, i) => String(i + 1));
+  let nowMs = Date.parse(T0);
+  const h = makeHarness({
+    now: () => nowMs,
+    responses: [
+      // Run 1: complete 3-page full sweep of deals (130 items) + 1-page outlet
+      run([
+        page('deals', [compact(1)], { n: 1, ids }),
+        page('deals', [compact(61)], { n: 2, ids }),
+        page('deals', [compact(121)], { n: 3, ids }),
+        page('outlet', [compact('x1')]),
+      ], 0.0005, 'r1'),
+      // Run 2 (5 min later): delta check (only page 1 needed)
+      run([
+        { ...page('deals', [compact(1)], { n: 1, ids }), delta: true, deltaPages: [] },
+        page('outlet', [compact('x1')]),
+      ], 0.0003, 'r2'),
+      // Run 3 (65 min after Run 1): full sweep again
+      run([
+        page('deals', [compact(1)], { n: 1, ids }),
+        page('deals', [compact(61)], { n: 2, ids }),
+        page('deals', [compact(121)], { n: 3, ids }),
+        page('outlet', [compact('x1')]),
+      ], 0.0005, 'r3'),
+    ],
+  });
+
+  await h.poller.pollNow();
+  assert.equal(h.poller.getState().feedStats.deals.complete, true);
+
+  // 5 minutes later: plans a 1-page delta check for deals
+  nowMs += 5 * 60_000;
+  await h.poller.pollNow();
+  assert.deepEqual(h.fetchCalls[1], [
+    { id: 'deals', pages: 1, delta: true, knownIds: ids },
+    { id: 'outlet', pages: 1 },
+  ]);
+
+  // 61 minutes after Run 1: full sweep is due again
+  nowMs += FULL_SWEEP_INTERVAL_MS;
+  await h.poller.pollNow();
+  assert.deepEqual(h.fetchCalls[2], [
+    { id: 'deals', pages: 3 },
+    { id: 'outlet', pages: 1 },
+  ]);
+
+  // Verify INET_PAGE_FUNCTION in delta mode only enqueues pages with unseen IDs
+  // eslint-disable-next-line no-new-func
+  const pageFunction = new Function(`${INET_PAGE_FUNCTION}; return pageFunction;`)();
+  const updatedIds = [...ids.slice(0, 60), 'new-on-page-2', ...ids.slice(61)];
+  const html = inetHtml('CampaignsPage', {
+    page: 1,
+    pageSize: 60,
+    productIds: updatedIds,
+    products: { '1': inetRaw('1') },
+    filterOptions: { templates: [] },
+  });
+  const enqueued = [];
+  const out = await pageFunction({
+    body: html,
+    request: {
+      url: 'https://www.inet.se/kampanjer',
+      userData: {
+        feed: 'deals',
+        page: 1,
+        hydrate: 'CampaignsPage',
+        baseUrl: 'https://www.inet.se/kampanjer',
+        plannedPages: 1,
+        maxPages: 15,
+        delta: true,
+        knownIds: ids,
+      },
+    },
+    response: { statusCode: 200 },
+    enqueueRequest: async (req) => enqueued.push(req),
+  });
+  assert.equal(out.delta, true);
+  assert.deepEqual(out.deltaPages, [2], 'only page 2 has an unseen ID; page 3 is skipped');
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0].url, 'https://www.inet.se/kampanjer?page=2');
 });
 
 test('a blocked run fails, the cost still counts, and the poller needs a feed', async () => {
@@ -875,7 +959,7 @@ test('Inet routes: overview, config validation, masked webhook, catalog, poll', 
   assert.deepEqual(overview.catalog, catalog);
   assert.ok(!JSON.stringify(overview).includes('keep-me'));
   assert.equal(overview.config.discordWebhookConfigured, true);
-  assert.equal(overview.limits.minIntervalMinutes, 10);
+  assert.equal(overview.limits.minIntervalMinutes, MIN_INTERVAL_MINUTES);
 
   assert.equal((await app.inject({ method: 'POST', url: '/api/inet/config', payload: { groups: [{ categories: ['bad'] }] } })).statusCode, 400);
   assert.equal((await app.inject({ method: 'POST', url: '/api/inet/config', payload: { discordWebhookUrl: 'https://evil.example.com/x' } })).statusCode, 400);

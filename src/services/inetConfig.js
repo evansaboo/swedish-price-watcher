@@ -13,8 +13,8 @@ import { isMaskedWebhookUrl, maskWebhookUrl } from './komplettDemoConfig.js';
 
 export { isMaskedWebhookUrl, maskWebhookUrl };
 
-// Every check is a paid Apify run of ~12 pages, so the floor is generous.
-export const MIN_INTERVAL_MINUTES = 10;
+// Page-1 delta polling and proxy support allow fast intervals (down to 30 seconds / 0.5 min).
+export const MIN_INTERVAL_MINUTES = 0.5;
 export const MAX_INTERVAL_MINUTES = 240;
 export const DEFAULT_INTERVAL_MINUTES = 20;
 export const DEFAULT_JITTER_PCT = 40;
@@ -153,7 +153,7 @@ export function normalizeInetConfig(raw, base = DEFAULT_INET_CONFIG) {
     feeds: { deals: feedsIn.deals !== false, outlet: feedsIn.outlet !== false },
     intervalMinutes: Math.round(clampNumber(pick('intervalMinutes'), {
       min: MIN_INTERVAL_MINUTES, max: MAX_INTERVAL_MINUTES, fallback: DEFAULT_INTERVAL_MINUTES,
-    })),
+    }) * 10) / 10,
     jitterPct: Math.round(clampNumber(pick('jitterPct'), { min: 0, max: MAX_JITTER_PCT, fallback: DEFAULT_JITTER_PCT })),
     // 0 = price-drop alerts off (groups can still override).
     notifyPriceDropPercent: Math.round(clampNumber(pick('notifyPriceDropPercent'), { min: 0, max: 90, fallback: DEFAULT_PRICE_DROP_PCT })),

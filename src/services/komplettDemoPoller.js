@@ -29,8 +29,12 @@ import {
   mapKomplettDemoProduct,
 } from '../sources/komplett.js';
 import { getKomplettDemoCategory, normalizeKomplettDemoConfig } from './komplettDemoConfig.js';
+import {
+  ZERO_COST_MODEL,
+  resolveWatcherProxyUrl,
+} from './watcherProxy.js';
 
-export const MIN_DELAY_MS = 5 * 60 * 1000;
+export const MIN_DELAY_MS = 30 * 1000;
 export const MAX_BACKOFF_MS = 60 * 60 * 1000;
 export const MAX_COST_GUARD_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const PAGE_SIZE = 24;
@@ -534,8 +538,20 @@ export function createKomplettDemoPoller({
     }
   }
 
+  function isProxyMode() {
+    if (state.lastRun?.runStatus === 'PROXY') return true;
+    if (!state.lastRun && fetchPages === fetchKomplettDemoPages && resolveWatcherProxyUrl('KOMPLETT')) return true;
+    return false;
+  }
+
   function costGuard(config = readConfig(), nowMs = now()) {
-    return computeCostGuard({ usage: state.usage, config, urlCount: config.categories.length, nowMs });
+    return computeCostGuard({
+      usage: state.usage,
+      config,
+      urlCount: config.categories.length,
+      nowMs,
+      costModel: isProxyMode() ? ZERO_COST_MODEL : COST_MODEL,
+    });
   }
 
   function nextDelayMs() {

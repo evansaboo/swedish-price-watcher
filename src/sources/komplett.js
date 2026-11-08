@@ -3,6 +3,11 @@ import { ApifyClient } from 'apify-client';
 import {
   normalizeProductIdentity
 } from '../lib/utils.js';
+import {
+  fetchViaWatcherProxy,
+  mapWithConcurrency,
+  resolveWatcherProxyUrl,
+} from '../services/watcherProxy.js';
 
 // The `komplett-category` scan source that used to live here is archived in
 // archive/scrapers/komplettCategory.js (see archive/scrapers/README.md).
@@ -175,11 +180,81 @@ function resolveApifyToken(envVar = 'APIFY_TOKEN') {
   return process.env[envVar]?.trim() || process.env.APIFY_TOKEN?.trim() || '';
 }
 
+function extractTitleFromHtml(html) {
+  const match = String(html ?? '').match(/<title[^>]*>([^<]*)<\/title>/i);
+  return match ? match[1].trim().slice(0, 120) : null;
+}
+
+/** Parse one Komplett category HTML body into the same dataset item shape as KOMPLETT_DEMO_PAGE_FUNCTION. */
+export function parseKomplettDemoPageBody({
+  body,
+  statusCode = null,
+  url,
+  loadedUrl = null,
+  categoryId,
+}) {
+  const html = String(body ?? '');
+  const meta = {
+    categoryId: categoryId || null,
+    url,
+    loadedUrl: loadedUrl || url || null,
+    statusCode,
+  };
+  const idx = html.indexOf('"products":[');
+  if (idx === -1) {
+    return { ...meta, found: false, title: extractTitleFromHtml(html), products: [] };
+  }
+  const start = idx + '"products":'.length;
+  let depth = 0;
+  let end = start;
+  for (let i = start; i < html.length && i < start + 800000; i += 1) {
+    if (html[i] === '[') depth += 1;
+    else if (html[i] === ']') {
+      depth -= 1;
+      if (depth === 0) { end = i + 1; break; }
+    }
+  }
+  let products = [];
+  try {
+    products = JSON.parse(html.slice(start, end));
+  } catch {
+    return { ...meta, found: false, parseError: true, products: [] };
+  }
+  const ti = html.indexOf('"totalNumberOfResultsMatchingQuery":');
+  const searchState = ti === -1 ? '' : html.slice(ti, ti + 800);
+  const total = searchState.match(/"totalNumberOfResultsMatchingQuery":(\d+)/);
+  const onPage = searchState.match(/"numberOfResults":(\d+)/);
+  const sort = searchState.match(/"sort":"([A-Za-z]+)"/);
+  return {
+    ...meta,
+    found: true,
+    total: total ? Number(total[1]) : null,
+    numberOfResults: onPage ? Number(onPage[1]) : null,
+    sort: sort ? sort[1] : null,
+    products: products.map((p) => ({
+      materialNumber: p.materialNumber,
+      name: p.name,
+      url: p.url,
+      manufacturerPartNumber: p.manufacturerPartNumber || null,
+      description: typeof p.description === 'string' ? p.description.slice(0, 300) : null,
+      price: { listPriceNumber: p.price ? p.price.listPriceNumber : null },
+      stock: p.stock ? {
+        availabilityStatus: p.stock.availabilityStatus,
+        availabilityQuantity: p.stock.availabilityQuantity,
+        availabilityText: p.stock.availabilityText,
+      } : null,
+      productImages: Array.isArray(p.productImages)
+        ? p.productImages.slice(0, 1).map((img) => ({ url: img.url, fileName: img.fileName }))
+        : [],
+    })),
+  };
+}
+
 /**
- * One cheerio-scraper run fetching page 1 (newest first) of every category.
- *
- * Never throws on a failed *run*: the caller still needs the run's cost.
- * Throws only when the actor could not be started or read at all.
+ * Fetches page 1 (newest first) of every selected Komplett demo category.
+ * Uses `KOMPLETT_PROXY_URL` or `WATCHER_PROXY_URL` first if configured; falls
+ * back to Apify's `apify/cheerio-scraper`. Never contacts komplett.se from
+ * the Pi's home IP.
  *
  * @returns {Promise<{ run: { id, status, usageTotalUsd, runTimeSecs }, pages: object[] }>}
  */
@@ -187,12 +262,54 @@ export async function fetchKomplettDemoPages({
   categories,
   token = resolveApifyToken(),
   ApifyClientClass = ApifyClient,
+  proxyUrl,
+  proxyFetch = fetchViaWatcherProxy,
+  logger = console,
   memoryMbytes = 256,
   timeoutSecs = 180,
   maxRequestRetries = 2,
 }) {
-  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
   if (!Array.isArray(categories) || !categories.length) throw new Error('No Komplett demo categories selected.');
+
+  const resolvedProxy = proxyUrl !== undefined
+    ? String(proxyUrl ?? '').trim()
+    : (ApifyClientClass === ApifyClient ? resolveWatcherProxyUrl('KOMPLETT') : '');
+
+  if (resolvedProxy) {
+    try {
+      const startedAtMs = Date.now();
+      const pages = await mapWithConcurrency(categories, 2, async (category) => {
+        const url = buildKomplettDemoUrl(category, { pages: category.pages });
+        const res = await proxyFetch(url, { proxyUrl: resolvedProxy, logger });
+        return parseKomplettDemoPageBody({
+          body: res.body,
+          statusCode: res.statusCode,
+          url,
+          loadedUrl: res.loadedUrl,
+          categoryId: String(category.id),
+        });
+      });
+      const proxyResult = {
+        run: {
+          id: null,
+          status: 'PROXY',
+          usageTotalUsd: 0,
+          runTimeSecs: Math.round((Date.now() - startedAtMs) / 100) / 10,
+        },
+        pages,
+      };
+      if (pages.some((p) => p?.found)) {
+        return proxyResult;
+      }
+      if (!token) return proxyResult;
+      logger.warn?.('[komplett-demo] Proxy returned no usable pages; falling back to Apify.');
+    } catch (error) {
+      if (!token) throw error;
+      logger.warn?.(`[komplett-demo] Proxy fetch failed (${error.message}); falling back to Apify.`);
+    }
+  }
+
+  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
 
   const startUrls = categories.map((category) => ({
     url: buildKomplettDemoUrl(category, { pages: category.pages }),

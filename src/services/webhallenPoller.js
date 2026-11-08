@@ -49,10 +49,14 @@ import {
   isGroupActive,
   normalizeWebhallenConfig,
 } from './webhallenConfig.js';
+import {
+  ZERO_COST_MODEL,
+  resolveWatcherProxyUrl,
+} from './watcherProxy.js';
 
 export { foldText, keywordMatchesTitle, matchTokens };
 
-export const MIN_DELAY_MS = 10 * 60 * 1000;
+export const MIN_DELAY_MS = 30 * 1000;
 export const MAX_BACKOFF_MS = 60 * 60 * 1000;
 export const MAX_ALERTS_PER_POLL = 25;
 export const MAX_ALERT_ATTEMPTS = 3;
@@ -560,13 +564,19 @@ export function createWebhallenPoller({
     }, 0);
   }
 
+  function isProxyMode() {
+    if (state.lastRun?.runStatus === 'PROXY') return true;
+    if (!state.lastRun && fetchPages === fetchWebhallenPages && resolveWatcherProxyUrl('WEBHALLEN')) return true;
+    return false;
+  }
+
   function costGuard(config = readConfig(), nowMs = now()) {
     return computeCostGuard({
       usage: state.usage,
       config,
       urlCount: expectedUrlCount(config),
       nowMs,
-      costModel: WEBHALLEN_COST_MODEL,
+      costModel: isProxyMode() ? ZERO_COST_MODEL : WEBHALLEN_COST_MODEL,
     });
   }
 
