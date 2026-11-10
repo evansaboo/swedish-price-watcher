@@ -13,6 +13,10 @@ import {
 // The owner doesn't want any Inet traffic from the home IP, so EVERY Inet
 // request goes through Apify's cheerio-scraper on Apify's proxy, like the
 // Komplett watcher. Nothing in this module fetches inet.se directly.
+//
+// Since 2026-11-10 Cloudflare refuses these pages to Apify and NordVPN; the
+// poller now uses inetAgent.js by default. The feed definitions and
+// mapInetProduct here are still shared with it.
 // ═══════════════════════════════════════════════════════════════
 
 const INET_ORIGIN = 'https://www.inet.se';

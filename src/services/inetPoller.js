@@ -2,9 +2,12 @@
  * Inet watcher: campaign deals (/kampanjer) and the Fyndhörnan outlet.
  *
  * Modelled on the Komplett demo watcher (komplettDemoPoller.js):
- *  - every check is ONE apify/cheerio-scraper run on Apify's proxy that sweeps
- *    every page of both feeds (Inet has no newest-first sort). Nothing here
- *    talks to inet.se directly: the owner wants no Inet traffic from home,
+ *  - every check sweeps every page of both feeds (Inet has no newest-first
+ *    sort) through Inet's official agent API (sources/inetAgent.js), over the
+ *    watcher proxy, never from the home IP. Since 2026-11-10 Cloudflare
+ *    refuses the HTML pages to Apify and NordVPN, so the old Apify scraper
+ *    (sources/inet.js) is no longer the default. The agent API has no
+ *    categories; inetTemplates.js works them out from product specifications,
  *  - the delay is randomised (default 20 min ±40%) with a 10-minute floor,
  *  - failures back off exponentially up to 60 minutes,
  *  - a cost guard stretches the interval when this month's projected Apify
@@ -31,6 +34,8 @@ import {
   inetPagesFor,
   mapInetProduct,
 } from '../sources/inet.js';
+import { fetchInetAgentPages, lookupInetAgentProducts } from '../sources/inetAgent.js';
+import { resolveInetTemplates } from './inetTemplates.js';
 import {
   computeCostGuard,
   computeNextDelayMs,
@@ -85,6 +90,12 @@ export function createEmptyInetState() {
     usage: { month: null, usd: 0, runs: 0, urls: 0 },
     pendingUsageRun: null,
     lastRun: null,
+    // 'agent' once checks come from the agent API (see runPoll).
+    source: null,
+    // Category resolution for agent products (inetTemplates.js).
+    templateCache: {},
+    templateSignatures: {},
+    templateSamplesTried: {},
   };
 }
 
@@ -112,6 +123,10 @@ export function normalizeInetState(raw) {
     },
     pendingUsageRun: input.pendingUsageRun && typeof input.pendingUsageRun === 'object' ? input.pendingUsageRun : null,
     lastRun: input.lastRun && typeof input.lastRun === 'object' ? input.lastRun : null,
+    source: typeof input.source === 'string' ? input.source : null,
+    templateCache: plainObject(input.templateCache),
+    templateSignatures: plainObject(input.templateSignatures),
+    templateSamplesTried: plainObject(input.templateSamplesTried),
   };
 }
 
@@ -585,7 +600,8 @@ export function createInetPoller({
   // Called with the watcher state after every successful check, once it is
   // persisted; src/index.js mirrors the items into the main listing.
   onStateChange = null,
-  fetchPages = fetchInetPages,
+  fetchPages = fetchInetAgentPages,
+  lookupProducts = lookupInetAgentProducts,
   fetchRunUsage = fetchApifyRunUsage,
   logger = console,
   setTimeoutFn = setTimeout,
@@ -678,7 +694,7 @@ export function createInetPoller({
   }
 
   function isProxyMode() {
-    if (state.lastRun?.runStatus === 'PROXY') return true;
+    if (fetchPages === fetchInetAgentPages || state.lastRun?.runStatus === 'PROXY') return true;
     if (!state.lastRun && fetchPages === fetchInetPages && resolveWatcherProxyUrl('INET')) return true;
     return false;
   }
@@ -806,7 +822,17 @@ export function createInetPoller({
       throw error;
     }
 
-    const { run = {}, pages = [] } = response ?? {};
+    const { run = {}, pages = [], source = null } = response ?? {};
+    if (source === 'agent') {
+      // The agent API lists items the HTML pages never showed, so the first
+      // check after switching seeds silently instead of alerting on all of them.
+      if (state.source !== 'agent') {
+        state.seededFeeds = {};
+        state.seededGroups = {};
+        state.source = 'agent';
+      }
+      await resolveInetTemplates({ state, pages, lookup: (ids) => lookupProducts(ids, { logger }), nowIso, logger });
+    }
     // Page 1 may enqueue more pages than planned (first run, grown feed).
     const urls = Math.max(plannedUrls, Array.isArray(pages) ? pages.length : 0);
     const estimate = estimateRunUsd(state.usage, urls, INET_COST_MODEL);
@@ -829,9 +855,10 @@ export function createInetPoller({
     const outcome = applyInetPages({ state, pages, config, nowIso, alertsEnabled: config.enabled });
 
     if (!outcome.okFeeds.length) {
-      const message = run.status && run.status !== 'SUCCEEDED'
+      const pageError = (Array.isArray(pages) ? pages : []).find((page) => page?.error)?.error;
+      const message = run.status && !['SUCCEEDED', 'PROXY'].includes(run.status)
         ? `Apify run ${run.status} without usable pages`
-        : 'No Inet page returned product data (blocked or layout change?)';
+        : `No Inet page returned product data${pageError ? ` (${pageError})` : ' (blocked or layout change?)'}`;
       state.lastRun = { ...runInfo, ok: false, error: message };
       await persist();
       throw new Error(message);

@@ -20,6 +20,8 @@ export const ZERO_COST_MODEL = Object.freeze({ perRunUsd: 0, perUrlUsd: 0 });
 
 const DISABLED_VALUES = new Set(['off', 'none', 'false', '0', 'disabled']);
 const dispatcherCache = new Map();
+// Stores that reuse the Elgiganten NordVPN proxy when no store or shared proxy is set.
+const ELGIGANTEN_PROXY_STORES = new Set(['WEBHALLEN', 'INET']);
 
 /**
  * Resolve the proxy URL for a watcher store (`'WEBHALLEN'`, `'INET'`, `'KOMPLETT'`).
@@ -27,8 +29,8 @@ const dispatcherCache = new Map();
  * Precedence:
  *  1. `<STORE>_PROXY_URL` (set to `'off'`/`'none'` to force Apify-only for that store)
  *  2. `WATCHER_PROXY_URL` (shared proxy for all watchers)
- *  3. For `'WEBHALLEN'`, `ELGIGANTEN_PROXY_URL` (NordVPN SOCKS5 works for
- *     Webhallen's JSON API at $0 cost).
+ *  3. For `'WEBHALLEN'` and `'INET'`, `ELGIGANTEN_PROXY_URL` (NordVPN SOCKS5
+ *     works for Webhallen's JSON API and Inet's agent API at $0 cost).
  */
 export function resolveWatcherProxyUrl(storePrefix, env = process.env) {
   const prefix = String(storePrefix ?? '').trim().toUpperCase();
@@ -40,7 +42,7 @@ export function resolveWatcherProxyUrl(storePrefix, env = process.env) {
   if (shared && DISABLED_VALUES.has(shared.toLowerCase())) return '';
   if (shared) return shared;
 
-  if (prefix === 'WEBHALLEN') {
+  if (ELGIGANTEN_PROXY_STORES.has(prefix)) {
     const elgiganten = String(env?.ELGIGANTEN_PROXY_URL ?? '').trim();
     if (elgiganten && !DISABLED_VALUES.has(elgiganten.toLowerCase())) return elgiganten;
   }
