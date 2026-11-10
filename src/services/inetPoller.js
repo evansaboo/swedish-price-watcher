@@ -16,7 +16,10 @@
  * What to alert on comes from watch groups (keywords, Inet template
  * categories, discount/price/stock filters), like the Elgiganten hotlist.
  * Alerts: a matching item that is new, dropped in price by the group's (or
- * the global) %, or came back in stock. A feed or group seeds silently the
+ * the global) %, or came back in stock. Between sweeps, a fast check every
+ * ~2 minutes looks up only the tracked items the watch groups cover (about
+ * 9 requests instead of 80), so price drops and restocks arrive sooner; new
+ * items still need a sweep, since they can appear on any page. A feed or group seeds silently the
  * first time it is checked, and one product matching several groups gets one
  * alert naming them all.
  *
@@ -59,6 +62,11 @@ export const MAX_BACKOFF_MS = 60 * 60 * 1000;
 // productIds) plus any page whose slice contains an unseen product id.
 export const FULL_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 export const MAX_ALERTS_PER_POLL = 25;
+// The fast check of watched items (agent API only), ±25%.
+export const FAST_CHECK_INTERVAL_MS = 2 * 60 * 1000;
+const FAST_CHECK_JITTER = 0.25;
+// 15 lookup requests at most per fast check.
+export const MAX_FAST_CHECK_IDS = 150;
 export const MAX_ALERT_ATTEMPTS = 3;
 const MAX_RECENT_ALERTS = 30;
 const MAX_PENDING_ALERTS = 25;
@@ -315,6 +323,74 @@ function updateCatalog(state, feedId, templates, nowIso) {
 }
 
 /**
+ * Compare a tracked product with its current state: a back-in-stock or
+ * price-drop alert for the eligible groups it matches (or null), and the
+ * updated per-group price baselines. Updates `existing` with the product's
+ * fields; listing bookkeeping (lastSeenAt, misses) is the caller's.
+ */
+function diffKnownProduct({ existing, product, scoped, eligibleGroup, config, allGroupIds }) {
+  const groupBase = plainObject(existing.groupBase);
+  for (const id of Object.keys(groupBase)) if (!allGroupIds.has(id)) delete groupBase[id];
+  const price = product.priceSek;
+  const backInStock = !isAvailable(existing) && product.inStock;
+  const backGroups = [];
+  const dropGroups = [];
+
+  for (const group of scoped) {
+    const base = groupBase[group.id];
+    // First time this group sees the product (new group, edited keywords):
+    // start its baseline now, without an alert.
+    if (!(base > 0)) {
+      if (price > 0) groupBase[group.id] = price;
+      continue;
+    }
+    if (!eligibleGroup(group) || !groupFiltersMatch(group, product)) continue;
+    if (backInStock && config.notifyBackInStock) {
+      backGroups.push(group);
+      continue;
+    }
+    const threshold = group.priceDropPct ?? config.notifyPriceDropPercent;
+    if (threshold > 0 && price > 0 && price < base) {
+      const dropPercent = ((base - price) / base) * 100;
+      if (dropPercent >= threshold) dropGroups.push({ group, base, dropPercent });
+    }
+  }
+
+  let alert = null;
+  if (backGroups.length || dropGroups.length) {
+    const triggered = [...backGroups, ...dropGroups.map((d) => d.group)];
+    const order = new Map(config.groups.map((g, i) => [g.id, i]));
+    triggered.sort((a, b) => order.get(a.id) - order.get(b.id));
+    const biggest = dropGroups.reduce((best, d) => (!best || d.base > best.base ? d : best), null);
+    const previousPriceSek = biggest?.base ?? (existing.priceSek > price ? existing.priceSek : null);
+    alert = {
+      reason: backGroups.length ? 'back-in-stock' : 'price-drop',
+      product,
+      feed: existing.feed,
+      groupIds: triggered.map((g) => g.id),
+      groupNames: triggered.map((g) => g.name),
+      previousPriceSek: previousPriceSek ?? null,
+      dropPercent: previousPriceSek ? Math.round(((previousPriceSek - price) / previousPriceSek) * 1000) / 10 : null,
+    };
+  }
+
+  // Baselines: a return or an alert restarts them at the current price; a
+  // rise lifts them; small drops accumulate towards the threshold.
+  if (price > 0) {
+    if (backInStock) for (const group of scoped) groupBase[group.id] = price;
+    for (const { group } of dropGroups) groupBase[group.id] = price;
+    for (const group of scoped) if (price > (groupBase[group.id] ?? 0)) groupBase[group.id] = price;
+  }
+
+  Object.assign(existing, productFields(product), {
+    priceSek: product.priceSek ?? existing.priceSek,
+    imageUrl: product.imageUrl ?? existing.imageUrl ?? null,
+    groupBase,
+  });
+  return alert;
+}
+
+/**
  * Apply one run's pages to the state and work out what to alert about.
  * Pure apart from mutating `state`; the poller handles fetching and Discord.
  *
@@ -440,66 +516,16 @@ export function applyInetPages({ state, pages, config, nowIso, alertsEnabled = t
         continue;
       }
 
-      const groupBase = plainObject(existing.groupBase);
-      for (const id of Object.keys(groupBase)) if (!allGroupIds.has(id)) delete groupBase[id];
-      const price = product.priceSek;
-      const backInStock = !isAvailable(existing) && product.inStock;
-      const backGroups = [];
-      const dropGroups = [];
-
-      for (const group of scoped) {
-        const base = groupBase[group.id];
-        // First time this group sees the product (new group, edited keywords):
-        // start its baseline now, without an alert.
-        if (!(base > 0)) {
-          if (price > 0) groupBase[group.id] = price;
-          continue;
-        }
-        if (!eligible(group, feedId) || !groupFiltersMatch(group, product)) continue;
-        if (backInStock && config.notifyBackInStock) {
-          backGroups.push(group);
-          continue;
-        }
-        const threshold = group.priceDropPct ?? config.notifyPriceDropPercent;
-        if (threshold > 0 && price > 0 && price < base) {
-          const dropPercent = ((base - price) / base) * 100;
-          if (dropPercent >= threshold) dropGroups.push({ group, base, dropPercent });
-        }
-      }
-
-      if (backGroups.length || dropGroups.length) {
-        const triggered = [...backGroups, ...dropGroups.map((d) => d.group)];
-        const order = new Map(config.groups.map((g, i) => [g.id, i]));
-        triggered.sort((a, b) => order.get(a.id) - order.get(b.id));
-        const biggest = dropGroups.reduce((best, d) => (!best || d.base > best.base ? d : best), null);
-        const previousPriceSek = biggest?.base ?? (existing.priceSek > price ? existing.priceSek : null);
-        alerts.push({
-          reason: backGroups.length ? 'back-in-stock' : 'price-drop',
-          product,
-          feed: feedId,
-          groupIds: triggered.map((g) => g.id),
-          groupNames: triggered.map((g) => g.name),
-          previousPriceSek: previousPriceSek ?? null,
-          dropPercent: previousPriceSek ? Math.round(((previousPriceSek - price) / previousPriceSek) * 1000) / 10 : null,
-        });
-      }
-
-      // Baselines: a return or an alert restarts them at the current price; a
-      // rise lifts them; small drops accumulate towards the threshold.
-      if (price > 0) {
-        if (backInStock) for (const group of scoped) groupBase[group.id] = price;
-        for (const { group } of dropGroups) groupBase[group.id] = price;
-        for (const group of scoped) if (price > (groupBase[group.id] ?? 0)) groupBase[group.id] = price;
-      }
-
-      Object.assign(existing, productFields(product), {
-        priceSek: product.priceSek ?? existing.priceSek,
-        imageUrl: product.imageUrl ?? existing.imageUrl ?? null,
-        groupBase,
-        lastSeenAt: nowIso,
-        missingSince: null,
-        misses: 0,
+      const alert = diffKnownProduct({
+        existing,
+        product,
+        scoped,
+        eligibleGroup: (group) => eligible(group, feedId),
+        config,
+        allGroupIds,
       });
+      if (alert) alerts.push(alert);
+      Object.assign(existing, { lastSeenAt: nowIso, missingSince: null, misses: 0 });
     }
 
     // Gone: absent from the full id list of a complete sweep, twice in a row.
@@ -591,6 +617,87 @@ function describeAlert(alert, nowIso, delivered, note = null) {
   };
 }
 
+// ── Fast check ─────────────────────────────────────────────────
+
+function groupsSeededFor(state, feedId) {
+  const feedSeeded = Boolean(state.seededFeeds[feedId]);
+  return (group) => feedSeeded && Boolean(plainObject(state.seededGroups[group.id])[feedId]);
+}
+
+/**
+ * Tracked, listed items that an active, seeded watch group covers (by feed,
+ * category and keywords, not by its price or stock filters, so an item can
+ * come back in stock). Most recently listed first, capped.
+ */
+export function watchedInetRecords(state, config, limit = MAX_FAST_CHECK_IDS) {
+  const feeds = new Set(enabledFeedIds(config));
+  const groups = config.groups.filter(isGroupActive);
+  return Object.values(state.products)
+    .filter((record) => record && feeds.has(record.feed) && !record.missingSince)
+    .filter((record) => {
+      const seeded = groupsSeededFor(state, record.feed);
+      return groups.some((group) => seeded(group) && groupScopeMatches(group, record));
+    })
+    .sort((a, b) => Date.parse(b.lastSeenAt ?? 0) - Date.parse(a.lastSeenAt ?? 0))
+    .slice(0, limit);
+}
+
+/** A tracked record updated with a product lookup's price and stock. */
+function productFromLookup(record, detail) {
+  const price = Number(detail?.priceIncVat);
+  const priceSek = Number.isFinite(price) && price > 0 ? Math.round(price) : record.priceSek;
+  const listPriceSek = record.listPriceSek > priceSek ? record.listPriceSek : null;
+  const stores = Array.isArray(detail?.stock?.stores) ? detail.stock.stores : [];
+  const storeQty = stores.filter((store) => store?.inStock === true).length;
+  const inWebStock = detail?.stock?.inWebStock === true;
+  return {
+    ...productFields(record),
+    id: record.id,
+    feed: record.feed,
+    priceSek,
+    listPriceSek,
+    discountPct: listPriceSek ? Math.round((1 - priceSek / listPriceSek) * 100) : 0,
+    webQty: inWebStock ? Math.max(1, record.webQty ?? 1) : 0,
+    inWebStock,
+    storeQty,
+    inStock: inWebStock || storeQty > 0,
+  };
+}
+
+/**
+ * Apply product lookups (id → detail) to the tracked records: same price-drop
+ * and back-in-stock rules as a sweep. Leaves listing bookkeeping (lastSeenAt,
+ * gone detection) to the sweeps, since a lookup can't tell whether the item is
+ * still in the campaign or outlet list.
+ *
+ * @returns {{ alerts, checked, changed }}
+ */
+export function applyInetLookups({ state, records, details, config, alertsEnabled = true }) {
+  const groups = config.groups.filter(isGroupActive);
+  const allGroupIds = new Set(config.groups.map((g) => g.id));
+  const alerts = [];
+  let checked = 0;
+  let changed = 0;
+  for (const record of records) {
+    const detail = details.get(String(record.id));
+    if (!detail) continue;
+    checked += 1;
+    const product = productFromLookup(record, detail);
+    if (product.priceSek !== record.priceSek || product.inStock !== record.inStock) changed += 1;
+    const seeded = groupsSeededFor(state, record.feed);
+    const alert = diffKnownProduct({
+      existing: record,
+      product,
+      scoped: groups.filter((group) => groupScopeMatches(group, product)),
+      eligibleGroup: (group) => alertsEnabled && seeded(group),
+      config,
+      allGroupIds,
+    });
+    if (alert) alerts.push(alert);
+  }
+  return { alerts, checked, changed };
+}
+
 // ── Poller ─────────────────────────────────────────────────────
 
 export function createInetPoller({
@@ -610,8 +717,10 @@ export function createInetPoller({
   now = () => Date.now(),
 }) {
   let timer = null;
+  let fastTimer = null;
   let started = false;
   let inFlightPromise = null;
+  let fastInFlight = null;
   let consecutiveFailures = 0;
   let state = createEmptyInetState();
 
@@ -637,6 +746,7 @@ export function createInetPoller({
     pollCount: 0,
     failureCount: 0,
   };
+  const fastStatus = { lastAt: null, checked: null, changed: null, alerts: null, lastError: null, nextAt: null };
 
   const readConfig = () => normalizeInetConfig(getConfig?.() ?? {});
 
@@ -930,6 +1040,7 @@ export function createInetPoller({
 
     inFlightPromise = (async () => {
       try {
+        if (fastInFlight) await fastInFlight;
         const result = await runPoll({ manual });
         consecutiveFailures = 0;
         status.pollCount += 1;
@@ -959,6 +1070,60 @@ export function createInetPoller({
       return await inFlightPromise;
     } finally {
       inFlightPromise = null;
+    }
+  }
+
+  function scheduleFast(delayMs = FAST_CHECK_INTERVAL_MS * (1 - FAST_CHECK_JITTER + 2 * FAST_CHECK_JITTER * random())) {
+    if (fastTimer) clearTimeoutFn(fastTimer);
+    fastTimer = null;
+    fastStatus.nextAt = null;
+    if (!started) return;
+    fastStatus.nextAt = new Date(now() + delayMs).toISOString();
+    fastTimer = setTimeoutFn(() => {
+      fastTimer = null;
+      fastCheck().catch((error) => logger.error?.('[inet] fast check:', error.message));
+    }, delayMs);
+    if (fastTimer && typeof fastTimer.unref === 'function') fastTimer.unref();
+  }
+
+  /** Look up the watched items' price and stock; skipped while a sweep runs. */
+  async function fastCheck({ reschedule = true } = {}) {
+    const config = readConfig();
+    if (!config.enabled || state.source !== 'agent' || inFlightPromise || fastInFlight) {
+      if (reschedule) scheduleFast();
+      return null;
+    }
+    fastInFlight = (async () => {
+      const nowIso = new Date(now()).toISOString();
+      try {
+        const records = watchedInetRecords(state, config);
+        if (!records.length) return { checked: 0, changed: 0, alerts: 0 };
+        const { products, failed } = await lookupProducts(records.map((r) => r.id), { logger });
+        const outcome = applyInetLookups({ state, records, details: products, config, alertsEnabled: config.enabled });
+        if (outcome.alerts.length) await sendAlerts(outcome.alerts, config, nowIso);
+        if (outcome.changed || outcome.alerts.length) {
+          await persist();
+          if (onStateChange) await onStateChange(state);
+        }
+        Object.assign(fastStatus, {
+          lastAt: nowIso,
+          checked: outcome.checked,
+          changed: outcome.changed,
+          alerts: outcome.alerts.length,
+          lastError: failed?.size ? `${failed.size} lookup(s) unanswered` : null,
+        });
+        return { checked: outcome.checked, changed: outcome.changed, alerts: outcome.alerts.length };
+      } catch (error) {
+        fastStatus.lastError = error.message;
+        logger.warn?.(`[inet] Fast check failed: ${error.message}`);
+        return null;
+      }
+    })();
+    try {
+      return await fastInFlight;
+    } finally {
+      fastInFlight = null;
+      if (reschedule) scheduleFast();
     }
   }
 
@@ -1093,6 +1258,12 @@ export function createInetPoller({
       trackedProducts: records.length,
       catalogSize: getCatalog().length,
       pendingAlerts: state.pendingAlerts.length,
+      fastCheck: {
+        ...fastStatus,
+        active: config.enabled && state.source === 'agent',
+        intervalSeconds: FAST_CHECK_INTERVAL_MS / 1000,
+        watched: watchedInetRecords(state, config).length,
+      },
       recentAlerts: state.recentAlerts.slice(0, 20),
       latestFinds: latestFinds(config, records),
     };
@@ -1103,10 +1274,14 @@ export function createInetPoller({
       if (started) return;
       started = true;
       schedule(initialDelayMs());
+      scheduleFast();
     },
     stop() {
       started = false;
       clearTimer();
+      if (fastTimer) clearTimeoutFn(fastTimer);
+      fastTimer = null;
+      fastStatus.nextAt = null;
       status.nextPollAt = null;
     },
     /** Re-arm with the new settings (dashboard save). */
@@ -1118,6 +1293,10 @@ export function createInetPoller({
     /** Dashboard "Check now". Runs even when disabled (then records silently). */
     async pollNow() {
       return tick({ manual: true });
+    },
+    /** The fast check of watched items, now (tests and diagnostics). */
+    async fastCheckNow() {
+      return fastCheck({ reschedule: false });
     },
     getStatus,
     getCatalog,

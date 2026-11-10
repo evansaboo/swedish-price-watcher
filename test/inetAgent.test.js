@@ -322,3 +322,126 @@ test('switching to the agent API seeds silently once, then alerts on new matchin
   assert.equal(poller.getStatus().costGuard.spentUsd, 0, 'no Apify cost');
   assert.equal(poller.getStatus().lastRun.urls, 81, 'counts the list pages actually requested');
 });
+
+// ── Fast check of watched items ────────────────────────────────
+
+function seededAgentState() {
+  const state = createEmptyInetState();
+  state.source = 'agent';
+  state.seededFeeds = { deals: T0, outlet: T0 };
+  state.seededGroups = { 'g-gpu': { deals: T0, outlet: T0 } };
+  const record = (id, overrides) => ({
+    key: `deals:${id}`, id, feed: 'deals', title: `GPU ${id}`, url: `https://www.inet.se/produkt/${id}`,
+    templateId: '17', priceSek: 5000, listPriceSek: 6000, discountPct: 17, inWebStock: true, webQty: 1,
+    storeQty: 0, inStock: true, groupBase: { 'g-gpu': 5000 }, firstSeenAt: T0, lastSeenAt: T0,
+    missingSince: null, misses: 1, ...overrides,
+  });
+  state.products = {
+    'deals:5001': record('5001'),
+    'deals:5002': record('5002', { inWebStock: false, webQty: 0, inStock: false }),
+    'deals:2201': record('2201', { title: 'Monitor 2201', templateId: '1', groupBase: {} }),
+    'deals:5003': record('5003', { missingSince: T0 }),
+  };
+  return state;
+}
+
+function fastHarness(state, { lookupProducts, fetchPages, config } = {}) {
+  const sent = [];
+  const looked = [];
+  const poller = createInetPoller({
+    getConfig: () => config ?? normalizeInetConfig({
+      enabled: true, notifyPriceDropPercent: 5, notifyBackInStock: true,
+      groups: [{ id: 'g-gpu', name: 'GPU', categories: ['17'] }],
+    }),
+    persistence: { load: () => state, save: async () => {} },
+    notifier: {
+      async notifyInet({ alerts }) {
+        sent.push(...alerts);
+        return { sent: alerts.length, failed: 0, skipped: 0, delivered: alerts.map(() => true) };
+      },
+    },
+    fetchPages: fetchPages ?? (async () => { throw new Error('no sweep expected'); }),
+    lookupProducts: lookupProducts ?? (async (ids) => {
+      looked.push(ids);
+      const answers = {
+        5001: { productId: '5001', priceIncVat: 4000, stock: { inWebStock: true, stores: [] } },
+        5002: { productId: '5002', priceIncVat: 5000, stock: { inWebStock: false, stores: [{ storeName: 'Göteborg', inStock: true }] } },
+      };
+      return { products: new Map(ids.filter((id) => answers[id]).map((id) => [id, answers[id]])), notFound: new Set(), failed: new Set() };
+    }),
+    logger: silentLogger,
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+    random: () => 0.5,
+    now: () => Date.parse(T0) + 60_000,
+  });
+  return { poller, sent, looked };
+}
+
+test('the fast check looks up only watched items and alerts on price drops and restocks', async () => {
+  const state = seededAgentState();
+  const { poller, sent, looked } = fastHarness(state);
+
+  const result = await poller.fastCheckNow();
+
+  assert.deepEqual(looked, [['5001', '5002']], 'not the monitor (no group) or the gone GPU');
+  assert.deepEqual(result, { checked: 2, changed: 2, alerts: 2 });
+  const byId = Object.fromEntries(sent.map((a) => [a.product.id, a]));
+  assert.equal(byId['5001'].reason, 'price-drop');
+  assert.equal(byId['5001'].previousPriceSek, 5000);
+  assert.equal(byId['5002'].reason, 'back-in-stock');
+  assert.deepEqual(byId['5002'].groupNames, ['GPU']);
+
+  const record = poller.getState().products['deals:5001'];
+  assert.equal(record.priceSek, 4000);
+  assert.equal(record.discountPct, 33);
+  assert.equal(record.lastSeenAt, T0, 'listing bookkeeping is left to the sweeps');
+  assert.equal(record.misses, 1);
+  assert.equal(poller.getState().products['deals:5002'].storeQty, 1);
+  assert.equal(poller.getStatus().fastCheck.checked, 2);
+
+  // Same answers again: nothing new to say.
+  sent.length = 0;
+  assert.deepEqual(await poller.fastCheckNow(), { checked: 2, changed: 0, alerts: 0 });
+  assert.equal(sent.length, 0);
+});
+
+test('the fast check waits for the first agent sweep and does nothing while disabled', async () => {
+  const before = seededAgentState();
+  before.source = null;
+  const first = fastHarness(before);
+  assert.equal(await first.poller.fastCheckNow(), null);
+  assert.equal(first.looked.length, 0);
+
+  const disabled = fastHarness(seededAgentState(), {
+    config: normalizeInetConfig({ enabled: false, groups: [{ id: 'g-gpu', name: 'GPU', categories: ['17'] }] }),
+  });
+  assert.equal(await disabled.poller.fastCheckNow(), null);
+  assert.equal(disabled.looked.length, 0);
+});
+
+test('a sweep waits for a running fast check instead of interleaving with it', async () => {
+  const state = seededAgentState();
+  const order = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { poller } = fastHarness(state, {
+    lookupProducts: async () => {
+      order.push('lookup start');
+      await gate;
+      order.push('lookup end');
+      return { products: new Map(), notFound: new Set(), failed: new Set() };
+    },
+    fetchPages: async () => {
+      order.push('sweep');
+      return { source: 'agent', run: { id: null, status: 'PROXY', usageTotalUsd: 0 }, pages: [], urls: 0 };
+    },
+  });
+
+  const fast = poller.fastCheckNow();
+  const sweep = poller.pollNow().catch(() => null);
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await Promise.all([fast, sweep]);
+  assert.deepEqual(order, ['lookup start', 'lookup end', 'sweep']);
+});
