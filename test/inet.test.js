@@ -13,6 +13,7 @@ import {
   fetchInetPages,
   inetPagesFor,
   mapInetProduct,
+  resolveInetApifyToken,
 } from '../src/sources/inet.js';
 import {
   DEFAULT_INET_CONFIG,
@@ -268,6 +269,27 @@ test('page planning covers the feed size, clamped; one Apify run fetches every p
 
   await assert.rejects(() => fetchInetPages({ feeds: [], token: 't', ApifyClientClass: StubClient }), /No Inet feeds/);
   await assert.rejects(() => fetchInetPages({ feeds: [{ id: 'deals', pages: 1 }], token: '', ApifyClientClass: StubClient }), /No Apify token/);
+});
+
+test('resolveInetApifyToken prioritizes APIFY_TOKEN_INET over APIFY_TOKEN', () => {
+  const origInet = process.env.APIFY_TOKEN_INET;
+  const origDefault = process.env.APIFY_TOKEN;
+  try {
+    delete process.env.APIFY_TOKEN_INET;
+    delete process.env.APIFY_TOKEN;
+    assert.equal(resolveInetApifyToken(), '');
+
+    process.env.APIFY_TOKEN = 'fallback-token';
+    assert.equal(resolveInetApifyToken(), 'fallback-token');
+
+    process.env.APIFY_TOKEN_INET = 'inet-token';
+    assert.equal(resolveInetApifyToken(), 'inet-token');
+  } finally {
+    if (origInet !== undefined) process.env.APIFY_TOKEN_INET = origInet;
+    else delete process.env.APIFY_TOKEN_INET;
+    if (origDefault !== undefined) process.env.APIFY_TOKEN = origDefault;
+    else delete process.env.APIFY_TOKEN;
+  }
 });
 
 // ── Matching ───────────────────────────────────────────────────

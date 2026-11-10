@@ -5,7 +5,6 @@ import {
   mapWithConcurrency,
   resolveWatcherProxyUrl,
 } from '../services/watcherProxy.js';
-import { fetchApifyRunUsage } from './komplett.js';
 
 // ═══════════════════════════════════════════════════════════════
 // Webhallen watcher: campaign deals (/se/campaigns) and the
@@ -404,8 +403,12 @@ export function mapWebhallenProduct(raw, feedId) {
   };
 }
 
+export function resolveWebhallenApifyToken() {
+  return process.env.APIFY_TOKEN_WEBHALLEN?.trim() || process.env.APIFY_TOKEN?.trim() || '';
+}
+
 function resolveApifyToken() {
-  return process.env.APIFY_TOKEN?.trim() || '';
+  return resolveWebhallenApifyToken();
 }
 
 function extractTitleFromHtml(html) {
@@ -588,7 +591,7 @@ export async function fetchWebhallenPages({
     }
   }
 
-  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
+  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN_WEBHALLEN or APIFY_TOKEN).');
 
   const startUrls = [];
   for (const feed of planned) {
@@ -638,5 +641,9 @@ export async function fetchWebhallenPages({
   };
 }
 
-// Komplett's settled-cost reader is generic (any Apify run id).
-export { fetchApifyRunUsage };
+export async function fetchApifyRunUsage({ runId, token = resolveWebhallenApifyToken(), ApifyClientClass = ApifyClient }) {
+  if (!runId || !token) return null;
+  const client = new ApifyClientClass({ token });
+  const run = await client.run(runId).get();
+  return Number.isFinite(run?.usageTotalUsd) ? run.usageTotalUsd : null;
+}

@@ -382,8 +382,12 @@ export function mapKomplettDemoProduct(product, categoryId = null, feed = null) 
   };
 }
 
-function resolveApifyToken(envVar = 'APIFY_TOKEN') {
+export function resolveKomplettApifyToken(envVar = 'APIFY_TOKEN_KOMPLETT') {
   return process.env[envVar]?.trim() || process.env.APIFY_TOKEN?.trim() || '';
+}
+
+function resolveApifyToken(envVar = 'APIFY_TOKEN_KOMPLETT') {
+  return resolveKomplettApifyToken(envVar);
 }
 
 function extractTitleFromHtml(html) {
@@ -522,7 +526,7 @@ export async function fetchKomplettDemoPages({
     }
   }
 
-  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN).');
+  if (!token) throw new Error('No Apify token configured (APIFY_TOKEN_KOMPLETT or APIFY_TOKEN).');
 
   const startUrls = categories.map((category) => {
     const userData = { categoryId: String(category.id) };

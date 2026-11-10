@@ -12,6 +12,7 @@ import {
   fetchKomplettDemoPages,
   isKomplettInStock,
   mapKomplettDemoProduct,
+  resolveKomplettApifyToken,
 } from '../src/sources/komplett.js';
 import {
   DEFAULT_KOMPLETT_DEMO_CONFIG,
@@ -155,6 +156,27 @@ test('fetchKomplettDemoPages makes one actor run with one start URL per category
 
   await assert.rejects(() => fetchKomplettDemoPages({ categories: [], token: 't', ApifyClientClass: StubClient }), /No Komplett demo categories/);
   await assert.rejects(() => fetchKomplettDemoPages({ categories, token: '', ApifyClientClass: StubClient }), /No Apify token/);
+});
+
+test('resolveKomplettApifyToken prioritizes APIFY_TOKEN_KOMPLETT over APIFY_TOKEN', () => {
+  const origKomplett = process.env.APIFY_TOKEN_KOMPLETT;
+  const origDefault = process.env.APIFY_TOKEN;
+  try {
+    delete process.env.APIFY_TOKEN_KOMPLETT;
+    delete process.env.APIFY_TOKEN;
+    assert.equal(resolveKomplettApifyToken(), '');
+
+    process.env.APIFY_TOKEN = 'fallback-token';
+    assert.equal(resolveKomplettApifyToken(), 'fallback-token');
+
+    process.env.APIFY_TOKEN_KOMPLETT = 'komplett-token';
+    assert.equal(resolveKomplettApifyToken(), 'komplett-token');
+  } finally {
+    if (origKomplett !== undefined) process.env.APIFY_TOKEN_KOMPLETT = origKomplett;
+    else delete process.env.APIFY_TOKEN_KOMPLETT;
+    if (origDefault !== undefined) process.env.APIFY_TOKEN = origDefault;
+    else delete process.env.APIFY_TOKEN;
+  }
 });
 
 test('the page function extracts a compact product list and the applied sort', async () => {

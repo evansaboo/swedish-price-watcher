@@ -16,6 +16,7 @@ import {
   fetchWebhallenPages,
   mapWebhallenProduct,
   resolveWebhallenCategory,
+  resolveWebhallenApifyToken,
   webhallenPagesFor,
 } from '../src/sources/webhallen.js';
 import {
@@ -324,6 +325,26 @@ test('page planning covers the feed size, clamped; one Apify run fetches every p
 
   await assert.rejects(() => fetchWebhallenPages({ feeds: [], token: 't', ApifyClientClass: StubClient }), /No Webhallen feeds/);
   await assert.rejects(() => fetchWebhallenPages({ feeds: [{ id: 'deals', pages: 1 }], token: '', ApifyClientClass: StubClient }), /No Apify token/);
+
+  // Token resolution prioritizes store-specific token:
+  const origWebhallen = process.env.APIFY_TOKEN_WEBHALLEN;
+  const origDefault = process.env.APIFY_TOKEN;
+  try {
+    delete process.env.APIFY_TOKEN_WEBHALLEN;
+    delete process.env.APIFY_TOKEN;
+    assert.equal(resolveWebhallenApifyToken(), '');
+
+    process.env.APIFY_TOKEN = 'fallback-token';
+    assert.equal(resolveWebhallenApifyToken(), 'fallback-token');
+
+    process.env.APIFY_TOKEN_WEBHALLEN = 'webhallen-token';
+    assert.equal(resolveWebhallenApifyToken(), 'webhallen-token');
+  } finally {
+    if (origWebhallen !== undefined) process.env.APIFY_TOKEN_WEBHALLEN = origWebhallen;
+    else delete process.env.APIFY_TOKEN_WEBHALLEN;
+    if (origDefault !== undefined) process.env.APIFY_TOKEN = origDefault;
+    else delete process.env.APIFY_TOKEN;
+  }
 
   // Proxy-first fetch ($0 cost) and automatic Apify fallback on proxy failure:
   const proxyUrls = [];
