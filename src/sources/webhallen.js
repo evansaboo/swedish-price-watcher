@@ -105,9 +105,13 @@ export function webhallenImageUrl(image, id, parentId = null) {
   if (raw.startsWith('/images-ext/')) return `${WEBHALLEN_ORIGIN}${raw}`;
   // Older fyndvaror point at their own fyndware id on `/images/product/<id>?trim`,
   // which serves a placeholder SVG; the parent product id has the real photo.
+  // `?trim` is the variant webhallen.com itself uses, so Cloudflare almost
+  // always has it cached. Other variants (e.g. `?size=500x500`) are mostly
+  // cache misses rendered by Webhallen's origin (slow, sent as the invalid
+  // `image/jpg` type), and many of them failed to load in the dashboard.
   const targetId = String(parentId || id || '').trim();
   if (/^\d+$/.test(targetId)) {
-    return `${WEBHALLEN_ORIGIN}/images/product/${encodeURIComponent(targetId)}?size=500x500`;
+    return `${WEBHALLEN_ORIGIN}/images/product/${encodeURIComponent(targetId)}?trim`;
   }
   if (raw.startsWith('https://')) return raw;
   if (raw.startsWith('/')) return `${WEBHALLEN_ORIGIN}${raw}`;

@@ -249,7 +249,7 @@ test('mapWebhallenProduct builds URLs, images, PC spec titles, prices, discount 
     fyndwareOf: { id: 359001, name: 'ASUS ROG Swift OLED PG27AQDM' },
   })), 'outlet');
   assert.equal(outlet.url, 'https://www.webhallen.com/se/product/395586-ASUS-ROG-Swift-OLED-PG27AQDM');
-  assert.equal(outlet.imageUrl, 'https://www.webhallen.com/images/product/359001?size=500x500', 'uses parent product id for older fyndvaror photos');
+  assert.equal(outlet.imageUrl, 'https://www.webhallen.com/images/product/359001?trim', 'uses parent product id for older fyndvaror photos');
   assert.equal(outlet.priceSek, 7490);
   assert.equal(outlet.listPriceSek, 9990);
   assert.equal(outlet.discountPct, 25);
@@ -631,7 +631,7 @@ test('notifyWebhallen posts labelled embeds with image URLs, in batches, without
     const embed = body.embeds[0];
     assert.equal(embed.title, 'ASUS ROG Swift OLED (Fyndvara klass 1)');
     assert.equal(embed.url, 'https://www.webhallen.com/se/product/395586-ASUS-ROG-Swift-OLED');
-    assert.equal(embed.image.url, 'https://www.webhallen.com/images/product/359001?size=500x500');
+    assert.equal(embed.image.url, 'https://www.webhallen.com/images/product/359001?trim');
     const field = (name) => embed.fields.find((f) => f.name === name)?.value;
     assert.equal(field('Feed'), 'Fyndvaror');
     assert.match(field('Condition'), /Fyndvara klass 1 — Nyskick/);
