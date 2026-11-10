@@ -295,6 +295,7 @@ test('switching to the agent API seeds silently once, then alerts on new matchin
         source: 'agent',
         run: { id: null, status: 'PROXY', usageTotalUsd: 0 },
         pages: [agentPage('deals', products), agentPage('outlet', [mapAgentListItem(bargainItem('x1', 1902), 'outlet')])],
+        urls: 81,
       };
     },
     lookupProducts: async (ids) => ({
@@ -319,4 +320,5 @@ test('switching to the agent API seeds silently once, then alerts on new matchin
   assert.equal(sent[0].product.id, '5004');
   assert.deepEqual(sent[0].groupNames, ['GPU']);
   assert.equal(poller.getStatus().costGuard.spentUsd, 0, 'no Apify cost');
+  assert.equal(poller.getStatus().lastRun.urls, 81, 'counts the list pages actually requested');
 });

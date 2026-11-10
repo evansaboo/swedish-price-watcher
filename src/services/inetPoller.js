@@ -822,7 +822,7 @@ export function createInetPoller({
       throw error;
     }
 
-    const { run = {}, pages = [], source = null } = response ?? {};
+    const { run = {}, pages = [], source = null, urls: fetchedUrls = null } = response ?? {};
     if (source === 'agent') {
       // The agent API lists items the HTML pages never showed, so the first
       // check after switching seeds silently instead of alerting on all of them.
@@ -833,8 +833,11 @@ export function createInetPoller({
       }
       await resolveInetTemplates({ state, pages, lookup: (ids) => lookupProducts(ids, { logger }), nowIso, logger });
     }
-    // Page 1 may enqueue more pages than planned (first run, grown feed).
-    const urls = Math.max(plannedUrls, Array.isArray(pages) ? pages.length : 0);
+    // The agent API reports the list pages it actually requested; an Apify
+    // run's page 1 may enqueue more pages than planned (first run, grown feed).
+    const urls = source === 'agent' && Number.isFinite(fetchedUrls)
+      ? fetchedUrls
+      : Math.max(plannedUrls, Array.isArray(pages) ? pages.length : 0);
     const estimate = estimateRunUsd(state.usage, urls, INET_COST_MODEL);
     const recordedUsd = Number.isFinite(run.usageTotalUsd) ? run.usageTotalUsd : estimate;
     state.usage.runs += 1;
