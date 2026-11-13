@@ -485,9 +485,17 @@ export function applyInetPages({ state, pages, config, nowIso, alertsEnabled = t
     const previousIds = Array.isArray(state.feedIds[feedId]) ? new Set(state.feedIds[feedId].map(String)) : null;
     let feedNew = 0;
 
+    // Agent API campaign sweeps don't report store stock (only inWebStock), so
+    // preserve storeQty learned from lookups rather than wiping it to 0.
+    const preserveStoreStock = feedId === 'deals' && foundPages.some((p) => p?.source === 'agent');
+
     for (const product of products.values()) {
       const key = `${feedId}:${product.id}`;
       const existing = state.products[key];
+      if (existing && preserveStoreStock && (existing.storeQty ?? 0) > 0 && product.storeQty === 0) {
+        product.storeQty = existing.storeQty;
+        product.inStock = product.inWebStock || product.storeQty > 0;
+      }
       const scoped = groups.filter((group) => groupScopeMatches(group, product));
 
       if (!existing) {

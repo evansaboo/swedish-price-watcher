@@ -445,3 +445,46 @@ test('a sweep waits for a running fast check instead of interleaving with it', a
   await Promise.all([fast, sweep]);
   assert.deepEqual(order, ['lookup start', 'lookup end', 'sweep']);
 });
+
+test('agent campaign sweeps preserve store stock learned from lookups so store-only items do not re-alert', async () => {
+  const state = seededAgentState();
+  state.products['deals:1904658'] = {
+    key: 'deals:1904658', id: '1904658', feed: 'deals',
+    title: 'Gigabyte B850 Eagle Ice', url: 'https://www.inet.se/produkt/1904658/a', imageUrl: null,
+    priceSek: 1699, listPriceSek: 2090, discountPct: 19,
+    webQty: 0, inWebStock: false, storeQty: 5, inStock: true,
+    categoryId: '17', groupBase: { 'g-gpu': 1699 }, firstSeenAt: T0, lastSeenAt: T0,
+    seeded: true, missingSince: null, misses: 0,
+  };
+
+  const sent = [];
+  const { poller } = fastHarness(state, {
+    notifier: { notifyInet: async (alerts) => { sent.push(...alerts); return { delivered: true }; } },
+    fetchPages: async () => ({
+      source: 'agent',
+      run: { id: null, status: 'PROXY', usageTotalUsd: 0 },
+      pages: [{
+        feed: 'deals', page: 1, found: true, source: 'agent',
+        products: [mapAgentListItem(campaignItem(1904658, { inWebStock: false, priceIncVat: 1699 }), 'deals')],
+        productIds: ['1904658'], templates: [], total: 1, pageSize: 10,
+      }],
+      urls: 1,
+    }),
+    lookupProducts: async () => ({
+      products: new Map([['1904658', {
+        productId: '1904658',
+        priceIncVat: 1699,
+        stock: { inWebStock: false, stores: Array.from({ length: 5 }, (_, i) => ({ storeName: `S${i}`, inStock: true })) },
+      }]]),
+      notFound: new Set(),
+      failed: new Set(),
+    }),
+  });
+
+  await poller.pollNow();
+  assert.equal(state.products['deals:1904658'].storeQty, 5);
+  assert.equal(state.products['deals:1904658'].inStock, true);
+
+  await poller.fastCheckNow();
+  assert.equal(sent.length, 0);
+});
